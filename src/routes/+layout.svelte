@@ -8,3 +8,5 @@
 <ParaglideJS {i18n}>
 	{@render children()}
 </ParaglideJS>
+
+<Streams />
