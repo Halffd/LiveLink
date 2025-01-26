@@ -1,45 +1,50 @@
 <script lang="ts">
-  import './header.css';
-  import Button from './Button.svelte';
+  import { twitchUser } from '$lib/stores/auth';
 
-  interface Props {
-    user?: { name: string };
-    onLogin?: () => void;
-    onLogout?: () => void;
-    onCreateAccount?: () => void;
-  }
-
-  const { user, onLogin, onLogout, onCreateAccount }: Props = $props();
+  export let title = 'LiveLink';
 </script>
 
-<header>
-  <div class="storybook-header">
-    <div>
-      <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
-        <g fill="none" fill-rule="evenodd">
-          <path
-            d="M10 0h12a10 10 0 0110 10v12a10 10 0 01-10 10H10A10 10 0 010 22V10A10 10 0 0110 0z"
-            fill="#FFF"
-          />
-          <path
-            d="M5.3 10.6l10.4 6v11.1l-10.4-6v-11zm11.4-6.2l9.7 5.5-9.7 5.6V4.4z"
-            fill="#555AB9"
-          />
-          <path d="M27.2 10.6v11.2l-10.5 6V16.5l10.5-6zM15.7 4.4v11L6 10l9.7-5.5z" fill="#91BAF8" />
-        </g>
-      </svg>
-      <h1>Acme</h1>
-    </div>
-    <div>
-      {#if user}
-        <span class="welcome">
-          Welcome, <b>{user.name}</b>!
-        </span>
-        <Button size="small" onClick={onLogout} label="Log out" />
-      {:else}
-        <Button size="small" onClick={onLogin} label="Log in" />
-        <Button primary size="small" onClick={onCreateAccount} label="Sign up" />
-      {/if}
+<header class="w-full bg-gray-800 text-white">
+  <div class="container mx-auto px-4 py-3">
+    <div class="flex justify-between items-center">
+      <div class="flex items-center gap-6">
+        <h1 class="text-xl font-bold">{title}</h1>
+        <nav class="flex gap-4">
+          <a 
+            href="/" 
+            class="hover:text-gray-300 transition-colors"
+          >
+            Home
+          </a>
+          <a 
+            href="/manager" 
+            class="hover:text-gray-300 transition-colors"
+          >
+            Stream Manager
+          </a>
+        </nav>
+      </div>
+
+      <div>
+        {#if !$twitchUser.isAuthenticated}
+          <a 
+            href="/api/auth/twitch"
+            class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded transition-colors"
+          >
+            Login with Twitch
+          </a>
+        {:else}
+          <div class="flex items-center gap-4">
+            <span>Welcome, {$twitchUser.username}!</span>
+            <button 
+              class="text-sm text-gray-300 hover:text-white"
+              on:click={() => window.location.href = '/api/auth/logout'}
+            >
+              Logout
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 </header>

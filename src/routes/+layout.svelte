@@ -6,7 +6,13 @@
 </script>
 
 <ParaglideJS {i18n}>
-	{@render children()}
+	<nav class="bg-gray-800 text-white p-4">
+		<div class="container mx-auto">
+			<a href="/streams" class="hover:text-gray-300">Stream Manager</a>
+		</div>
+	</nav>
+	
+	<main class="container mx-auto">
+		{@render children()}
+	</main>
 </ParaglideJS>
-
-<Streams />

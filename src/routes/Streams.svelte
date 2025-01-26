@@ -38,4 +38,4 @@
             {streamUrl} <button on:click={() => stopStream(streamUrl)}>Stop</button>
         </li>
     {/each}
-</ul> 
+</ul>
