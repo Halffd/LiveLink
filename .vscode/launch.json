@@ -13,6 +13,7 @@
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
         "--no-warnings",
+        "--no-strict",
         "--loader",
         "ts-node/esm"
       ],
@@ -44,7 +45,8 @@
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--experimental-vm-modules",
-        "--no-warnings"
+        "--no-warnings",
+        "--no-strict"
       ],
       "args": [
         "./node_modules/vitest/vitest.mjs",
@@ -65,6 +67,7 @@
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
         "--no-warnings",
+        "--no-strict",
         "--loader",
         "ts-node/esm"
       ],
@@ -85,6 +88,7 @@
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
         "--no-warnings",
+        "--no-strict",
         "--loader",
         "ts-node/esm",
         "--inspect"

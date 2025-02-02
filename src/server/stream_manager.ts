@@ -1,4 +1,4 @@
-import type { StreamOptions, StreamSource } from '../types/stream.js';
+import type { StreamSource, StreamOptions, StreamLimits, StreamSourceType } from '../types/stream.js';
 import type { 
   StreamOutput, 
   StreamError, 
@@ -27,15 +27,16 @@ export class StreamManager {
    */
   constructor() {
     this.twitchService = new TwitchService(
-      this.config.streams.twitch.clientId,
-      this.config.streams.twitch.clientSecret,
+      undefined,
+      undefined,
       this.config.filters.filters
     );
 
     this.holodexService = new HolodexService(
-      this.config.streams.holodex.apiKey,
+      undefined,
       this.config.filters.filters,
-      this.config.streams.favoriteChannels
+      this.config.streams.favoriteChannels,
+      this.config
     );
 
     this.playerService = new PlayerService();
@@ -45,7 +46,7 @@ export class StreamManager {
   /**
    * Starts a new stream on the specified screen
    */
-  async startStream(options: StreamOptions): Promise<StreamResponse> {
+  async startStream(options: Partial<StreamOptions> & { url: string }): Promise<StreamResponse> {
     // Check if we've hit the stream limit
     if (this.streams.size >= this.config.player.maxStreams) {
       return {
@@ -74,12 +75,11 @@ export class StreamManager {
       };
     }
 
-    const updatedOptions = {
+    return this.playerService.startStream({
       ...options,
-      screen
-    };
-
-    return this.playerService.startStream(updatedOptions);
+      screen,
+      quality: options.quality || this.config.player.defaultQuality
+    });
   }
 
   /**
@@ -112,18 +112,63 @@ export class StreamManager {
   }
 
   /**
-   * Fetches live streams from both Holodex and Twitch
+   * Fetches live streams from both Holodex and Twitch based on config
    */
-  async getLiveStreams(options: { 
-    organization?: string, 
-    limit?: number 
-  } = {}): Promise<StreamSource[]> {
-    const [holodexStreams, twitchStreams] = await Promise.all([
-      this.holodexService.getLiveStreams(options),
-      this.twitchService.getStreams(options.limit)
-    ]);
+  async getLiveStreams(options: StreamLimits = {}): Promise<StreamSource[]> {
+    try {
+      const { limit = this.config.player.limits.total } = options;
 
-    return [...holodexStreams, ...twitchStreams];
+      // Get enabled sources for each type
+      const twitchSource = this.config.player.limits.sources.find(s => 
+        s.type === ('twitch' as StreamSourceType) && s.enabled
+      );
+      const holodexSources = this.config.player.limits.sources.filter(s => 
+        s.enabled && (s.type === 'favorites' || s.type === 'organization')
+      );
+
+      const twitchLimit = twitchSource?.limit || 0;
+      const holodexLimit = holodexSources.reduce((acc, s) => acc + s.limit, 0);
+
+      // Fetch streams from both services
+      const [twitchStreams, holodexStreams] = await Promise.all([
+        twitchLimit > 0 ? this.twitchService.getStreams(twitchLimit) : [],
+        holodexLimit > 0 ? this.holodexService.getLiveStreams({
+          limit: holodexLimit
+        }) : []
+      ]);
+
+      // Sort streams by viewer count
+      const sortedTwitch = [...twitchStreams].sort((a, b) => 
+        (b.viewerCount || 0) - (a.viewerCount || 0)
+      );
+      const sortedHolodex = [...holodexStreams].sort((a, b) => 
+        (b.viewerCount || 0) - (a.viewerCount || 0)
+      );
+
+      // Merge streams based on source priorities
+      const sources = this.config.player.limits.sources;
+      const result: StreamSource[] = [];
+
+      for (const source of sources) {
+        if (!source.enabled) continue;
+
+        const streams = source.type === ('twitch' as StreamSourceType) 
+          ? sortedTwitch 
+          : sortedHolodex;
+        result.push(...streams.slice(0, source.limit));
+
+        if (result.length >= limit) break;
+      }
+
+      return result.slice(0, limit);
+    } catch (error) {
+      logger.error(
+        'Failed to fetch live streams',
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return [];
+    }
   }
 
   /**
@@ -160,9 +205,11 @@ export class StreamManager {
     try {
       const streams = await this.getLiveStreams();
       const availableSlots = this.config.player.maxStreams - this.streams.size;
-      
+      logger.info(`Auto-starting ${Math.min(streams.length, availableSlots)} streams`, 'StreamManager');
+      logger.info(JSON.stringify(streams));
       for (let i = 0; i < Math.min(streams.length, availableSlots); i++) {
         const stream = streams[i];
+        logger.info(`Starting stream ${stream.url} on screen ${i + 1}`);
         await this.startStream({
           url: stream.url,
           quality: this.config.player.defaultQuality,

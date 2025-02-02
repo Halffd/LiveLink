@@ -11,21 +11,29 @@ import type { TwitchAuth } from '../db/database.js';
 import type { StreamSource } from '../../types/stream.js';
 import { logger } from './logger.js';
 import { db } from '../db/database.js';
+import { env } from '../../config/env.js';
 
 export class TwitchService {
   private client: ApiClient | null = null;
   private userAuthProvider?: RefreshingAuthProvider;
+  private filters: string[];
 
   constructor(
-    private readonly clientId: string,
-    private readonly clientSecret: string,
-    private readonly filters: string[]
+    private clientId: string = env.TWITCH_CLIENT_ID,
+    private clientSecret: string = env.TWITCH_CLIENT_SECRET,
+    filters: string[] = []
   ) {
-    this.initializeClient();
+    this.filters = filters;
+    this.initialize();
   }
 
-  private async initializeClient() {
+  private initialize() {
     try {
+      if (!this.clientId || !this.clientSecret) {
+        logger.warn('Missing Twitch credentials - some features will be disabled', 'TwitchService');
+        return;
+      }
+
       const authProvider = new RefreshingAuthProvider({
         clientId: this.clientId,
         clientSecret: this.clientSecret
@@ -34,7 +42,7 @@ export class TwitchService {
       logger.info('Twitch client initialized', 'TwitchService');
     } catch (error) {
       logger.error(
-        'Failed to initialize Twitch client', 
+        'Failed to initialize Twitch client',
         'TwitchService',
         error instanceof Error ? error : new Error(String(error))
       );
@@ -67,28 +75,36 @@ export class TwitchService {
   }
 
   async getVTuberStreams(limit = 50): Promise<StreamSource[]> {
-    if (!this.client) return [];
+    if (!this.client) {
+      logger.warn('Twitch client not initialized', 'TwitchService');
+      return [];
+    }
 
     try {
-      const filter: HelixPaginatedStreamFilter = {
-        limit,
-        type: 'live'
-      };
-      // @ts-ignore - Twitch API types are incomplete
-      filter.tags = ['VTuber'];
+      const streams = await this.client.streams.getStreams({
+        type: 'live',
+        language: 'en',
+        limit
+      });
 
-      const streams = await this.client.streams.getStreams(filter);
-      const streamData = (streams as unknown as { data: HelixStream[] }).data;
-      
-      return streamData.map(stream => ({
-        url: `https://twitch.tv/${stream.userName}`,
-        title: stream.title,
-        platform: 'twitch' as const,
-        viewerCount: stream.viewers
-      }));
+      return streams.data
+        .filter(stream => 
+          !this.filters.length || 
+          !this.filters.some(filter => 
+            stream.title.toLowerCase().includes(filter.toLowerCase())
+          )
+        )
+        .map(stream => ({
+          title: stream.title,
+          url: `https://twitch.tv/${stream.userName}`,
+          platform: 'twitch' as const,
+          thumbnail: stream.thumbnailUrl,
+          viewerCount: stream.viewers,
+          startedAt: stream.startDate
+        }));
     } catch (error) {
       logger.error(
-        'Failed to fetch VTuber streams', 
+        'Failed to fetch Twitch streams',
         'TwitchService',
         error instanceof Error ? error : new Error(String(error))
       );

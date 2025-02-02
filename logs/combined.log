@@ -1,0 +1,195 @@
+2025-02-02T22:10:19.785Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:10:19.791Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:10:19.792Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:10:19.794Z [INFO] [Server] Initializing database...
+2025-02-02T22:10:19.848Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:10:19.850Z [INFO] [Server] Database initialized
+2025-02-02T22:10:19.850Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:10:20.755Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: token?grant_type=client_credentials&client_id=&client_secret=
+Method: POST
+Body:
+{
+  "status": 400,
+  "message": "missing client id"
+}
+2025-02-02T22:10:21.102Z [ERROR] [HolodexService] Failed to fetch Holodex streams
+Error: Request failed with status code 403
+    at createError (/home/all/repos/LiveLink/node_modules/holodex.js/node_modules/axios/lib/core/createError.js:16:15)
+    at settle (/home/all/repos/LiveLink/node_modules/holodex.js/node_modules/axios/lib/core/settle.js:17:12)
+    at IncomingMessage.handleStreamEnd (/home/all/repos/LiveLink/node_modules/holodex.js/node_modules/axios/lib/adapters/http.js:269:11)
+    at IncomingMessage.emit (node:events:519:35)
+    at endReadableNT (node:internal/streams/readable:1696:12)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)
+2025-02-02T22:10:21.103Z [INFO] [Server] Auto-start complete
+2025-02-02T22:10:21.106Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:10:21.106Z [INFO] [Server] Routes:
+2025-02-02T22:10:21.106Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:10:21.106Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:10:21.107Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:10:21.107Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:10:21.107Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:10:21.107Z [INFO] [Server] POST /api/streams
+2025-02-02T22:10:21.107Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:15:06.788Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:15:06.798Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:15:06.798Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:15:06.801Z [INFO] [Server] Initializing database...
+2025-02-02T22:15:06.826Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:15:06.826Z [INFO] [Server] Database initialized
+2025-02-02T22:15:06.827Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:15:07.750Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: token?grant_type=client_credentials&client_id=wtl7mwep6n5o1bgcpr0m1v6kae38i&client_secret=z0lc2ihp01tdt496chzro8x0pi0zxp
+Method: POST
+Body:
+{
+  "status": 400,
+  "message": "invalid client"
+}
+2025-02-02T22:15:07.803Z [INFO] [Server] Auto-start complete
+2025-02-02T22:15:07.810Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:15:07.811Z [INFO] [Server] Routes:
+2025-02-02T22:15:07.812Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:15:07.812Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:15:07.812Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:15:07.813Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:15:07.814Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:15:07.814Z [INFO] [Server] POST /api/streams
+2025-02-02T22:15:07.814Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:26:45.253Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:26:45.260Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:26:45.260Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:26:45.263Z [INFO] [Server] Initializing database...
+2025-02-02T22:26:45.268Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:26:45.269Z [INFO] [Server] Database initialized
+2025-02-02T22:26:45.269Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:26:46.197Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: token?grant_type=client_credentials&client_id=wtl7mwep6n5o1bgcpr0m1v6kae38i&client_secret=z0lc2ihp01tdt496chzro8x0pi0zxp
+Method: POST
+Body:
+{
+  "status": 400,
+  "message": "invalid client"
+}
+2025-02-02T22:26:46.199Z [INFO] [Server] Auto-start complete
+2025-02-02T22:26:46.204Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:26:46.205Z [INFO] [Server] Routes:
+2025-02-02T22:26:46.205Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:26:46.205Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:26:46.206Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:26:46.206Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:26:46.206Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:26:46.206Z [INFO] [Server] POST /api/streams
+2025-02-02T22:26:46.206Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:27:57.095Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:27:57.104Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:27:57.106Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:27:57.109Z [INFO] [Server] Initializing database...
+2025-02-02T22:27:57.119Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:27:57.119Z [INFO] [Server] Database initialized
+2025-02-02T22:27:57.120Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:27:58.047Z [INFO] [Server] Auto-start complete
+2025-02-02T22:27:58.056Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:27:58.057Z [INFO] [Server] Routes:
+2025-02-02T22:27:58.057Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:27:58.058Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:27:58.058Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:27:58.058Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:27:58.058Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:27:58.059Z [INFO] [Server] POST /api/streams
+2025-02-02T22:27:58.059Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:28:33.331Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:28:33.338Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:28:33.339Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:28:33.344Z [INFO] [Server] Initializing database...
+2025-02-02T22:28:33.355Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:28:33.356Z [INFO] [Server] Database initialized
+2025-02-02T22:28:33.356Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:28:33.977Z [INFO] [Server] Auto-start complete
+2025-02-02T22:28:33.979Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:28:33.980Z [INFO] [Server] Routes:
+2025-02-02T22:28:33.980Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:28:33.980Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:28:33.980Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:28:33.980Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:28:33.980Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:28:33.980Z [INFO] [Server] POST /api/streams
+2025-02-02T22:28:33.981Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:29:58.228Z [ERROR] [Server] Server error: ENOENT: no such file or directory, stat '/home/all/repos/LiveLink/build/index.html' [object Object]
+Error: ENOENT: no such file or directory, stat '/home/all/repos/LiveLink/build/index.html'
+2025-02-02T22:35:57.564Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:35:57.570Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:35:57.570Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:35:57.574Z [INFO] [Server] Initializing database...
+2025-02-02T22:35:57.586Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:35:57.586Z [INFO] [Server] Database initialized
+2025-02-02T22:35:57.587Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:35:57.587Z [INFO] [StreamManager] Fetching 0 Twitch streams and 25 Holodex streams
+2025-02-02T22:35:57.587Z [INFO] [HolodexService] Fetching 25 Holodex streams
+2025-02-02T22:35:58.549Z [INFO] [HolodexService] Fetched 0 Holodex streams
+2025-02-02T22:35:58.551Z [INFO] [StreamManager] Auto-starting 0 streams
+2025-02-02T22:35:58.551Z [INFO] []
+2025-02-02T22:35:58.551Z [INFO] [Server] Auto-start complete
+2025-02-02T22:35:58.556Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:35:58.557Z [INFO] [Server] Routes:
+2025-02-02T22:35:58.557Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:35:58.557Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:35:58.558Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:35:58.558Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:35:58.558Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:35:58.558Z [INFO] [Server] POST /api/streams
+2025-02-02T22:35:58.558Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T22:56:15.415Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T22:56:15.424Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T22:56:15.425Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T22:56:15.428Z [INFO] [Server] Initializing database...
+2025-02-02T22:56:15.447Z [INFO] [Database] Database initialized successfully
+2025-02-02T22:56:15.448Z [INFO] [Server] Database initialized
+2025-02-02T22:56:15.449Z [INFO] [Server] Auto-starting streams...
+2025-02-02T22:56:15.449Z [INFO] [HolodexService] Fetching 25 Holodex streams
+2025-02-02T22:56:15.781Z [INFO] [HolodexService] Fetched 0 Holodex streams
+2025-02-02T22:56:15.783Z [INFO] [StreamManager] Auto-starting 0 streams
+2025-02-02T22:56:15.783Z [INFO] []
+2025-02-02T22:56:15.783Z [INFO] [Server] Auto-start complete
+2025-02-02T22:56:15.786Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T22:56:15.787Z [INFO] [Server] Routes:
+2025-02-02T22:56:15.787Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T22:56:15.787Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T22:56:15.787Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T22:56:15.787Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T22:56:15.787Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T22:56:15.787Z [INFO] [Server] POST /api/streams
+2025-02-02T22:56:15.787Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-02T23:37:54.278Z [INFO] [TwitchService] Twitch client initialized
+2025-02-02T23:37:54.290Z [INFO] [HolodexService] Holodex client initialized
+2025-02-02T23:37:54.291Z [INFO] [StreamManager] Stream manager initialized
+2025-02-02T23:37:54.293Z [INFO] [Server] Initializing database...
+2025-02-02T23:37:54.298Z [INFO] [Database] Database initialized successfully
+2025-02-02T23:37:54.299Z [INFO] [Server] Database initialized
+2025-02-02T23:37:54.300Z [INFO] [Server] Auto-starting streams...
+2025-02-02T23:37:55.413Z [INFO] [StreamManager] Auto-starting 4 streams
+2025-02-02T23:37:55.414Z [INFO] [{"title":"【 Keep Talking and Nobody Explodes 】 The Vtuber to Bomb Diffuser Pipeline is Real","url":"https://youtube.com/watch?v=set_fCDhJgs","platform":"youtube","thumbnail":"https://yt3.ggpht.com/6BCfAqi9yIpZbHLbw9BAWySvB3XZf9r8jFqudO5nSOsHoGzLhlKrm1M1uuMCRabi_pXGDzl7=s800-c-k-c0x00ffffff-no-rj","viewerCount":21045,"startedAt":"2025-02-02T23:00:44.000Z"},{"title":"【 #朝ミオ 】月曜日だよ!2月だよ!おはみぉーん!","url":"https://youtube.com/watch?v=zPf9MK-SZRk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/JV8VdQFA7eZk5H1cRxHyIdLKQ5wD6EBywjxLzrne2EpY9LSiVgtapvh0iQA6plVNxdIKNxK0NRU=s800-c-k-c0x00ffffff-no-rj","viewerCount":14864,"startedAt":"2025-02-02T22:30:13.000Z"},{"title":"【Keep Talking And Nobody Explodes】Safest bomb defusing no one will explode -","url":"https://youtube.com/watch?v=Pz4thI9O_yk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/sSuJylnDA4Si69bKWVzwUhrOhgIkBCzGE6DHgDyHCJux8TKi7WU8GyKaKZHEN0a3QG7s2yJ399g=s800-c-k-c0x00ffffff-no-rj","viewerCount":9062,"startedAt":"2025-02-02T23:00:34.000Z"},{"title":"【 #にじ若手女子マイクラ 】水中建築ってかっこいいですよね‥🏡🐠【小清水 透 / にじさんじ】","url":"https://youtube.com/watch?v=PXQXCoIWBYI","platform":"youtube","thumbnail":"https://yt3.ggpht.com/hG53BCummo99m5BXWvxzlLu-BrvwfeCwK3MOz-xCuo1uxf-iGqz6-0m_zUAASujNaBvDxHxBP2Q=s800-c-k-c0x00ffffff-no-rj","viewerCount":7125,"startedAt":"2025-02-02T15:02:34.000Z"},{"title":"【朝活】おはすず 恵方巻食べる 2月3日(月)【七瀬すず菜/にじさんじ】","url":"https://youtube.com/watch?v=IravXhWfk70","platform":"youtube","thumbnail":"https://yt3.ggpht.com/7nz6Hs6CnYcuL_GfuVLg14uPl--Wun8rBEpHHAWJayZLWlySHVi_3163OFCV14_g1qnkSdwk=s800-c-k-c0x00ffffff-no-rj","viewerCount":3753,"startedAt":"2025-02-02T22:00:40.000Z"},{"title":"【朝活】おはよう☀mgmg~Eat Time❣最近健康生活が止まりません【#ホロライブ #ロボ子さん 】","url":"https://youtube.com/watch?v=TY_FKkdJ9u4","platform":"youtube","thumbnail":"https://yt3.ggpht.com/gKitLHfMqsfmC26xRBBNBVE9jz4m0X-xAvcdPUwy8VPa4FCw0-XRxOKLvJZxm-lQnIDQU2rDA0k=s800-c-k-c0x00ffffff-no-rj","viewerCount":2152,"startedAt":"2025-02-02T22:00:57.000Z"},{"title":"【朝活】朝活健康マイクラ!!!ペット達の小屋とか作りたいな!【早乙女ベリー/にじさんじ】","url":"https://youtube.com/watch?v=D8PkIWUNtoo","platform":"youtube","thumbnail":"https://yt3.ggpht.com/pDQM3ASuO8uz1B8DGb5J56q2w833A9fse9MZoNJB2jVHIalKR7CCAjQ3Y60iVpZlCF0veC8NaA=s800-c-k-c0x00ffffff-no-rj","viewerCount":1961,"startedAt":"2025-02-02T21:00:21.000Z"},{"title":"Feed Shiina a Borgir Please. [Fast Food Simulator]","url":"https://youtube.com/watch?v=MCR8XeUKLC8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/bivPCxBxXTwtkwqY_vLocbGWgSzUYv0Tm_lBj0At_4gLoLlglYpRWxHH5DqegdI-Ddwaf3o2JtU=s800-c-k-c0x00ffffff-no-rj","viewerCount":830,"startedAt":"2025-02-02T23:01:59.000Z"},{"title":"[RatShaker] I like my rats shaken, not stirred【VAllure】","url":"https://youtube.com/watch?v=sCeKZfbNb8k","platform":"youtube","thumbnail":"https://yt3.ggpht.com/t8nvLlNAiSnEUu4AbkSwCC4zXarBuSuelVq2DdrMMSrvN0LiiInRImjBFPQWHofpjaMLknPZ=s800-c-k-c0x00ffffff-no-rj","viewerCount":305,"startedAt":"2025-02-02T23:07:33.000Z"},{"title":"【艦これ】まったり朝活艦これ【小日向ぽん】","url":"https://youtube.com/watch?v=WDxHOSmZW8Y","platform":"youtube","thumbnail":"https://yt3.ggpht.com/ytc/AIdro_mLe_V97dVzpxSPl0KXKAzsrgT5zepx_jrwgJTv75slrQ=s800-c-k-c0x00ffffff-no-rj","viewerCount":147,"startedAt":"2025-02-02T22:43:06.000Z"},{"title":"TOC Calfie Release + Non-Lethal RON w/ YOU","url":"https://youtube.com/watch?v=i7RvpB_fTzU","platform":"youtube","thumbnail":"https://yt3.ggpht.com/LLpzkUmz_4q-jY24JLKKmZ_lIvhtp1z8-w1sDc3UqD33u_pTMrYtW-fADZwY67udAlF-h5pI6g=s800-c-k-c0x00ffffff-no-rj","viewerCount":133,"startedAt":"2025-02-02T23:33:22.000Z"},{"title":"【朝活雑談 おはようございます! 縦型配信【#朔夜トバリ/#vtuber #shorts 】","url":"https://youtube.com/watch?v=9QthG1IJkhk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/cexyQAmnM8iYbC8ihhT3xoOLh-VBI2aS0L50pBdZeu1gbFZAdEKIkvxTgRWwgdOxWzcUA8F7Fw=s800-c-k-c0x00ffffff-no-rj","viewerCount":118,"startedAt":"2025-02-02T23:04:21.000Z"},{"title":"【咲寶說聲早】#花遊愛戀茶話會 動漫節前資訊大統整🌸 好期待見到你們哇!😍 #初見歡迎【天櫻咲樂/VTuber】","url":"https://youtube.com/watch?v=Z5Yeq7Xmtuo","platform":"youtube","thumbnail":"https://yt3.ggpht.com/M8M3y_81HTusp4sel4exs9V7RE5kyR3jkQbdG7ZToAdV9S0h6474D_gwQGZEKp9gFPmBtw0hpg=s800-c-k-c0x00ffffff-no-rj","viewerCount":77,"startedAt":"2025-02-02T23:00:48.000Z"},{"title":"Bonking The Ringed City 💀 [Dark Souls 3]","url":"https://youtube.com/watch?v=ZfpAlDFgKJ8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/3qwDKx9cIA42ij3CqeV2QReCUhDDRIeDqDU5cnMcZiCp-Rq3p26tTL-rdFa7Ob-q5aBpNiGDkw=s800-c-k-c0x00ffffff-no-rj","viewerCount":47,"startedAt":"2025-02-02T23:01:32.000Z"},{"title":"《POPPY PLAYTIME CHAPTER 4》PART 2! FINISHING GAME! SAFE HAVEN!【Sera Kesera | lucid ☁️】#vtuber #gaming","url":"https://youtube.com/watch?v=WLxdaBm_TI0","platform":"youtube","thumbnail":"https://yt3.ggpht.com/9l1SuUcHbk3uo-zEZGGsE-ND7ePlrIAl4g6QoUMl98RzA7JCwlPAK4pshZ3ZO61tHhkyhj8bag=s800-c-k-c0x00ffffff-no-rj","viewerCount":46,"startedAt":"2025-02-02T22:59:51.000Z"},{"title":"【Reading Reddit Stories】ooo drama...【Cosmia】","url":"https://youtube.com/watch?v=yoc9O-erWq8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/1YpRdrrNfoWQhKxjldkUkj_qJ-m7U8sQzgNID6CqbnTjgvrcS8D-9MadA2Oj849sPGK0rsC7=s800-c-k-c0x00ffffff-no-rj","viewerCount":19,"startedAt":"2025-02-02T23:35:11.000Z"},{"title":"【🌞 #朝活 】2/3 おはようシュガートースト🍞#216 【がんばるぅ子】","url":"https://youtube.com/watch?v=9g_-J6ME8-o","platform":"youtube","thumbnail":"https://yt3.ggpht.com/mqoBYP60sXknDywRjxXR_HRjKiN9NEoyy1i4HPbRhXs8Sxp4-9tLpfDqzaQPahMr9TInbKbSmoU=s800-c-k-c0x00ffffff-no-rj","viewerCount":14,"startedAt":"2025-02-02T23:30:11.000Z"},{"title":"【MEMBERSHIP】Iron man Watch-A-Long ~! 💄","url":"https://youtube.com/watch?v=mDUd0OvwgTg","platform":"youtube","thumbnail":"https://yt3.ggpht.com/FqoNiBb3ZY9FehjIWlzqQlUtmbaAXRak49X3WWZHEFlzuVCy0CVsaqtYxddltdmwCnJYN3xm=s800-c-k-c0x00ffffff-no-rj","viewerCount":0,"startedAt":"2025-02-02T20:02:56.000Z"},{"title":"👑神くー朝ラジ放送局 Morning Radio~2/3(月)1308回 平日☀朝の情報番組!!朝ごはんやリスナー参加コーナーも!!Vtuber神城くれあ","url":"https://youtube.com/watch?v=WzAAKuDyGXQ","platform":"youtube","thumbnail":"https://yt3.ggpht.com/6gmAXJWB3VU9Ozgk5oFEEBJEpvzUWpReOdQnqJ8RCBOccOYF0CoSNABkf1f3Ug2UHLN6t4cDlA8=s800-c-k-c0x00ffffff-no-rj","viewerCount":0},{"title":"【 Keep Talking and Nobody Explodes 】 The Vtuber to Bomb Diffuser Pipeline is Real","url":"https://youtube.com/watch?v=set_fCDhJgs","platform":"youtube","thumbnail":"https://yt3.ggpht.com/6BCfAqi9yIpZbHLbw9BAWySvB3XZf9r8jFqudO5nSOsHoGzLhlKrm1M1uuMCRabi_pXGDzl7=s800-c-k-c0x00ffffff-no-rj","viewerCount":21045,"startedAt":"2025-02-02T23:00:44.000Z"},{"title":"【 #朝ミオ 】月曜日だよ!2月だよ!おはみぉーん!","url":"https://youtube.com/watch?v=zPf9MK-SZRk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/JV8VdQFA7eZk5H1cRxHyIdLKQ5wD6EBywjxLzrne2EpY9LSiVgtapvh0iQA6plVNxdIKNxK0NRU=s800-c-k-c0x00ffffff-no-rj","viewerCount":14864,"startedAt":"2025-02-02T22:30:13.000Z"},{"title":"【Keep Talking And Nobody Explodes】Safest bomb defusing no one will explode -","url":"https://youtube.com/watch?v=Pz4thI9O_yk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/sSuJylnDA4Si69bKWVzwUhrOhgIkBCzGE6DHgDyHCJux8TKi7WU8GyKaKZHEN0a3QG7s2yJ399g=s800-c-k-c0x00ffffff-no-rj","viewerCount":9062,"startedAt":"2025-02-02T23:00:34.000Z"},{"title":"【 #にじ若手女子マイクラ 】水中建築ってかっこいいですよね‥🏡🐠【小清水 透 / にじさんじ】","url":"https://youtube.com/watch?v=PXQXCoIWBYI","platform":"youtube","thumbnail":"https://yt3.ggpht.com/hG53BCummo99m5BXWvxzlLu-BrvwfeCwK3MOz-xCuo1uxf-iGqz6-0m_zUAASujNaBvDxHxBP2Q=s800-c-k-c0x00ffffff-no-rj","viewerCount":7125,"startedAt":"2025-02-02T15:02:34.000Z"},{"title":"【朝活】おはすず 恵方巻食べる 2月3日(月)【七瀬すず菜/にじさんじ】","url":"https://youtube.com/watch?v=IravXhWfk70","platform":"youtube","thumbnail":"https://yt3.ggpht.com/7nz6Hs6CnYcuL_GfuVLg14uPl--Wun8rBEpHHAWJayZLWlySHVi_3163OFCV14_g1qnkSdwk=s800-c-k-c0x00ffffff-no-rj","viewerCount":3753,"startedAt":"2025-02-02T22:00:40.000Z"},{"title":"【朝活】おはよう☀mgmg~Eat Time❣最近健康生活が止まりません【#ホロライブ #ロボ子さん 】","url":"https://youtube.com/watch?v=TY_FKkdJ9u4","platform":"youtube","thumbnail":"https://yt3.ggpht.com/gKitLHfMqsfmC26xRBBNBVE9jz4m0X-xAvcdPUwy8VPa4FCw0-XRxOKLvJZxm-lQnIDQU2rDA0k=s800-c-k-c0x00ffffff-no-rj","viewerCount":2152,"startedAt":"2025-02-02T22:00:57.000Z"},{"title":"【朝活】朝活健康マイクラ!!!ペット達の小屋とか作りたいな!【早乙女ベリー/にじさんじ】","url":"https://youtube.com/watch?v=D8PkIWUNtoo","platform":"youtube","thumbnail":"https://yt3.ggpht.com/pDQM3ASuO8uz1B8DGb5J56q2w833A9fse9MZoNJB2jVHIalKR7CCAjQ3Y60iVpZlCF0veC8NaA=s800-c-k-c0x00ffffff-no-rj","viewerCount":1961,"startedAt":"2025-02-02T21:00:21.000Z"},{"title":"Feed Shiina a Borgir Please. [Fast Food Simulator]","url":"https://youtube.com/watch?v=MCR8XeUKLC8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/bivPCxBxXTwtkwqY_vLocbGWgSzUYv0Tm_lBj0At_4gLoLlglYpRWxHH5DqegdI-Ddwaf3o2JtU=s800-c-k-c0x00ffffff-no-rj","viewerCount":830,"startedAt":"2025-02-02T23:01:59.000Z"},{"title":"[RatShaker] I like my rats shaken, not stirred【VAllure】","url":"https://youtube.com/watch?v=sCeKZfbNb8k","platform":"youtube","thumbnail":"https://yt3.ggpht.com/t8nvLlNAiSnEUu4AbkSwCC4zXarBuSuelVq2DdrMMSrvN0LiiInRImjBFPQWHofpjaMLknPZ=s800-c-k-c0x00ffffff-no-rj","viewerCount":305,"startedAt":"2025-02-02T23:07:33.000Z"},{"title":"【艦これ】まったり朝活艦これ【小日向ぽん】","url":"https://youtube.com/watch?v=WDxHOSmZW8Y","platform":"youtube","thumbnail":"https://yt3.ggpht.com/ytc/AIdro_mLe_V97dVzpxSPl0KXKAzsrgT5zepx_jrwgJTv75slrQ=s800-c-k-c0x00ffffff-no-rj","viewerCount":147,"startedAt":"2025-02-02T22:43:06.000Z"},{"title":"TOC Calfie Release + Non-Lethal RON w/ YOU","url":"https://youtube.com/watch?v=i7RvpB_fTzU","platform":"youtube","thumbnail":"https://yt3.ggpht.com/LLpzkUmz_4q-jY24JLKKmZ_lIvhtp1z8-w1sDc3UqD33u_pTMrYtW-fADZwY67udAlF-h5pI6g=s800-c-k-c0x00ffffff-no-rj","viewerCount":133,"startedAt":"2025-02-02T23:33:22.000Z"},{"title":"【朝活雑談 おはようございます! 縦型配信【#朔夜トバリ/#vtuber #shorts 】","url":"https://youtube.com/watch?v=9QthG1IJkhk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/cexyQAmnM8iYbC8ihhT3xoOLh-VBI2aS0L50pBdZeu1gbFZAdEKIkvxTgRWwgdOxWzcUA8F7Fw=s800-c-k-c0x00ffffff-no-rj","viewerCount":118,"startedAt":"2025-02-02T23:04:21.000Z"},{"title":"【咲寶說聲早】#花遊愛戀茶話會 動漫節前資訊大統整🌸 好期待見到你們哇!😍 #初見歡迎【天櫻咲樂/VTuber】","url":"https://youtube.com/watch?v=Z5Yeq7Xmtuo","platform":"youtube","thumbnail":"https://yt3.ggpht.com/M8M3y_81HTusp4sel4exs9V7RE5kyR3jkQbdG7ZToAdV9S0h6474D_gwQGZEKp9gFPmBtw0hpg=s800-c-k-c0x00ffffff-no-rj","viewerCount":77,"startedAt":"2025-02-02T23:00:48.000Z"},{"title":"Bonking The Ringed City 💀 [Dark Souls 3]","url":"https://youtube.com/watch?v=ZfpAlDFgKJ8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/3qwDKx9cIA42ij3CqeV2QReCUhDDRIeDqDU5cnMcZiCp-Rq3p26tTL-rdFa7Ob-q5aBpNiGDkw=s800-c-k-c0x00ffffff-no-rj","viewerCount":47,"startedAt":"2025-02-02T23:01:32.000Z"},{"title":"《POPPY PLAYTIME CHAPTER 4》PART 2! FINISHING GAME! SAFE HAVEN!【Sera Kesera | lucid ☁️】#vtuber #gaming","url":"https://youtube.com/watch?v=WLxdaBm_TI0","platform":"youtube","thumbnail":"https://yt3.ggpht.com/9l1SuUcHbk3uo-zEZGGsE-ND7ePlrIAl4g6QoUMl98RzA7JCwlPAK4pshZ3ZO61tHhkyhj8bag=s800-c-k-c0x00ffffff-no-rj","viewerCount":46,"startedAt":"2025-02-02T22:59:51.000Z"},{"title":"【Reading Reddit Stories】ooo drama...【Cosmia】","url":"https://youtube.com/watch?v=yoc9O-erWq8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/1YpRdrrNfoWQhKxjldkUkj_qJ-m7U8sQzgNID6CqbnTjgvrcS8D-9MadA2Oj849sPGK0rsC7=s800-c-k-c0x00ffffff-no-rj","viewerCount":19,"startedAt":"2025-02-02T23:35:11.000Z"},{"title":"【🌞 #朝活 】2/3 おはようシュガートースト🍞#216 【がんばるぅ子】","url":"https://youtube.com/watch?v=9g_-J6ME8-o","platform":"youtube","thumbnail":"https://yt3.ggpht.com/mqoBYP60sXknDywRjxXR_HRjKiN9NEoyy1i4HPbRhXs8Sxp4-9tLpfDqzaQPahMr9TInbKbSmoU=s800-c-k-c0x00ffffff-no-rj","viewerCount":14,"startedAt":"2025-02-02T23:30:11.000Z"},{"title":"【MEMBERSHIP】Iron man Watch-A-Long ~! 💄","url":"https://youtube.com/watch?v=mDUd0OvwgTg","platform":"youtube","thumbnail":"https://yt3.ggpht.com/FqoNiBb3ZY9FehjIWlzqQlUtmbaAXRak49X3WWZHEFlzuVCy0CVsaqtYxddltdmwCnJYN3xm=s800-c-k-c0x00ffffff-no-rj","viewerCount":0,"startedAt":"2025-02-02T20:02:56.000Z"},{"title":"👑神くー朝ラジ放送局 Morning Radio~2/3(月)1308回 平日☀朝の情報番組!!朝ごはんやリスナー参加コーナーも!!Vtuber神城くれあ","url":"https://youtube.com/watch?v=WzAAKuDyGXQ","platform":"youtube","thumbnail":"https://yt3.ggpht.com/6gmAXJWB3VU9Ozgk5oFEEBJEpvzUWpReOdQnqJ8RCBOccOYF0CoSNABkf1f3Ug2UHLN6t4cDlA8=s800-c-k-c0x00ffffff-no-rj","viewerCount":0},{"title":"【 Keep Talking and Nobody Explodes 】 The Vtuber to Bomb Diffuser Pipeline is Real","url":"https://youtube.com/watch?v=set_fCDhJgs","platform":"youtube","thumbnail":"https://yt3.ggpht.com/6BCfAqi9yIpZbHLbw9BAWySvB3XZf9r8jFqudO5nSOsHoGzLhlKrm1M1uuMCRabi_pXGDzl7=s800-c-k-c0x00ffffff-no-rj","viewerCount":21045,"startedAt":"2025-02-02T23:00:44.000Z"},{"title":"【 #朝ミオ 】月曜日だよ!2月だよ!おはみぉーん!","url":"https://youtube.com/watch?v=zPf9MK-SZRk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/JV8VdQFA7eZk5H1cRxHyIdLKQ5wD6EBywjxLzrne2EpY9LSiVgtapvh0iQA6plVNxdIKNxK0NRU=s800-c-k-c0x00ffffff-no-rj","viewerCount":14864,"startedAt":"2025-02-02T22:30:13.000Z"},{"title":"【Keep Talking And Nobody Explodes】Safest bomb defusing no one will explode -","url":"https://youtube.com/watch?v=Pz4thI9O_yk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/sSuJylnDA4Si69bKWVzwUhrOhgIkBCzGE6DHgDyHCJux8TKi7WU8GyKaKZHEN0a3QG7s2yJ399g=s800-c-k-c0x00ffffff-no-rj","viewerCount":9062,"startedAt":"2025-02-02T23:00:34.000Z"},{"title":"【 #にじ若手女子マイクラ 】水中建築ってかっこいいですよね‥🏡🐠【小清水 透 / にじさんじ】","url":"https://youtube.com/watch?v=PXQXCoIWBYI","platform":"youtube","thumbnail":"https://yt3.ggpht.com/hG53BCummo99m5BXWvxzlLu-BrvwfeCwK3MOz-xCuo1uxf-iGqz6-0m_zUAASujNaBvDxHxBP2Q=s800-c-k-c0x00ffffff-no-rj","viewerCount":7125,"startedAt":"2025-02-02T15:02:34.000Z"},{"title":"【朝活】おはすず 恵方巻食べる 2月3日(月)【七瀬すず菜/にじさんじ】","url":"https://youtube.com/watch?v=IravXhWfk70","platform":"youtube","thumbnail":"https://yt3.ggpht.com/7nz6Hs6CnYcuL_GfuVLg14uPl--Wun8rBEpHHAWJayZLWlySHVi_3163OFCV14_g1qnkSdwk=s800-c-k-c0x00ffffff-no-rj","viewerCount":3753,"startedAt":"2025-02-02T22:00:40.000Z"},{"title":"【朝活】おはよう☀mgmg~Eat Time❣最近健康生活が止まりません【#ホロライブ #ロボ子さん 】","url":"https://youtube.com/watch?v=TY_FKkdJ9u4","platform":"youtube","thumbnail":"https://yt3.ggpht.com/gKitLHfMqsfmC26xRBBNBVE9jz4m0X-xAvcdPUwy8VPa4FCw0-XRxOKLvJZxm-lQnIDQU2rDA0k=s800-c-k-c0x00ffffff-no-rj","viewerCount":2152,"startedAt":"2025-02-02T22:00:57.000Z"},{"title":"【朝活】朝活健康マイクラ!!!ペット達の小屋とか作りたいな!【早乙女ベリー/にじさんじ】","url":"https://youtube.com/watch?v=D8PkIWUNtoo","platform":"youtube","thumbnail":"https://yt3.ggpht.com/pDQM3ASuO8uz1B8DGb5J56q2w833A9fse9MZoNJB2jVHIalKR7CCAjQ3Y60iVpZlCF0veC8NaA=s800-c-k-c0x00ffffff-no-rj","viewerCount":1961,"startedAt":"2025-02-02T21:00:21.000Z"},{"title":"Feed Shiina a Borgir Please. [Fast Food Simulator]","url":"https://youtube.com/watch?v=MCR8XeUKLC8","platform":"youtube","thumbnail":"https://yt3.ggpht.com/bivPCxBxXTwtkwqY_vLocbGWgSzUYv0Tm_lBj0At_4gLoLlglYpRWxHH5DqegdI-Ddwaf3o2JtU=s800-c-k-c0x00ffffff-no-rj","viewerCount":830,"startedAt":"2025-02-02T23:01:59.000Z"},{"title":"[RatShaker] I like my rats shaken, not stirred【VAllure】","url":"https://youtube.com/watch?v=sCeKZfbNb8k","platform":"youtube","thumbnail":"https://yt3.ggpht.com/t8nvLlNAiSnEUu4AbkSwCC4zXarBuSuelVq2DdrMMSrvN0LiiInRImjBFPQWHofpjaMLknPZ=s800-c-k-c0x00ffffff-no-rj","viewerCount":305,"startedAt":"2025-02-02T23:07:33.000Z"},{"title":"【艦これ】まったり朝活艦これ【小日向ぽん】","url":"https://youtube.com/watch?v=WDxHOSmZW8Y","platform":"youtube","thumbnail":"https://yt3.ggpht.com/ytc/AIdro_mLe_V97dVzpxSPl0KXKAzsrgT5zepx_jrwgJTv75slrQ=s800-c-k-c0x00ffffff-no-rj","viewerCount":147,"startedAt":"2025-02-02T22:43:06.000Z"},{"title":"TOC Calfie Release + Non-Lethal RON w/ YOU","url":"https://youtube.com/watch?v=i7RvpB_fTzU","platform":"youtube","thumbnail":"https://yt3.ggpht.com/LLpzkUmz_4q-jY24JLKKmZ_lIvhtp1z8-w1sDc3UqD33u_pTMrYtW-fADZwY67udAlF-h5pI6g=s800-c-k-c0x00ffffff-no-rj","viewerCount":133,"startedAt":"2025-02-02T23:33:22.000Z"},{"title":"【朝活雑談 おはようございます! 縦型配信【#朔夜トバリ/#vtuber #shorts 】","url":"https://youtube.com/watch?v=9QthG1IJkhk","platform":"youtube","thumbnail":"https://yt3.ggpht.com/cexyQAmnM8iYbC8ihhT3xoOLh-VBI2aS0L50pBdZeu1gbFZAdEKIkvxTgRWwgdOxWzcUA8F7Fw=s800-c-k-c0x00ffffff-no-rj","viewerCount":118,"startedAt":"2025-02-02T23:04:21.000Z"}]
+2025-02-02T23:37:55.452Z [INFO] Starting stream https://youtube.com/watch?v=set_fCDhJgs on screen 1
+2025-02-02T23:37:55.463Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-02T23:37:55.465Z [INFO] Starting stream https://youtube.com/watch?v=zPf9MK-SZRk on screen 2
+2025-02-02T23:37:55.471Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-02T23:37:55.473Z [INFO] Starting stream https://youtube.com/watch?v=Pz4thI9O_yk on screen 3
+2025-02-02T23:37:55.485Z [INFO] [PlayerService] Stream started on screen 3
+2025-02-02T23:37:55.485Z [INFO] Starting stream https://youtube.com/watch?v=PXQXCoIWBYI on screen 4
+2025-02-02T23:37:55.493Z [INFO] [PlayerService] Stream started on screen 4
+2025-02-02T23:37:55.493Z [INFO] [Server] Auto-start complete
+2025-02-02T23:37:55.507Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-02T23:37:55.509Z [INFO] [Server] Routes:
+2025-02-02T23:37:55.509Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-02T23:37:55.509Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-02T23:37:55.509Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-02T23:37:55.509Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-02T23:37:55.509Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-02T23:37:55.511Z [INFO] [Server] POST /api/streams
+2025-02-02T23:37:55.511Z [INFO] [Server] DELETE /api/streams/:screen

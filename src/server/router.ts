@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = new Router();
 
 // Serve static files from the build directory
-router.get('/assets/*', async (ctx) => {
+router.get('/assets', async (ctx) => {
   await send(ctx, ctx.path, { 
     root: path.resolve(__dirname, '../../build') 
   });

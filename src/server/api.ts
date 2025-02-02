@@ -39,7 +39,7 @@ app.use(async (ctx, next) => {
 
 // Error handling
 app.on('error', (err, ctx) => {
-  logger.error(`Server error: ${err.message}`, 'Server', err);
+  logger.error(`Server error: ${err.message} ${ctx}`, 'Server', err);
 });
 
 // Serve static files from the build directory

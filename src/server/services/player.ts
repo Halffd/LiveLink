@@ -19,75 +19,67 @@ export class PlayerService {
     this.events = new EventEmitter();
   }
 
-  /**
-   * Starts a new stream
-   */
-  async startStream(options: StreamOptions): Promise<StreamResponse> {
+  async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
+    logger.debug(`Starting stream with options: ${JSON.stringify(options)}`, 'PlayerService');
+    
+    if (this.streams.has(options.screen)) {
+      logger.debug(`Stopping existing stream on screen ${options.screen}`, 'PlayerService');
+      await this.stopStream(options.screen);
+    }
+
     try {
-      const { url, quality = 'best', screen = 1 } = options;
-
-      // Check if screen is already in use
-      if (this.streams.has(screen)) {
-        return {
-          success: false,
-          screen,
-          message: `Screen ${screen} is already in use`
-        };
-      }
-
-      // Determine platform from URL
-      const platform = url.includes('youtube.com') ? 'youtube' : 'twitch';
-
-      // Start streamlink process
-      const process = spawn('streamlink', [
-        url,
-        quality,
-        '--player',
-        'mpv',
-        '--player-args',
-        `--title="Stream ${screen}" --screen=${screen - 1} ${options.windowMaximized ? '--fullscreen' : ''}`
-      ]);
-
-      // Handle process output
+      const platform = options.url.includes('twitch.tv') ? 'twitch' : 'youtube';
+      const command = 'streamlink';
+      
+      const args = this.buildPlayerArgs(options, command);
+      logger.debug(`Spawning ${command} with args: ${args.join(' ')}`, 'PlayerService');
+      
+      const process = spawn(command, args);
+      
       process.stdout.on('data', (data) => {
         if (this.outputCallback) {
-          this.outputCallback({ screen, data: data.toString() });
+          this.outputCallback({ 
+            screen: options.screen, 
+            data: data.toString() 
+          });
         }
       });
 
       process.stderr.on('data', (data) => {
         if (this.errorCallback) {
-          this.errorCallback({ screen, error: data.toString() });
+          this.errorCallback({ 
+            screen: options.screen, 
+            error: data.toString() 
+          });
         }
       });
 
-      // Store stream instance
       const streamInstance: StreamInstance = {
-        id: Date.now(), // Use timestamp as ID
+        id: Date.now(),
         process,
-        url,
-        quality,
-        screen,
+        url: options.url,
+        quality: options.quality || 'best',
+        screen: options.screen,
         platform
       };
-      this.streams.set(screen, streamInstance);
 
-      logger.info(`Stream started on screen ${screen}`, 'PlayerService');
+      this.streams.set(options.screen, streamInstance);
+      logger.info(`Stream started on screen ${options.screen}`, 'PlayerService');
+      
       return {
         success: true,
-        screen,
-        message: `Stream started on screen ${screen}`
+        screen: options.screen,
+        message: 'Stream started successfully'
       };
-
     } catch (error) {
       logger.error(
-        `Failed to start stream: ${error}`,
+        'Failed to start stream',
         'PlayerService',
         error instanceof Error ? error : new Error(String(error))
       );
       return {
         success: false,
-        screen: options.screen || 1,
+        screen: options.screen,
         message: `Failed to start stream: ${error}`
       };
     }
@@ -95,13 +87,21 @@ export class PlayerService {
 
   async stopStream(screen: number): Promise<boolean> {
     const stream = this.streams.get(screen);
-    if (stream) {
+    if (!stream) return false;
+
+    try {
       stream.process.kill();
       this.streams.delete(screen);
       logger.info(`Stream stopped on screen ${screen}`, 'PlayerService');
       return true;
+    } catch (error) {
+      logger.error(
+        'Failed to stop stream',
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return false;
     }
-    return false;
   }
 
   getActiveStreams() {
@@ -109,7 +109,6 @@ export class PlayerService {
       screen,
       url: stream.url,
       quality: stream.quality,
-      title: stream.title,
       platform: stream.platform
     }));
   }
@@ -122,24 +121,30 @@ export class PlayerService {
     this.errorCallback = callback;
   }
 
-  private buildPlayerArgs(options: StreamOptions, player: 'mpv' | 'streamlink'): string[] {
+  private buildPlayerArgs(options: StreamOptions & { screen: number }, player: 'mpv' | 'streamlink'): string[] {
     if (player === 'streamlink') {
       return [
         options.url,
-        options.quality,
+        options.quality || 'best',
         '--player',
         'mpv',
         '--player-args',
-        `--geometry=${this.getScreenGeometry(options.screen)} --volume=${options.volume || 0}${options.windowMaximized ? ' --window-maximized' : ''}`
+        this.buildMpvArgs(options)
       ];
     }
 
     return [
       options.url,
+      this.buildMpvArgs(options)
+    ];
+  }
+
+  private buildMpvArgs(options: StreamOptions & { screen: number }): string {
+    return [
       `--geometry=${this.getScreenGeometry(options.screen)}`,
       `--volume=${options.volume || 0}`,
       ...(options.windowMaximized ? ['--window-maximized'] : [])
-    ];
+    ].join(' ');
   }
 
   private getScreenGeometry(screen: number): string {

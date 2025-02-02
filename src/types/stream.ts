@@ -3,11 +3,10 @@ import type { Video, Channel } from 'holodex.js';
 
 export interface StreamOptions {
   url: string;
-  quality: string;
-  screen: number;
-  volume?: number;
-  useStreamlink?: boolean;
+  quality?: string;
+  screen?: number;
   windowMaximized?: boolean;
+  volume?: number;
 }
 
 export interface Stream {
@@ -22,10 +21,10 @@ export interface Stream {
 export interface StreamSource {
   url: string;
   title: string;
-  platform: 'youtube' | 'twitch';
+  platform: 'twitch' | 'youtube';
   viewerCount?: number;
-  organization?: string;
-  channelId?: string;
+  thumbnail?: string;
+  startedAt?: Date;
 }
 
 export interface StreamResponse {
@@ -41,4 +40,19 @@ export interface TwitchTokenData {
 
 export type TwitchStream = HelixStream;
 export type HolodexVideo = Video;
-export type HolodexChannel = Channel; 
+export type HolodexChannel = Channel;
+
+export interface StreamLimits {
+  organization?: string;
+  limit?: number;
+}
+
+export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch';
+
+export interface StreamSourceConfig {
+  type: StreamSourceType;
+  name?: string;
+  enabled: boolean;
+  limit: number;
+  priority: number;
+} 

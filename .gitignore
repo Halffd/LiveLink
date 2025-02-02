@@ -35,3 +35,7 @@ config
 # Environment variables
 .env
 .history
+
+# Database
+data/
+*.db
