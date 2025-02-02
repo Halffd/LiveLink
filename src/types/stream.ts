@@ -1,3 +1,6 @@
+import type { HelixStream } from '@twurple/api';
+import type { Video, Channel } from 'holodex.js';
+
 export interface StreamOptions {
   url: string;
   quality: string;
@@ -28,4 +31,14 @@ export interface StreamSource {
 export interface StreamResponse {
   message: string;
   error?: string;
-} 
+}
+
+export interface TwitchTokenData {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+}
+
+export type TwitchStream = HelixStream;
+export type HolodexVideo = Video;
+export type HolodexChannel = Channel; 

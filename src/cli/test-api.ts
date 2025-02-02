@@ -1,8 +1,9 @@
-#!/usr/bin/env node
+#!/usr/bin/env node --no-warnings --loader ts-node/esm
 import { program } from 'commander';
 import fetch, { Response } from 'node-fetch';
 import chalk from 'chalk';
-import type { Stream, StreamSource, StreamResponse } from '../types/stream';
+import type { Stream } from '../types/stream.js';
+import { logger } from '../server/services/logger.js';
 
 const API_URL = 'http://localhost:3001/api';
 
@@ -15,15 +16,29 @@ async function handleResponse<T>(response: Response): Promise<T> {
 
 program
   .version('1.0.0')
-  .description('CLI tool for testing LiveLink API');
+  .description('CLI tool for testing LiveLink API')
+  .option('-d, --debug', 'Enable debug output');
+
+// Set debug mode if flag is present
+program.parse();
+const options = program.opts();
+if (options.debug) {
+  logger.setLevel('debug');
+  logger.debug('Debug mode enabled', 'CLI');
+}
 
 program
   .command('list-streams')
   .description('List all active streams')
   .action(async () => {
     try {
+      logger.info('Fetching active streams', 'CLI');
       const streams = await fetch(`${API_URL}/streams`)
         .then(res => handleResponse<Stream[]>(res));
+
+      if (options.debug) {
+        logger.debug(`Received ${streams.length} streams`, 'CLI');
+      }
 
       console.log(chalk.blue('Active Streams:'));
       streams.forEach((stream) => {
@@ -31,9 +46,10 @@ program
         console.log(`URL: ${stream.url}`);
         console.log(`Quality: ${stream.quality}`);
         if (stream.title) console.log(`Title: ${stream.title}`);
+        logger.debug(`Stream details: ${JSON.stringify(stream)}`, 'CLI');
       });
     } catch (error) {
-      console.error(chalk.red('Error fetching streams:'), error);
+      logger.error('Failed to fetch streams', 'CLI', error instanceof Error ? error : new Error(String(error)));
     }
   });
 
@@ -85,16 +101,14 @@ program
   .action(async (options) => {
     try {
       const response = await fetch(`${API_URL}/streams/vtubers?limit=${options.limit}`);
-      const streams = await response.json();
+      const streams = await handleResponse<Stream[]>(response);
       console.log(chalk.blue('\nVTuber Streams:'));
-      streams.forEach((stream: any) => {
-        console.log(chalk.green(`\n${stream.title}`));
+      streams.forEach((stream) => {
+        console.log(chalk.green(`\n${stream.title || 'Untitled'}`));
         console.log(`URL: ${stream.url}`);
-        console.log(`Viewers: ${stream.viewerCount?.toLocaleString()}`);
+        if (stream.screen) console.log(`Screen: ${stream.screen}`);
       });
     } catch (error) {
       console.error(chalk.red('Error fetching VTuber streams:'), error);
     }
-  });
-
-program.parse(process.argv); 
+  }); 

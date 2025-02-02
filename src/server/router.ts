@@ -20,4 +20,9 @@ router.get(['/', '/manager'], async (ctx) => {
   });
 });
 
+// Define routes
+router.get('/', async (ctx) => {
+  ctx.body = { message: 'Server is running' };
+});
+
 export default router; 

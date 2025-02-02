@@ -4,11 +4,11 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "tsc && vite build",
-		"build:server": "tsc -p tsconfig.server.json",
+		"build:server": "rm -rf dist && mkdir -p dist/config/default && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json --listEmittedFiles && echo '{\"type\":\"module\"}' > dist/package.json && ls -la dist/server",
 		"preview": "vite preview",
-		"server": "npm run build:server && node dist/server/api.js",
+		"server": "npm run build:server && node --experimental-specifier-resolution=node dist/server/api.js",
 		"dev:all": "concurrently \"npm run dev\" \"npm run server\"",
-		"cli": "npm run build:server && node dist/cli/test-api.js",
+		"cli": "node --no-warnings --loader ts-node/esm src/cli/test-api.ts",
 		"prepare": "svelte-kit sync || echo ''",
 		"prepack": "svelte-kit sync && svelte-package && publint",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -19,7 +19,10 @@
 		"test": "npm run test:unit -- --run && npm run test:e2e",
 		"test:e2e": "playwright test",
 		"storybook": "storybook dev -p 6006",
-		"build-storybook": "storybook build"
+		"build-storybook": "storybook build",
+		"clean": "rm -rf dist",
+		"prebuild:server": "npm run clean",
+		"tsc:watch": "tsc -p tsconfig.server.json --watch"
 	},
 	"files": [
 		"dist",
@@ -53,13 +56,15 @@
 		"@storybook/svelte": "^8.5.1",
 		"@storybook/sveltekit": "^8.5.1",
 		"@storybook/test": "^8.5.1",
-		"@sveltejs/adapter-node": "^0.0.18",
+		"@sveltejs/adapter-node": "^2.0.0",
 		"@sveltejs/kit": "^2.16.0",
 		"@sveltejs/package": "^2.0.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
 		"@tailwindcss/container-queries": "^0.1.1",
 		"@tailwindcss/forms": "^0.5.10",
 		"@tailwindcss/typography": "^0.5.16",
+		"@types/koa-send": "^4.1.6",
+		"@types/koa-static": "^4.0.4",
 		"autoprefixer": "^10.4.20",
 		"concurrently": "^8.2.2",
 		"eslint": "^9.18.0",
@@ -78,7 +83,8 @@
 		"typescript": "^5.0.0",
 		"typescript-eslint": "^8.20.0",
 		"vite": "^6.0.0",
-		"vitest": "^3.0.0"
+		"vitest": "^3.0.0",
+		"ts-node": "^10.9.2"
 	},
 	"dependencies": {
 		"@inlang/paraglide-sveltekit": "^0.15.5",
@@ -92,6 +98,7 @@
 		"chalk": "^5.3.0",
 		"commander": "^11.0.0",
 		"concurrently": "^8.2.2",
+		"dotenv": "^16.4.1",
 		"holodex.js": "^2.0.5",
 		"koa": "^2.15.3",
 		"koa-bodyparser": "^4.4.1",
@@ -100,6 +107,8 @@
 		"koa-static": "^5.0.0",
 		"node-fetch": "^3.3.2",
 		"sqlite": "^5.1.1",
-		"sqlite3": "^5.1.7"
+		"sqlite3": "^5.1.7",
+		"winston": "^3.11.0",
+		"zod": "^3.22.4"
 	}
 }

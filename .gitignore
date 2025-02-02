@@ -26,3 +26,12 @@ vite.config.ts.timestamp-*
 
 # Paraglide
 src/lib/paraglide
+
+# User configuration
+src/config/user/*
+!src/config/user/.gitkeep
+config
+
+# Environment variables
+.env
+.history

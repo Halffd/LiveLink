@@ -1,0 +1,111 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Backend",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": [
+        "<node_internals>/**",
+        "${workspaceFolder}/node_modules/**"
+      ],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-specifier-resolution=node",
+        "--no-warnings",
+        "--loader",
+        "ts-node/esm"
+      ],
+      "args": ["${workspaceFolder}/src/server/api.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "envFile": "${workspaceFolder}/.env",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+    },
+    {
+      "name": "Debug Frontend",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}",
+      "sourceMapPathOverrides": {
+        "webpack:///src/*": "${webRoot}/src/*"
+      }
+    },
+    {
+      "name": "Debug Tests",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": [
+        "<node_internals>/**",
+        "${workspaceFolder}/node_modules/**"
+      ],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-vm-modules",
+        "--no-warnings"
+      ],
+      "args": [
+        "./node_modules/vitest/vitest.mjs",
+        "run",
+        "--coverage"
+      ],
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug CLI",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": [
+        "<node_internals>/**",
+        "${workspaceFolder}/node_modules/**"
+      ],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-specifier-resolution=node",
+        "--no-warnings",
+        "--loader",
+        "ts-node/esm"
+      ],
+      "args": ["${workspaceFolder}/src/cli/test-api.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env"
+    },
+    {
+      "name": "Debug API",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": [
+        "<node_internals>/**",
+        "${workspaceFolder}/node_modules/**"
+      ],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-specifier-resolution=node",
+        "--no-warnings",
+        "--loader",
+        "ts-node/esm",
+        "--inspect"
+      ],
+      "args": ["${workspaceFolder}/src/server/api.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "envFile": "${workspaceFolder}/.env",
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "serverReadyAction": {
+        "pattern": "Server running on (https?://.+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Full Stack",
+      "configurations": ["Debug Backend", "Debug Frontend"]
+    }
+  ]
+} 
