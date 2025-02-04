@@ -27,15 +27,15 @@ export class StreamManager {
    */
   constructor() {
     this.twitchService = new TwitchService(
-      undefined,
-      undefined,
-      this.config.filters.filters
+      this.config.twitch.clientId,
+      this.config.twitch.clientSecret,
+      [] // We'll handle filters differently
     );
 
     this.holodexService = new HolodexService(
-      undefined,
-      this.config.filters.filters,
-      this.config.streams.favoriteChannels,
+      this.config.holodex.apiKey,
+      [], // We'll handle filters differently
+      this.config.favoriteChannels,
       this.config
     );
 
@@ -47,21 +47,13 @@ export class StreamManager {
    * Starts a new stream on the specified screen
    */
   async startStream(options: Partial<StreamOptions> & { url: string }): Promise<StreamResponse> {
-    // Check if we've hit the stream limit
-    if (this.streams.size >= this.config.player.maxStreams) {
-      return {
-        success: false,
-        screen: options.screen || 1,
-        message: `Maximum number of streams (${this.config.player.maxStreams}) reached`
-      };
-    }
-
     // Find first available screen
     let screen = options.screen;
     if (!screen) {
-      for (let i = 1; i <= this.config.player.maxStreams; i++) {
-        if (!this.streams.has(i)) {
-          screen = i;
+      const activeScreens = new Set(this.streams.keys());
+      for (const streamConfig of this.config.streams) {
+        if (!activeScreens.has(streamConfig.id)) {
+          screen = streamConfig.id;
           break;
         }
       }
@@ -75,10 +67,21 @@ export class StreamManager {
       };
     }
 
+    const streamConfig = this.config.streams.find(s => s.id === screen);
+    if (!streamConfig) {
+      return {
+        success: false,
+        screen,
+        message: `Invalid screen number: ${screen}`
+      };
+    }
+
     return this.playerService.startStream({
       ...options,
       screen,
-      quality: options.quality || this.config.player.defaultQuality
+      quality: options.quality || streamConfig.quality,
+      volume: options.volume || streamConfig.volume,
+      windowMaximized: options.windowMaximized ?? streamConfig.windowMaximized
     });
   }
 

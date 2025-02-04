@@ -9,7 +9,7 @@ export interface StreamInstance {
   screen: number;
   url: string;
   quality: string;
-  process?: any; // Replace with proper process type if needed
+  process: NodeJS.Process;
   /** Stream title (if available) */
   title?: string;
   /** Platform the stream is from */
@@ -20,16 +20,19 @@ export interface StreamInstance {
 export interface StreamOutput {
   screen: number;
   data: string;
+  type: 'stdout' | 'stderr';
 }
 
 /** Stream process error data */
 export interface StreamError {
   screen: number;
   error: string;
+  code?: number;
 }
 
 export interface StreamResponse {
   success: boolean;
   screen: number;
   message?: string;
+  error?: string;
 } 

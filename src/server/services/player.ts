@@ -1,11 +1,10 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import type { StreamOptions } from '../../types/stream.js';
+import type { StreamOptions, StreamResponse } from '../../types/stream.js';
 import type { 
   StreamInstance, 
   StreamOutput, 
   StreamError,
-  StreamResponse
 } from '../../types/stream_instance.js';
 import { logger } from './logger.js';
 
@@ -20,56 +19,54 @@ export class PlayerService {
   }
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
-    logger.debug(`Starting stream with options: ${JSON.stringify(options)}`, 'PlayerService');
-    
-    if (this.streams.has(options.screen)) {
-      logger.debug(`Stopping existing stream on screen ${options.screen}`, 'PlayerService');
-      await this.stopStream(options.screen);
-    }
-
     try {
-      const platform = options.url.includes('twitch.tv') ? 'twitch' : 'youtube';
-      const command = 'streamlink';
-      
-      const args = this.buildPlayerArgs(options, command);
-      logger.debug(`Spawning ${command} with args: ${args.join(' ')}`, 'PlayerService');
-      
-      const process = spawn(command, args);
-      
+      const process = spawn('mpv', [
+        options.url,
+        '--no-terminal',
+        `--volume=${options.volume || 100}`,
+        options.quality ? `--ytdl-format=${options.quality}` : '',
+        options.windowMaximized ? '--fullscreen' : ''
+      ].filter(Boolean));
+
       process.stdout.on('data', (data) => {
-        if (this.outputCallback) {
-          this.outputCallback({ 
-            screen: options.screen, 
-            data: data.toString() 
-          });
-        }
+        this.outputCallback?.({
+          screen: options.screen,
+          data: data.toString(),
+          type: 'stdout'
+        });
       });
 
       process.stderr.on('data', (data) => {
-        if (this.errorCallback) {
-          this.errorCallback({ 
-            screen: options.screen, 
-            error: data.toString() 
-          });
-        }
+        this.outputCallback?.({
+          screen: options.screen,
+          data: data.toString(),
+          type: 'stderr'
+        });
       });
 
-      const streamInstance: StreamInstance = {
-        id: Date.now(),
-        process,
+      process.on('error', (error) => {
+        this.errorCallback?.({
+          screen: options.screen,
+          error: error.message
+        });
+      });
+
+      const instance: StreamInstance = {
+        id: options.screen,
+        screen: options.screen,
         url: options.url,
         quality: options.quality || 'best',
-        screen: options.screen,
-        platform
+        process: process as unknown as NodeJS.Process,
+        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
       };
 
-      this.streams.set(options.screen, streamInstance);
+      this.streams.set(options.screen, instance);
       logger.info(`Stream started on screen ${options.screen}`, 'PlayerService');
       
       return {
         success: true,
         screen: options.screen,
-        message: 'Stream started successfully'
+        message: `Stream started on screen ${options.screen}`
       };
     } catch (error) {
       logger.error(
@@ -80,17 +77,18 @@ export class PlayerService {
       return {
         success: false,
         screen: options.screen,
-        message: `Failed to start stream: ${error}`
+        message: error instanceof Error ? error.message : String(error)
       };
     }
   }
 
   async stopStream(screen: number): Promise<boolean> {
-    const stream = this.streams.get(screen);
-    if (!stream) return false;
-
     try {
-      stream.process.kill();
+      const stream = this.streams.get(screen);
+      if (!stream) return false;
+
+      const process = stream.process as unknown as ChildProcess;
+      process.kill('SIGTERM');
       this.streams.delete(screen);
       logger.info(`Stream stopped on screen ${screen}`, 'PlayerService');
       return true;
@@ -119,35 +117,5 @@ export class PlayerService {
 
   onStreamError(callback: (data: StreamError) => void) {
     this.errorCallback = callback;
-  }
-
-  private buildPlayerArgs(options: StreamOptions & { screen: number }, player: 'mpv' | 'streamlink'): string[] {
-    if (player === 'streamlink') {
-      return [
-        options.url,
-        options.quality || 'best',
-        '--player',
-        'mpv',
-        '--player-args',
-        this.buildMpvArgs(options)
-      ];
-    }
-
-    return [
-      options.url,
-      this.buildMpvArgs(options)
-    ];
-  }
-
-  private buildMpvArgs(options: StreamOptions & { screen: number }): string {
-    return [
-      `--geometry=${this.getScreenGeometry(options.screen)}`,
-      `--volume=${options.volume || 0}`,
-      ...(options.windowMaximized ? ['--window-maximized'] : [])
-    ].join(' ');
-  }
-
-  private getScreenGeometry(screen: number): string {
-    return `50%x50%+${screen * 1920}+0`;
   }
 } 

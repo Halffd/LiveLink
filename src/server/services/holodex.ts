@@ -63,7 +63,9 @@ export class HolodexService {
       return [];
     }
 
-    const { sources, sorting } = this.config.player.limits;
+    // Get enabled sources from the first stream config (we'll make this configurable later)
+    const streamConfig = this.config.streams[0];
+    const { sources } = streamConfig;
     const enabledSources = sources.filter((s: StreamSourceConfig) => 
       s.enabled && s.type !== 'twitch'
     );
@@ -76,7 +78,7 @@ export class HolodexService {
             status: VIDEO_STATUS.LIVE,
             type: 'stream' as VideoType,
             sort: 'available_at' as keyof VideoRaw,
-            order: sorting.order as SortOrder,
+            order: streamConfig.sorting.order as SortOrder,
             limit: source.limit
           };
 
@@ -95,18 +97,20 @@ export class HolodexService {
 
       // Sort sources by priority and merge streams
       const allStreams = streamsBySource
-        .sort((a, b) => a.source.priority - b.source.priority)
-        .reduce((acc: Video[], { streams }) => {
+        .sort((a: StreamSourceResult, b: StreamSourceResult) => 
+          a.source.priority - b.source.priority
+        )
+        .reduce((acc: Video[], { streams }: StreamSourceResult) => {
           return [...acc, ...streams];
         }, []);
 
       // Remove duplicates (same video ID)
       const uniqueStreams = Array.from(
-        new Map(allStreams.map(video => [video.videoId, video])).values()
-      );
+        new Map(allStreams.map((video: Video) => [video.videoId, video])).values()
+      ) as Video[];
 
       // Map to StreamSource format
-      return uniqueStreams.map(stream => ({
+      return uniqueStreams.map((stream: Video) => ({
         title: stream.title,
         url: `https://youtube.com/watch?v=${stream.videoId}`,
         platform: 'youtube' as const,

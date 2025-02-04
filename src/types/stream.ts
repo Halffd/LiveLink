@@ -1,13 +1,31 @@
 import type { HelixStream } from '@twurple/api';
 import type { Video, Channel } from 'holodex.js';
+import type { StreamOutput, StreamError } from './stream_instance.js';
 
 export interface StreamOptions {
   url: string;
+  screen: number;
   quality?: string;
-  screen?: number;
   windowMaximized?: boolean;
   volume?: number;
 }
+
+export interface WorkerStreamOptions extends StreamOptions {
+  streamId: number;
+}
+
+export type WorkerMessage = 
+  | { type: 'start'; data: WorkerStreamOptions }
+  | { type: 'stop'; data: number }
+  | { type: 'setVolume'; data: { streamId: number; volume: number } }
+  | { type: 'setQuality'; data: { streamId: number; quality: string } };
+
+export type WorkerResponse = 
+  | { type: 'startResult'; data: StreamResponse }
+  | { type: 'stopResult'; data: boolean }
+  | { type: 'error'; error: string }
+  | { type: 'output'; data: StreamOutput }
+  | { type: 'streamError'; data: StreamError };
 
 export interface Stream {
   process: NodeJS.Process;
