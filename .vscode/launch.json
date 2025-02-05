@@ -12,17 +12,15 @@
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
-        "--no-warnings",
-        "--no-strict",
-        "--loader",
-        "ts-node/esm"
+        "--no-warnings"
       ],
-      "args": ["${workspaceFolder}/src/server/api.ts"],
+      "args": ["${workspaceFolder}/dist/server/api.js"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "envFile": "${workspaceFolder}/.env",
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build:server"
     },
     {
       "name": "Debug Frontend",

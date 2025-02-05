@@ -27,8 +27,6 @@
     "dist",
     "src/routes/**/*",
     "src/lib/**/*",
-    "src/hooks.ts",
-    "src/hooks.server.ts",
     "src/**/*.test.ts",
     "src/**/*.stories.ts",
     "src/**/*.svelte"
