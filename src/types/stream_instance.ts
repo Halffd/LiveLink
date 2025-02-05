@@ -31,8 +31,8 @@ export interface StreamError {
 }
 
 export interface StreamResponse {
-  success: boolean;
   screen: number;
   message?: string;
   error?: string;
+  success?: boolean;
 } 

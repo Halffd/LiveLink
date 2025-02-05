@@ -7,18 +7,10 @@ import {
   type VideoType,
   type VideoRaw
 } from 'holodex.js';
-import type { StreamSource, StreamSourceConfig } from '../../types/stream.js';
+import type { StreamSource, StreamSourceConfig, StreamLimits } from '../../types/stream.js';
 import { logger } from './logger.js';
 import { env } from '../../config/env.js';
 import type { Config } from '../../config/loader.js';
-
-const VIDEO_STATUS = {
-  LIVE: 'live' as VideoStatus
-};
-
-const SORT_ORDER = {
-  DESC: 'desc' as SortOrder
-};
 
 interface StreamSourceResult {
   source: StreamSourceConfig;
@@ -27,103 +19,60 @@ interface StreamSourceResult {
 
 export class HolodexService {
   private client: HolodexApiClient | null = null;
+  private favoriteChannels: string[];
+  private filters: string[];
+  private config: Config;
 
-  constructor(
-    private apiKey: string = env.HOLODEX_API_KEY,
-    private filters: string[] = [],
-    private favoriteChannels: string[] = [],
-    private config: Config
-  ) {
-    this.initialize();
+  constructor(apiKey: string, filters: string[], favoriteChannels: string[], config: Config) {
+    this.favoriteChannels = favoriteChannels;
+    this.filters = filters;
+    this.config = config;
+
+    try {
+      this.client = new HolodexApiClient({
+        apiKey: apiKey
+      });
+      logger.info('Holodex service initialized', 'HolodexService');
+    } catch (error) {
+      logger.warn('Failed to initialize Holodex service - some features will be disabled', 'HolodexService');
+      logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+    }
   }
 
-  private initialize() {
+  async getLiveStreams(options: StreamLimits = {}): Promise<StreamSource[]> {
     try {
-      if (!this.apiKey) {
-        logger.warn('Missing Holodex API key - some features will be disabled', 'HolodexService');
-        return;
+      if (!this.client) {
+        logger.warn('Holodex service not initialized - returning empty streams', 'HolodexService');
+        return [];
       }
 
-      this.client = new HolodexApiClient({
-        apiKey: this.apiKey
+      const { limit = 25, organization } = options;
+      logger.debug(`Fetching ${limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
+
+      const videos = await this.client.getLiveVideos({
+        limit,
+        org: organization,
+        status: 'live' as VideoStatus
       });
-      logger.info('Holodex client initialized', 'HolodexService');
-    } catch (error) {
-      logger.error(
-        'Failed to initialize Holodex client',
-        'HolodexService',
-        error instanceof Error ? error : new Error(String(error))
-      );
-    }
-  }
 
-  async getLiveStreams(options: { limit?: number } = {}): Promise<StreamSource[]> {
-    if (!this.client) {
-      logger.warn('Holodex client not initialized', 'HolodexService');
-      return [];
-    }
+      logger.info(`Found ${videos.length} live streams`, 'HolodexService');
+      logger.debug(`Stream details: ${JSON.stringify(videos.map(v => ({
+        title: v.title,
+        channel: v.channel?.name,
+        viewers: v.liveViewers
+      })))}`, 'HolodexService');
 
-    // Get enabled sources from the first stream config (we'll make this configurable later)
-    const streamConfig = this.config.streams[0];
-    const { sources } = streamConfig;
-    const enabledSources = sources.filter((s: StreamSourceConfig) => 
-      s.enabled && s.type !== 'twitch'
-    );
-    
-    try {
-      // Fetch streams for each source in parallel
-      const streamsBySource = await Promise.all(
-        enabledSources.map(async (source: StreamSourceConfig) => {
-          const params: VideosParam = {
-            status: VIDEO_STATUS.LIVE,
-            type: 'stream' as VideoType,
-            sort: 'available_at' as keyof VideoRaw,
-            order: streamConfig.sorting.order as SortOrder,
-            limit: source.limit
-          };
-
-          if (source.type === 'favorites') {
-            const streams = await this.getFavoriteStreams();
-            return { source, streams: streams as unknown as Video[] };
-          } else if (source.type === 'organization' && source.name) {
-            params.org = source.name;
-          }
-
-          logger.debug(`Fetching ${source.type} streams: ${JSON.stringify(params)}`, 'HolodexService');
-          const streams = await this.client!.getLiveVideos(params);
-          return { source, streams };
-        })
-      );
-
-      // Sort sources by priority and merge streams
-      const allStreams = streamsBySource
-        .sort((a: StreamSourceResult, b: StreamSourceResult) => 
-          a.source.priority - b.source.priority
-        )
-        .reduce((acc: Video[], { streams }: StreamSourceResult) => {
-          return [...acc, ...streams];
-        }, []);
-
-      // Remove duplicates (same video ID)
-      const uniqueStreams = Array.from(
-        new Map(allStreams.map((video: Video) => [video.videoId, video])).values()
-      ) as Video[];
-
-      // Map to StreamSource format
-      return uniqueStreams.map((stream: Video) => ({
-        title: stream.title,
-        url: `https://youtube.com/watch?v=${stream.videoId}`,
-        platform: 'youtube' as const,
-        thumbnail: stream.channel?.avatarUrl || '',
-        viewerCount: stream.liveViewers,
-        startedAt: stream.actualStart
+      return videos.map(video => ({
+        url: `https://youtube.com/watch?v=${video.videoId}`,
+        title: video.title,
+        platform: 'youtube',
+        viewerCount: video.liveViewers,
+        thumbnail: video.channel?.avatarUrl,
+        startedAt: video.actualStart ? new Date(video.actualStart) : undefined
       }));
     } catch (error) {
-      logger.error(
-        'Failed to fetch Holodex streams',
-        'HolodexService',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      logger.error('Failed to fetch Holodex live streams', 'HolodexService');
+      logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
       return [];
     }
   }
@@ -135,7 +84,7 @@ export class HolodexService {
       const promises = this.favoriteChannels.map(channelId =>
         this.client!.getLiveVideos({ 
           channel_id: channelId,
-          status: VIDEO_STATUS.LIVE
+          status: 'live' as VideoStatus
         })
       );
 
@@ -168,7 +117,7 @@ export class HolodexService {
       return false;
     }
     
-    return Boolean(channelName && this.filters.some(filter => 
+    return Boolean(channelName && this.filters.some((filter: string) => 
       channelName.includes(filter.toLowerCase())
     ));
   }

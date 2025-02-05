@@ -43,6 +43,7 @@ export interface StreamSource {
   viewerCount?: number;
   thumbnail?: string;
   startedAt?: Date;
+  screen?: number;
 }
 
 export interface StreamResponse {
@@ -65,12 +66,16 @@ export interface StreamLimits {
   limit?: number;
 }
 
-export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch';
+export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch' | 'holodex';
+export type StreamSourceSubtype = 'favorites' | 'organization' | null;
 
 export interface StreamSourceConfig {
   type: StreamSourceType;
+  subtype?: StreamSourceSubtype;
   name?: string;
   enabled: boolean;
   limit: number;
   priority: number;
+  tags?: string[];
+  language?: string;
 } 

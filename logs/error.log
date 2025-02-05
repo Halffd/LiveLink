@@ -38,3 +38,13 @@ Body:
 }
 2025-02-02T22:29:58.228Z [ERROR] [Server] Server error: ENOENT: no such file or directory, stat '/home/all/repos/LiveLink/build/index.html' [object Object]
 Error: ENOENT: no such file or directory, stat '/home/all/repos/LiveLink/build/index.html'
+2025-02-04T20:35:00.510Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: token?grant_type=client_credentials&client_id=wtl7mwep6n5o1bgcpr0m1v6kae38i&client_secret=z0lc2ihp01tdt496chzro8x0pi0zxp
+Method: POST
+Body:
+{
+  "status": 400,
+  "message": "invalid client"
+}

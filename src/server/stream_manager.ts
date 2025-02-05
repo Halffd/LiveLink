@@ -1,4 +1,10 @@
-import type { StreamSource, StreamOptions, StreamLimits, StreamSourceType } from '../types/stream.js';
+import type { 
+  StreamSource, 
+  StreamOptions, 
+  StreamLimits, 
+  StreamSourceType,
+  StreamSourceConfig
+} from '../types/stream.js';
 import type { 
   StreamOutput, 
   StreamError, 
@@ -11,6 +17,7 @@ import { TwitchService } from './services/twitch.js';
 import { HolodexService } from './services/holodex.js';
 import { PlayerService } from './services/player.js';
 import type { TwitchAuth } from './db/database.js';
+import { env } from '../config/env.js';
 
 /**
  * Manages multiple video streams across different screens
@@ -21,19 +28,20 @@ export class StreamManager {
   private twitchService: TwitchService;
   private holodexService: HolodexService;
   private playerService: PlayerService;
+  private streamQueue: Map<number, StreamSource[]> = new Map(); // Add queue per screen
 
   /**
    * Creates a new StreamManager instance
    */
   constructor() {
     this.twitchService = new TwitchService(
-      this.config.twitch.clientId,
-      this.config.twitch.clientSecret,
+      env.TWITCH_CLIENT_ID,
+      env.TWITCH_CLIENT_SECRET,
       [] // We'll handle filters differently
     );
 
     this.holodexService = new HolodexService(
-      this.config.holodex.apiKey,
+      env.HOLODEX_API_KEY,
       [], // We'll handle filters differently
       this.config.favoriteChannels,
       this.config
@@ -41,6 +49,40 @@ export class StreamManager {
 
     this.playerService = new PlayerService();
     logger.info('Stream manager initialized', 'StreamManager');
+
+    this.playerService.onStreamError(async (data) => {
+      // Only handle non-retrying streams to avoid duplicate handling
+      if (!this.playerService.isRetrying(data.screen)) {
+        logger.info(`Stream on screen ${data.screen} ended, finding next stream...`);
+        
+        // Get current streams if queue is empty
+        if (!this.streamQueue.get(data.screen)?.length) {
+          const newStreams = await this.getLiveStreams();
+          // Filter streams for this screen and not watched yet
+          const unwatchedStreams = newStreams.filter(s => 
+            s.screen === data.screen && 
+            !this.playerService.isStreamWatched(s.url)
+          );
+          this.streamQueue.set(data.screen, unwatchedStreams);
+        }
+
+        // Get next stream from queue
+        const queue = this.streamQueue.get(data.screen) || [];
+        const nextStream = queue.shift(); // Remove and get first stream
+        
+        if (nextStream) {
+          logger.info(`Starting next stream on screen ${data.screen}: ${nextStream.url}`);
+          await this.startStream({
+            url: nextStream.url,
+            quality: this.config.player.defaultQuality,
+            screen: data.screen,
+            windowMaximized: this.config.player.windowMaximized
+          });
+        } else {
+          logger.info(`No more unwatched streams for screen ${data.screen}`);
+        }
+      }
+    });
   }
 
   /**
@@ -61,7 +103,6 @@ export class StreamManager {
 
     if (!screen) {
       return {
-        success: false,
         screen: options.screen || 1,
         message: 'No available screens'
       };
@@ -70,7 +111,6 @@ export class StreamManager {
     const streamConfig = this.config.streams.find(s => s.id === screen);
     if (!streamConfig) {
       return {
-        success: false,
         screen,
         message: `Invalid screen number: ${screen}`
       };
@@ -111,59 +151,65 @@ export class StreamManager {
    * Gets available organizations
    */
   getOrganizations(): string[] {
-    return this.config.streams.organizations;
+    return this.config.organizations;
   }
 
   /**
    * Fetches live streams from both Holodex and Twitch based on config
    */
-  async getLiveStreams(options: StreamLimits = {}): Promise<StreamSource[]> {
+  async getLiveStreams(): Promise<StreamSource[]> {
     try {
-      const { limit = this.config.player.limits.total } = options;
+      const results: StreamSource[] = [];
+      const holodexStreams: StreamSource[] = [];
+      const twitchStreams: StreamSource[] = [];
 
-      // Get enabled sources for each type
-      const twitchSource = this.config.player.limits.sources.find(s => 
-        s.type === ('twitch' as StreamSourceType) && s.enabled
-      );
-      const holodexSources = this.config.player.limits.sources.filter(s => 
-        s.enabled && (s.type === 'favorites' || s.type === 'organization')
-      );
+      // Process each stream configuration
+      for (const streamConfig of this.config.streams) {
+        if (!streamConfig.enabled) continue;
 
-      const twitchLimit = twitchSource?.limit || 0;
-      const holodexLimit = holodexSources.reduce((acc, s) => acc + s.limit, 0);
+        for (const source of streamConfig.sources) {
+          if (!source.enabled) continue;
 
-      // Fetch streams from both services
-      const [twitchStreams, holodexStreams] = await Promise.all([
-        twitchLimit > 0 ? this.twitchService.getStreams(twitchLimit) : [],
-        holodexLimit > 0 ? this.holodexService.getLiveStreams({
-          limit: holodexLimit
-        }) : []
-      ]);
-
-      // Sort streams by viewer count
-      const sortedTwitch = [...twitchStreams].sort((a, b) => 
-        (b.viewerCount || 0) - (a.viewerCount || 0)
-      );
-      const sortedHolodex = [...holodexStreams].sort((a, b) => 
-        (b.viewerCount || 0) - (a.viewerCount || 0)
-      );
-
-      // Merge streams based on source priorities
-      const sources = this.config.player.limits.sources;
-      const result: StreamSource[] = [];
-
-      for (const source of sources) {
-        if (!source.enabled) continue;
-
-        const streams = source.type === ('twitch' as StreamSourceType) 
-          ? sortedTwitch 
-          : sortedHolodex;
-        result.push(...streams.slice(0, source.limit));
-
-        if (result.length >= limit) break;
+          if (source.type === 'holodex') {
+            // Handle both favorites and organization streams
+            if (source.subtype === 'favorites') {
+              const streams = await this.holodexService.getFavoriteStreams();
+              streams.forEach(s => s.screen = streamConfig.screen);
+              holodexStreams.push(...streams);
+            } else if (source.subtype === 'organization' && source.name) {
+              const streams = await this.holodexService.getLiveStreams({
+                organization: source.name,
+                limit: source.limit
+              });
+              streams.forEach(s => s.screen = streamConfig.screen);
+              holodexStreams.push(...streams);
+            }
+          } else if (source.type === 'twitch') {
+            // Use getVTuberStreams if vtuber tag is present
+            const streams = source.tags?.includes('vtuber') 
+              ? await this.twitchService.getVTuberStreams(source.limit)
+              : await this.twitchService.getStreams(source.limit, {
+                  tags: source.tags,
+                  language: source.language
+                });
+            streams.forEach(s => s.screen = streamConfig.screen);
+            twitchStreams.push(...streams);
+          }
+        }
       }
 
-      return result.slice(0, limit);
+      // Sort and combine streams
+      results.push(...holodexStreams, ...twitchStreams);
+      
+      // Debug log the results
+      logger.debug(`Found ${results.length} streams (${holodexStreams.length} Holodex, ${twitchStreams.length} Twitch)`, 'StreamManager');
+      logger.debug(`Stream details: ${JSON.stringify(results.map(s => ({
+        url: s.url,
+        screen: s.screen,
+        platform: s.platform
+      })))}`, 'StreamManager');
+
+      return results;
     } catch (error) {
       logger.error(
         'Failed to fetch live streams',
@@ -207,19 +253,51 @@ export class StreamManager {
 
     try {
       const streams = await this.getLiveStreams();
-      const availableSlots = this.config.player.maxStreams - this.streams.size;
-      logger.info(`Auto-starting ${Math.min(streams.length, availableSlots)} streams`, 'StreamManager');
-      logger.info(JSON.stringify(streams));
-      for (let i = 0; i < Math.min(streams.length, availableSlots); i++) {
-        const stream = streams[i];
-        logger.info(`Starting stream ${stream.url} on screen ${i + 1}`);
-        await this.startStream({
-          url: stream.url,
-          quality: this.config.player.defaultQuality,
-          screen: i + 1,
-          windowMaximized: this.config.player.windowMaximized
-        });
+      logger.info(`Auto-starting ${streams.length} streams`, 'StreamManager');
+      
+      // Group streams by screen and initialize queues
+      const streamsByScreen = new Map<number, StreamSource[]>();
+      streams.forEach(stream => {
+        if (stream.screen) {
+          const screenStreams = streamsByScreen.get(stream.screen) || [];
+          screenStreams.push(stream);
+          streamsByScreen.set(stream.screen, screenStreams);
+        }
+      });
+
+      // Debug log the grouped streams
+      logger.debug(`Grouped streams by screen: ${JSON.stringify(Object.fromEntries(streamsByScreen))}`, 'StreamManager');
+
+      // Start first stream for each screen and queue the rest
+      for (const [screen, screenStreams] of streamsByScreen) {
+        // Sort streams by view count if specified in config
+        const screenConfig = this.config.streams.find(s => s.id === screen);
+        if (screenConfig?.sorting?.field === 'viewerCount') {
+          screenStreams.sort((a, b) => {
+            const aCount = a.viewerCount || 0;
+            const bCount = b.viewerCount || 0;
+            return screenConfig.sorting.order === 'desc' ? bCount - aCount : aCount - bCount;
+          });
+        }
+
+        const [firstStream, ...remainingStreams] = screenStreams;
+        if (firstStream) {
+          logger.info(`Starting stream ${firstStream.url} on screen ${screen}`);
+          await this.startStream({
+            url: firstStream.url,
+            quality: screenConfig?.quality || this.config.player.defaultQuality,
+            screen: screen,
+            windowMaximized: screenConfig?.windowMaximized ?? this.config.player.windowMaximized
+          });
+
+          // Queue remaining streams for this screen
+          if (remainingStreams.length > 0) {
+            this.streamQueue.set(screen, remainingStreams);
+            logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`, 'StreamManager');
+          }
+        }
       }
+
     } catch (error) {
       logger.error(
         'Failed to auto-start streams',

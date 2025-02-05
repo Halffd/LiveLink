@@ -69,7 +69,7 @@ router.get('/api/streams/japanese', async (ctx: Context) => {
 // General routes
 router.get('/api/streams', async (ctx: Context) => {
   try {
-    const streams = await streamManager.getLiveStreams(ctx.query);
+    const streams = await streamManager.getLiveStreams();
     ctx.body = streams;
   } catch (error: unknown) {
     logger.error(
