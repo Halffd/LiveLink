@@ -2,6 +2,30 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "args": [],
+      "cwd": "${workspaceRoot}",
+      "env": {
+          "NODE_ENV": "development"
+      },
+      "name": "DEBUG",
+      "preLaunchTask": "compile",
+      "program": "${workspaceRoot}/src/app.ts",
+      "request": "launch",
+      "runtimeArgs": [
+          "--nolazy"
+      ],
+      "runtimeExecutable": null,
+      "sourceMaps": true,
+      "stopOnEntry": false,
+      "type": "node"
+  },
+  {
+      "name": "Attach",
+      "type": "node",
+      "request": "attach",
+      "port": 5858
+  },
+    {
       "name": "Debug Backend",
       "type": "node",
       "request": "launch",
@@ -20,7 +44,14 @@
       "internalConsoleOptions": "neverOpen",
       "envFile": "${workspaceFolder}/.env",
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "preLaunchTask": "npm: build:server"
+      "sourceMaps": true,
+      "preLaunchTask": "npm: build:server",
+      "sourceMapPathOverrides": {
+        "webpack:///./~/*": "${workspaceFolder}/node_modules/*",
+        "webpack:////*": "/*",
+        "webpack:///./*": "${workspaceFolder}/*",
+        "webpack:///src/*": "${workspaceFolder}/src/*"
+      }
     },
     {
       "name": "Debug Frontend",
@@ -65,7 +96,6 @@
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
         "--no-warnings",
-        "--no-strict",
         "--loader",
         "ts-node/esm"
       ],
@@ -86,10 +116,8 @@
       "runtimeArgs": [
         "--experimental-specifier-resolution=node",
         "--no-warnings",
-        "--no-strict",
         "--loader",
-        "ts-node/esm",
-        "--inspect"
+        "ts-node/esm"
       ],
       "args": ["${workspaceFolder}/src/server/api.ts"],
       "cwd": "${workspaceFolder}",
@@ -97,10 +125,40 @@
       "internalConsoleOptions": "neverOpen",
       "envFile": "${workspaceFolder}/.env",
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "serverReadyAction": {
-        "pattern": "Server running on (https?://.+)",
-        "uriFormat": "%s",
-        "action": "debugWithChrome"
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///./~/*": "${workspaceFolder}/node_modules/*",
+        "webpack:////*": "/*",
+        "webpack:///./*": "${workspaceFolder}/*",
+        "webpack:///src/*": "${workspaceFolder}/src/*"
+      },
+      "env": {
+        "TS_NODE_EXPERIMENTAL_RESOLVE": "true",
+        "TS_NODE_PROJECT": "${workspaceFolder}/tsconfig.json"
+      }
+    },
+    {
+      "name": "Debug TS Directly",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": [
+        "<node_internals>/**",
+        "${workspaceFolder}/node_modules/**"
+      ],
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--experimental-specifier-resolution=node",
+        "--no-warnings",
+        "--experimental-loader=ts-node/esm/transpile-only"
+      ],
+      "args": ["${workspaceFolder}/src/server/api.ts"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "envFile": "${workspaceFolder}/.env",
+      "sourceMaps": true,
+      "env": {
+        "NODE_OPTIONS": "--experimental-vm-modules"
       }
     }
   ],
@@ -109,5 +167,5 @@
       "name": "Debug Full Stack",
       "configurations": ["Debug Backend", "Debug Frontend"]
     }
-  ]
+  ],
 } 

@@ -920,3 +920,374 @@ Body:
 2025-02-05T00:21:28.488Z [INFO] [Server] DELETE /api/streams/:screen
 2025-02-05T00:22:01.190Z [INFO] [PlayerService] [streamlink-1-exit] Process exited with code 0
 2025-02-05T00:22:01.191Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-06T01:21:25.827Z [INFO] [TwitchService] Twitch service initialized
+2025-02-06T01:21:25.833Z [INFO] [HolodexService] Holodex service initialized
+2025-02-06T01:21:25.841Z [INFO] [StreamManager] Stream manager initialized
+2025-02-06T01:21:25.845Z [INFO] [Server] Initializing database...
+2025-02-06T01:21:25.858Z [INFO] [Database] Database initialized successfully
+2025-02-06T01:21:25.858Z [INFO] [Server] Database initialized
+2025-02-06T01:21:25.859Z [INFO] [Server] Auto-starting streams...
+2025-02-06T01:21:27.455Z [INFO] [StreamManager] Auto-starting 48 streams
+2025-02-06T01:21:27.455Z [INFO] Starting stream https://twitch.tv/loud_coringa on screen 1
+2025-02-06T01:21:27.470Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-06T01:21:27.471Z [INFO] Starting stream https://twitch.tv/loud_coringa on screen 2
+2025-02-06T01:21:27.472Z [INFO] [PlayerService] Stream https://twitch.tv/loud_coringa was already watched, trying next stream
+2025-02-06T01:21:27.472Z [INFO] [Server] Auto-start complete
+2025-02-06T01:21:27.475Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-06T01:21:27.475Z [INFO] [Server] Routes:
+2025-02-06T01:21:27.475Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-06T01:21:27.475Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-06T01:21:27.475Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-06T01:21:27.475Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-06T01:21:27.475Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-06T01:21:27.476Z [INFO] [Server] POST /api/streams
+2025-02-06T01:21:27.476Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-06T01:22:48.032Z [INFO] [PlayerService] [streamlink-1-exit] Process exited with code 0
+2025-02-06T01:22:48.033Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-08T22:18:31.225Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:18:31.272Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:18:31.343Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:18:31.358Z [INFO] [Server] Initializing database...
+2025-02-08T22:18:31.506Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:18:31.507Z [INFO] [Server] Database initialized
+2025-02-08T22:18:31.508Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:18:33.367Z [INFO] [StreamManager] Auto-starting 48 streams
+2025-02-08T22:18:33.377Z [INFO] Starting stream https://twitch.tv/sodapoppin on screen 1
+2025-02-08T22:18:33.521Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:18:33.525Z [INFO] Starting stream https://twitch.tv/sodapoppin on screen 2
+2025-02-08T22:18:33.526Z [INFO] [PlayerService] Stream https://twitch.tv/sodapoppin was already watched, trying next stream
+2025-02-08T22:18:33.527Z [INFO] [Server] Auto-start complete
+2025-02-08T22:18:33.597Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:18:33.599Z [INFO] [Server] Routes:
+2025-02-08T22:18:33.599Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:18:33.599Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:18:33.601Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:18:33.607Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:18:33.609Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:18:33.609Z [INFO] [Server] POST /api/streams
+2025-02-08T22:18:33.610Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:20:58.278Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:20:58.290Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:20:58.303Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:20:58.312Z [INFO] [Server] Initializing database...
+2025-02-08T22:20:58.329Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:26:44.084Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:26:44.097Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:26:44.114Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:26:44.128Z [INFO] [Server] Initializing database...
+2025-02-08T22:26:44.168Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:26:44.169Z [INFO] [Server] Database initialized
+2025-02-08T22:26:44.171Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:26:47.399Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:26:49.097Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:27:12.407Z [INFO] [StreamManager] Auto-starting 54 streams
+2025-02-08T22:29:05.551Z [INFO] Starting stream https://twitch.tv/sodapoppin on screen 1
+2025-02-08T22:29:07.290Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:30:10.235Z [INFO] Starting stream https://twitch.tv/sodapoppin on screen 2
+2025-02-08T22:30:13.073Z [INFO] [PlayerService] Stream https://twitch.tv/sodapoppin was already watched, trying next stream
+2025-02-08T22:30:49.796Z [INFO] [Server] Auto-start complete
+2025-02-08T22:31:13.054Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:31:13.058Z [INFO] [Server] Routes:
+2025-02-08T22:31:13.061Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:31:13.062Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:31:13.062Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:31:13.063Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:31:13.064Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:31:13.064Z [INFO] [Server] POST /api/streams
+2025-02-08T22:31:13.065Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:33:14.432Z [INFO] [PlayerService] [streamlink-1-exit] Process exited with code 0
+2025-02-08T22:33:14.433Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-08T22:37:54.365Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:37:54.378Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:37:54.390Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:37:54.400Z [INFO] [Server] Initializing database...
+2025-02-08T22:37:54.427Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:37:54.438Z [INFO] [Server] Database initialized
+2025-02-08T22:37:54.438Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:37:59.548Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:38:01.293Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:40:10.598Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:40:10.614Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:40:10.706Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:40:10.745Z [INFO] [Server] Initializing database...
+2025-02-08T22:40:10.889Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:40:10.891Z [INFO] [Server] Database initialized
+2025-02-08T22:40:10.891Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:40:15.398Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:40:17.091Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:43:05.350Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:43:05.356Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:43:05.363Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:43:05.366Z [INFO] [Server] Initializing database...
+2025-02-08T22:43:05.378Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:43:05.379Z [INFO] [Server] Database initialized
+2025-02-08T22:43:05.379Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:43:05.724Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:43:07.461Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:43:07.462Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:43:07.462Z [INFO] [StreamManager] Starting stream on screen 1: https://twitch.tv/sodapoppin (twitch)
+2025-02-08T22:43:07.466Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:43:07.469Z [INFO] [StreamManager] Starting stream on screen 2: https://twitch.tv/sodapoppin (twitch)
+2025-02-08T22:43:07.469Z [INFO] [PlayerService] Stream https://twitch.tv/sodapoppin was already watched, trying next stream
+2025-02-08T22:43:07.469Z [INFO] [Server] Auto-start complete
+2025-02-08T22:43:07.475Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:43:07.476Z [INFO] [Server] Routes:
+2025-02-08T22:43:07.476Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:43:07.477Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:43:07.477Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:43:07.477Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:43:07.477Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:43:07.477Z [INFO] [Server] POST /api/streams
+2025-02-08T22:43:07.478Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:43:35.163Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:43:35.168Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:43:35.173Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:43:35.175Z [INFO] [Server] Initializing database...
+2025-02-08T22:43:35.182Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:43:35.182Z [INFO] [Server] Database initialized
+2025-02-08T22:43:35.184Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:43:36.043Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:43:37.790Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:43:37.793Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:43:37.796Z [INFO] [StreamManager] Starting stream on screen 1: https://twitch.tv/sodapoppin (twitch)
+2025-02-08T22:43:37.813Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:43:37.866Z [INFO] [StreamManager] Starting stream on screen 2: https://twitch.tv/sodapoppin (twitch)
+2025-02-08T22:43:37.867Z [INFO] [PlayerService] Stream https://twitch.tv/sodapoppin was already watched, trying next stream
+2025-02-08T22:43:37.867Z [INFO] [Server] Auto-start complete
+2025-02-08T22:43:37.873Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:43:37.874Z [INFO] [Server] Routes:
+2025-02-08T22:43:37.874Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:43:37.875Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:43:37.877Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:43:37.878Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:43:37.878Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:43:37.878Z [INFO] [Server] POST /api/streams
+2025-02-08T22:43:37.878Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:46:52.651Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:46:52.657Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:46:52.662Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:46:52.666Z [INFO] [Server] Initializing database...
+2025-02-08T22:46:52.672Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:46:52.673Z [INFO] [Server] Database initialized
+2025-02-08T22:46:52.673Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:46:59.610Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:46:59.617Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:46:59.622Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:46:59.625Z [INFO] [Server] Initializing database...
+2025-02-08T22:46:59.632Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:46:59.632Z [INFO] [Server] Database initialized
+2025-02-08T22:46:59.633Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:47:00.514Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:47:00.743Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:47:00.965Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:47:02.645Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:47:02.646Z [INFO] [StreamManager] Starting stream on screen 1: https://twitch.tv/tarik (twitch)
+2025-02-08T22:47:02.651Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:47:02.652Z [INFO] [StreamManager] Starting stream on screen 2: https://twitch.tv/tarik (twitch)
+2025-02-08T22:47:02.652Z [INFO] [PlayerService] Stream https://twitch.tv/tarik was already watched, trying next stream
+2025-02-08T22:47:02.653Z [INFO] [Server] Auto-start complete
+2025-02-08T22:47:02.658Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:47:02.659Z [INFO] [Server] Routes:
+2025-02-08T22:47:02.659Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:47:02.659Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:47:02.659Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:47:02.659Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:47:02.659Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:47:02.659Z [INFO] [Server] POST /api/streams
+2025-02-08T22:47:02.660Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:47:20.620Z [INFO] [PlayerService] [streamlink-1-exit] Process exited with code 0
+2025-02-08T22:47:20.620Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-08T22:50:13.025Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:50:13.032Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:50:13.038Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:50:13.040Z [INFO] [Server] Initializing database...
+2025-02-08T22:50:13.054Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:50:13.055Z [INFO] [Server] Database initialized
+2025-02-08T22:50:13.055Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:50:14.062Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:50:14.272Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:50:14.489Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:50:16.382Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:50:16.402Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:50:16.406Z [INFO] [Server] Auto-start complete
+2025-02-08T22:50:16.412Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:50:16.412Z [INFO] [Server] Routes:
+2025-02-08T22:50:16.412Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:50:16.413Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:50:16.413Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:50:16.413Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:50:16.413Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:50:16.413Z [INFO] [Server] POST /api/streams
+2025-02-08T22:50:16.413Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:52:24.308Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:52:24.314Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:52:24.319Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:52:24.322Z [INFO] [Server] Initializing database...
+2025-02-08T22:52:24.334Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:52:24.335Z [INFO] [Server] Database initialized
+2025-02-08T22:52:24.335Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:52:25.173Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:52:25.378Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:52:25.588Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:52:27.160Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:52:27.177Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:52:27.181Z [INFO] [Server] Auto-start complete
+2025-02-08T22:52:27.191Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:52:27.191Z [INFO] [Server] Routes:
+2025-02-08T22:52:27.192Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:52:27.192Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:52:27.193Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:52:27.193Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:52:27.194Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:52:27.194Z [INFO] [Server] POST /api/streams
+2025-02-08T22:52:27.195Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:53:45.379Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-08T22:53:45.379Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-08T22:54:10.112Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:54:10.120Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:54:10.138Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:54:10.141Z [INFO] [Server] Initializing database...
+2025-02-08T22:54:10.148Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:54:10.149Z [INFO] [Server] Database initialized
+2025-02-08T22:54:10.149Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:54:11.014Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:54:11.218Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:54:11.424Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:54:13.293Z [INFO] [StreamManager] Auto-starting 56 streams
+2025-02-08T22:54:13.328Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:54:13.329Z [INFO] [Server] Auto-start complete
+2025-02-08T22:54:13.332Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:54:13.332Z [INFO] [Server] Routes:
+2025-02-08T22:54:13.333Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:54:13.333Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:54:13.333Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:54:13.333Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:54:13.333Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:54:13.333Z [INFO] [Server] POST /api/streams
+2025-02-08T22:54:13.333Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:56:35.853Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:56:35.860Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:56:35.866Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:56:35.874Z [INFO] [Server] Initializing database...
+2025-02-08T22:56:35.899Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:56:35.900Z [INFO] [Server] Database initialized
+2025-02-08T22:56:35.900Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:56:36.944Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:56:37.195Z [INFO] [HolodexService] Found 5 live streams
+2025-02-08T22:56:37.422Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:56:38.999Z [INFO] [StreamManager] Auto-starting 54 streams
+2025-02-08T22:56:39.021Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:56:39.039Z [INFO] [Server] Auto-start complete
+2025-02-08T22:56:39.049Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:56:39.049Z [INFO] [Server] Routes:
+2025-02-08T22:56:39.050Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:56:39.050Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:56:39.050Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:56:39.050Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:56:39.050Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:56:39.051Z [INFO] [Server] POST /api/streams
+2025-02-08T22:56:39.051Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-08T22:58:11.759Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-08T22:58:11.759Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-08T22:59:45.363Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-08T22:59:49.958Z [INFO] [TwitchService] Twitch service initialized
+2025-02-08T22:59:49.964Z [INFO] [HolodexService] Holodex service initialized
+2025-02-08T22:59:49.976Z [INFO] [StreamManager] Stream manager initialized
+2025-02-08T22:59:49.980Z [INFO] [Server] Initializing database...
+2025-02-08T22:59:49.987Z [INFO] [Database] Database initialized successfully
+2025-02-08T22:59:49.987Z [INFO] [Server] Database initialized
+2025-02-08T22:59:49.988Z [INFO] [Server] Auto-starting streams...
+2025-02-08T22:59:50.308Z [INFO] [HolodexService] Found 1 live streams
+2025-02-08T22:59:50.527Z [INFO] [HolodexService] Found 4 live streams
+2025-02-08T22:59:50.752Z [INFO] [HolodexService] Found 0 live streams
+2025-02-08T22:59:52.268Z [INFO] [StreamManager] Auto-starting 54 streams
+2025-02-08T22:59:52.269Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=fFtmja3tUu0 (youtube)
+2025-02-08T22:59:52.279Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-08T22:59:52.280Z [INFO] [Server] Auto-start complete
+2025-02-08T22:59:52.294Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-08T22:59:52.295Z [INFO] [Server] Routes:
+2025-02-08T22:59:52.296Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-08T22:59:52.297Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-08T22:59:52.298Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-08T22:59:52.298Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-08T22:59:52.299Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-08T22:59:52.299Z [INFO] [Server] POST /api/streams
+2025-02-08T22:59:52.300Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T00:45:41.286Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-09T00:45:41.303Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-09T00:45:57.508Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-09T00:46:03.094Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T00:46:03.103Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T00:46:03.108Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T00:46:03.110Z [INFO] [Server] Initializing database...
+2025-02-09T00:46:03.124Z [INFO] [Database] Database initialized successfully
+2025-02-09T00:46:03.125Z [INFO] [Server] Database initialized
+2025-02-09T00:46:03.125Z [INFO] [Server] Auto-starting streams...
+2025-02-09T00:46:03.948Z [INFO] [HolodexService] Found 3 live streams
+2025-02-09T00:46:04.166Z [INFO] [HolodexService] Found 7 live streams
+2025-02-09T00:46:04.378Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:46:05.964Z [INFO] [StreamManager] Auto-starting 60 streams
+2025-02-09T00:46:05.966Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=2dW1l_q1ipA (youtube)
+2025-02-09T00:46:05.976Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-09T00:46:05.977Z [INFO] [Server] Auto-start complete
+2025-02-09T00:46:05.982Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-09T00:46:05.983Z [INFO] [Server] Routes:
+2025-02-09T00:46:05.983Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-09T00:46:05.983Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-09T00:46:05.983Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-09T00:46:05.984Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-09T00:46:05.984Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-09T00:46:05.984Z [INFO] [Server] POST /api/streams
+2025-02-09T00:46:05.984Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T00:46:29.545Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-09T00:46:29.545Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-09T00:50:49.885Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-09T00:51:46.266Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T00:51:46.271Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T00:51:46.277Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T00:51:46.280Z [INFO] [Server] Initializing database...
+2025-02-09T00:51:46.290Z [INFO] [Database] Database initialized successfully
+2025-02-09T00:51:46.290Z [INFO] [Server] Database initialized
+2025-02-09T00:51:46.290Z [INFO] [Server] Auto-starting streams...
+2025-02-09T00:51:46.633Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:51:46.866Z [INFO] [HolodexService] Found 3 live streams
+2025-02-09T00:51:47.097Z [INFO] [HolodexService] Found 6 live streams
+2025-02-09T00:51:47.320Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:51:48.980Z [INFO] [StreamManager] Auto-starting 109 streams
+2025-02-09T00:51:48.987Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=2dW1l_q1ipA (youtube)
+2025-02-09T00:51:49.004Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-09T00:51:49.009Z [INFO] [Server] Auto-start complete
+2025-02-09T00:51:49.029Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-09T00:51:49.034Z [INFO] [Server] Routes:
+2025-02-09T00:51:49.035Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-09T00:51:49.036Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-09T00:51:49.037Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-09T00:51:49.040Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-09T00:51:49.040Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-09T00:51:49.041Z [INFO] [Server] POST /api/streams
+2025-02-09T00:51:49.041Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T00:53:04.621Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-09T00:54:19.656Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T00:54:19.670Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T00:54:19.678Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T00:54:19.682Z [INFO] [Server] Initializing database...
+2025-02-09T00:54:19.693Z [INFO] [Database] Database initialized successfully
+2025-02-09T00:54:19.694Z [INFO] [Server] Database initialized
+2025-02-09T00:54:19.695Z [INFO] [Server] Auto-starting streams...
+2025-02-09T00:54:20.613Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:54:20.855Z [INFO] [HolodexService] Found 3 live streams
+2025-02-09T00:54:21.097Z [INFO] [HolodexService] Found 6 live streams
+2025-02-09T00:54:21.315Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:54:22.980Z [INFO] [StreamManager] Auto-starting 107 streams
+2025-02-09T00:57:56.331Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T00:57:56.347Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T00:57:56.360Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T00:57:56.367Z [INFO] [Server] Initializing database...
+2025-02-09T00:57:56.400Z [INFO] [Database] Database initialized successfully
+2025-02-09T00:57:56.401Z [INFO] [Server] Database initialized
+2025-02-09T00:57:56.402Z [INFO] [Server] Auto-starting streams...
+2025-02-09T00:58:00.757Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:58:00.995Z [INFO] [HolodexService] Found 3 live streams
+2025-02-09T00:58:01.223Z [INFO] [HolodexService] Found 6 live streams
+2025-02-09T00:58:01.435Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T00:58:04.508Z [INFO] [StreamManager] Auto-starting 107 streams

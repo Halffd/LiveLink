@@ -29,6 +29,7 @@ export class StreamManager {
   private holodexService: HolodexService;
   private playerService: PlayerService;
   private streamQueue: Map<number, StreamSource[]> = new Map(); // Add queue per screen
+  private cleanupHandler: (() => void) | null = null;
 
   /**
    * Creates a new StreamManager instance
@@ -83,6 +84,26 @@ export class StreamManager {
         }
       }
     });
+
+    // Set up cleanup handler
+    this.cleanupHandler = () => {
+      logger.info('Cleaning up stream processes...', 'StreamManager');
+      for (const [screen] of this.streams) {
+        this.stopStream(screen).catch(error => {
+          logger.error(
+            `Failed to stop stream on screen ${screen}`,
+            'StreamManager',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        });
+      }
+      process.exit(0);
+    };
+
+    // Register cleanup handlers
+    process.on('SIGINT', this.cleanupHandler);
+    process.on('SIGTERM', this.cleanupHandler);
+    process.on('exit', this.cleanupHandler);
   }
 
   /**
@@ -160,49 +181,47 @@ export class StreamManager {
   async getLiveStreams(): Promise<StreamSource[]> {
     try {
       const results: StreamSource[] = [];
-      const holodexStreams: StreamSource[] = [];
-      const twitchStreams: StreamSource[] = [];
-
-      // Process each stream configuration
+      
+      // Process each screen's sources
       for (const streamConfig of this.config.streams) {
         if (!streamConfig.enabled) continue;
 
         for (const source of streamConfig.sources) {
-          if (!source.enabled) continue;
-
           if (source.type === 'holodex') {
-            // Handle both favorites and organization streams
-            if (source.subtype === 'favorites') {
-              const streams = await this.holodexService.getFavoriteStreams();
-              streams.forEach(s => s.screen = streamConfig.screen);
-              holodexStreams.push(...streams);
-            } else if (source.subtype === 'organization' && source.name) {
-              const streams = await this.holodexService.getLiveStreams({
-                organization: source.name,
-                limit: source.limit
+            // If source name is "All", fetch all streams without organization filter
+            if (source.name === 'All') {
+              const streams = await this.holodexService.getLiveStreams();
+              streams.forEach((stream: StreamSource) => {
+                results.push({
+                  ...stream,
+                  screen: streamConfig.id
+                });
               });
-              streams.forEach(s => s.screen = streamConfig.screen);
-              holodexStreams.push(...streams);
+            } else {
+              const streams = await this.holodexService.getLiveStreams({
+                organization: source.name
+              });
+              streams.forEach((stream: StreamSource) => {
+                results.push({
+                  ...stream,
+                  screen: streamConfig.id
+                });
+              });
             }
           } else if (source.type === 'twitch') {
-            // Use getVTuberStreams if vtuber tag is present
-            const streams = source.tags?.includes('vtuber') 
-              ? await this.twitchService.getVTuberStreams(source.limit)
-              : await this.twitchService.getStreams(source.limit, {
-                  tags: source.tags,
-                  language: source.language
-                });
-            streams.forEach(s => s.screen = streamConfig.screen);
-            twitchStreams.push(...streams);
+            const streams = await this.twitchService.getStreams();
+            streams.forEach((stream: StreamSource) => {
+              results.push({
+                ...stream,
+                screen: streamConfig.id
+              });
+            });
           }
         }
       }
 
-      // Sort and combine streams
-      results.push(...holodexStreams, ...twitchStreams);
-      
       // Debug log the results
-      logger.debug(`Found ${results.length} streams (${holodexStreams.length} Holodex, ${twitchStreams.length} Twitch)`, 'StreamManager');
+      logger.debug(`Found ${results.length} streams`, 'StreamManager');
       logger.debug(`Stream details: ${JSON.stringify(results.map(s => ({
         url: s.url,
         screen: s.screen,
@@ -257,32 +276,78 @@ export class StreamManager {
       
       // Group streams by screen and initialize queues
       const streamsByScreen = new Map<number, StreamSource[]>();
-      streams.forEach(stream => {
-        if (stream.screen) {
-          const screenStreams = streamsByScreen.get(stream.screen) || [];
-          screenStreams.push(stream);
-          streamsByScreen.set(stream.screen, screenStreams);
+      const usedUrls = new Set<string>();
+      
+      // Initialize empty arrays for each enabled screen
+      this.config.streams.forEach(streamConfig => {
+        if (streamConfig.enabled) {
+          streamsByScreen.set(streamConfig.id, []);
         }
       });
 
-      // Debug log the grouped streams
-      logger.debug(`Grouped streams by screen: ${JSON.stringify(Object.fromEntries(streamsByScreen))}`, 'StreamManager');
+      // First, assign streams to their configured screens
+      for (const streamConfig of this.config.streams) {
+        if (!streamConfig.enabled) continue;
 
-      // Start first stream for each screen and queue the rest
+        const screenStreams = streamsByScreen.get(streamConfig.id) || [];
+        
+        // Filter streams for this screen
+        const availableStreams = streams.filter(stream => 
+          !usedUrls.has(stream.url) && 
+          !this.playerService.isStreamWatched(stream.url) &&
+          streamConfig.sources.some(source => 
+            (source.type === 'holodex' && stream.platform === 'youtube') ||
+            (source.type === 'twitch' && stream.platform === 'twitch')
+          )
+        );
+
+        // Add streams to this screen's list
+        availableStreams.forEach(stream => {
+          screenStreams.push({
+            ...stream,
+            screen: streamConfig.id
+          });
+          usedUrls.add(stream.url);
+        });
+
+        streamsByScreen.set(streamConfig.id, screenStreams);
+      }
+
+      // Process each screen's streams
       for (const [screen, screenStreams] of streamsByScreen) {
-        // Sort streams by view count if specified in config
         const screenConfig = this.config.streams.find(s => s.id === screen);
+        if (!screenConfig || screenStreams.length === 0) {
+          logger.debug(`No streams available for screen ${screen}`);
+          continue;
+        }
+
+        // Sort streams if needed
         if (screenConfig?.sorting?.field === 'viewerCount') {
+          const platformPriorities = new Map<string, number>();
+          screenConfig.sources.forEach((source, index) => {
+            if (source.type === 'holodex') {
+              platformPriorities.set('youtube', index);
+            } else if (source.type === 'twitch') {
+              platformPriorities.set('twitch', index);
+            }
+          });
+
           screenStreams.sort((a, b) => {
+            const aPriority = platformPriorities.get(a.platform) ?? 999;
+            const bPriority = platformPriorities.get(b.platform) ?? 999;
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            
             const aCount = a.viewerCount || 0;
             const bCount = b.viewerCount || 0;
             return screenConfig.sorting.order === 'desc' ? bCount - aCount : aCount - bCount;
           });
         }
 
+        // Start first stream and queue the rest
         const [firstStream, ...remainingStreams] = screenStreams;
         if (firstStream) {
-          logger.info(`Starting stream ${firstStream.url} on screen ${screen}`);
+          logger.info(`Starting stream on screen ${screen}: ${firstStream.url} (${firstStream.platform})`);
+          
           await this.startStream({
             url: firstStream.url,
             quality: screenConfig?.quality || this.config.player.defaultQuality,
@@ -290,10 +355,10 @@ export class StreamManager {
             windowMaximized: screenConfig?.windowMaximized ?? this.config.player.windowMaximized
           });
 
-          // Queue remaining streams for this screen
+          // Set queue for this screen only
           if (remainingStreams.length > 0) {
             this.streamQueue.set(screen, remainingStreams);
-            logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`, 'StreamManager');
+            logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`);
           }
         }
       }
@@ -304,6 +369,12 @@ export class StreamManager {
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
+    }
+  }
+
+  cleanup() {
+    if (this.cleanupHandler) {
+      this.cleanupHandler();
     }
   }
 }

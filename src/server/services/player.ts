@@ -33,7 +33,7 @@ export class PlayerService {
     });
     
     // Check if mpv is installed
-    exec('which mpv', (error, stdout, stderr) => {
+    exec('which mpv', (error, stdout) => {
       if (error) {
         logger.error('MPV is not installed or not in PATH', 'PlayerService', error);
         return;
@@ -153,11 +153,7 @@ export class PlayerService {
 
       logger.debug(`Starting ${command} with args: ${args.join(' ')}`, 'PlayerService');
 
-      const process = spawn(command, args, {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: false,
-        detached: true
-      });
+      const process = spawn(command, args);
 
       // Handle process output
       process.stdout.on('data', (data) => {
