@@ -1345,3 +1345,68 @@ Body:
 2025-02-09T01:10:35.166Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
 2025-02-09T01:10:35.167Z [INFO] [PlayerService] No more unwatched streams for screen 1
 2025-02-09T01:11:07.549Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-09T14:34:02.643Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T14:34:02.829Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T14:34:02.882Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T14:34:02.934Z [INFO] [Server] Initializing database...
+2025-02-09T14:34:03.114Z [INFO] [Database] Database initialized successfully
+2025-02-09T14:34:03.129Z [INFO] [Server] Database initialized
+2025-02-09T14:34:03.187Z [INFO] [Server] Auto-starting streams...
+2025-02-09T14:34:09.692Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:34:10.172Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:34:10.461Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:34:10.690Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:34:59.434Z [INFO] [StreamManager] Auto-starting 150 streams
+2025-02-09T14:37:22.256Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T14:37:22.271Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T14:37:22.303Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T14:37:22.323Z [INFO] [Server] Initializing database...
+2025-02-09T14:37:22.355Z [INFO] [Database] Database initialized successfully
+2025-02-09T14:37:22.356Z [INFO] [Server] Database initialized
+2025-02-09T14:37:22.357Z [INFO] [Server] Auto-starting streams...
+2025-02-09T14:37:23.465Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:37:23.930Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:37:24.318Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:37:24.554Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:37:26.267Z [INFO] [StreamManager] Auto-starting 149 streams
+2025-02-09T14:44:32.483Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T14:44:32.503Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T14:44:32.549Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T14:44:32.576Z [INFO] [Server] Initializing database...
+2025-02-09T14:44:32.618Z [INFO] [Database] Database initialized successfully
+2025-02-09T14:44:32.619Z [INFO] [Server] Database initialized
+2025-02-09T14:44:32.625Z [INFO] [Server] Auto-starting streams...
+2025-02-09T14:44:34.065Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:44:34.534Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:44:34.853Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T14:44:35.146Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T14:44:36.751Z [INFO] [StreamManager] Auto-starting 150 streams
+2025-02-09T15:30:07.198Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T15:30:07.208Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T15:30:07.213Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T15:30:07.217Z [INFO] [Server] Initializing database...
+2025-02-09T15:30:07.260Z [INFO] [Database] Database initialized successfully
+2025-02-09T15:30:07.261Z [INFO] [Server] Database initialized
+2025-02-09T15:30:07.261Z [INFO] [Server] Auto-starting streams...
+2025-02-09T15:30:08.179Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T15:30:08.579Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T15:30:08.808Z [INFO] [HolodexService] Found 25 live streams
+2025-02-09T15:30:09.027Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T15:30:10.609Z [INFO] [StreamManager] Auto-starting 150 streams
+2025-02-09T15:30:10.612Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=rpPRgZvBOik (youtube)
+2025-02-09T15:30:10.620Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-09T15:30:10.622Z [INFO] Starting stream on screen 2: https://twitch.tv/kato_junichi0817 (twitch)
+2025-02-09T15:30:10.652Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-09T15:30:10.655Z [INFO] [Server] Auto-start complete
+2025-02-09T15:30:10.693Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-09T15:30:10.694Z [INFO] [Server] Routes:
+2025-02-09T15:30:10.695Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-09T15:30:10.696Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-09T15:30:10.696Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-09T15:30:10.696Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-09T15:30:10.696Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-09T15:30:10.696Z [INFO] [Server] POST /api/streams
+2025-02-09T15:30:10.698Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T15:30:54.722Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-09T15:30:54.722Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-09T15:31:04.898Z [INFO] [StreamManager] Cleaning up stream processes...

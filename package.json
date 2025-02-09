@@ -6,9 +6,9 @@
 		"build": "tsc && vite build",
 		"build:server": "rm -rf dist && mkdir -p dist/config/default && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json --listEmittedFiles && echo '{\"type\":\"module\"}' > dist/package.json && ls -la dist/server",
 		"preview": "vite preview",
-		"server": "npm run build:server && node --experimental-specifier-resolution=node dist/server/api.js",
+		"server": "npm run build:server && node dist/server/api.js",
 		"dev:all": "concurrently \"npm run dev\" \"npm run server\"",
-		"cli": "node --no-warnings --loader ts-node/esm src/cli/test-api.ts",
+		"cli": "ts-node src/cli/test-api.ts",
 		"prepare": "svelte-kit sync || echo ''",
 		"prepack": "svelte-kit sync && svelte-package && publint",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -23,7 +23,7 @@
 		"clean": "rm -rf dist",
 		"prebuild:server": "npm run clean",
 		"tsc:watch": "tsc -p tsconfig.server.json --watch",
-		"dev:server": "ts-node-esm --experimental-specifier-resolution=node src/server/api.ts"
+		"dev:server": "ts-node src/server/api.ts"
 	},
 	"files": [
 		"dist",

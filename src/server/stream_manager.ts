@@ -276,11 +276,11 @@ export class StreamManager {
       
       // Group streams by screen and initialize queues
       const streamsByScreen = new Map<number, StreamSource[]>();
-      const usedUrls = new Set<string>();
       
       // Initialize empty arrays for each enabled screen
       this.config.streams.forEach(streamConfig => {
         if (streamConfig.enabled) {
+          logger.debug(`Initializing screen ${streamConfig.id}`, 'StreamManager');
           streamsByScreen.set(streamConfig.id, []);
         }
       });
@@ -289,58 +289,42 @@ export class StreamManager {
       for (const streamConfig of this.config.streams) {
         if (!streamConfig.enabled) continue;
 
+        logger.debug(`Processing streams for screen ${streamConfig.id}`, 'StreamManager');
         const screenStreams = streamsByScreen.get(streamConfig.id) || [];
         
         // Filter streams for this screen
-        const availableStreams = streams.filter(stream => 
-          !usedUrls.has(stream.url) && 
-          !this.playerService.isStreamWatched(stream.url) &&
-          streamConfig.sources.some(source => 
+        const availableStreams = streams.filter(stream => {
+          const isWatched = this.playerService.isStreamWatched(stream.url);
+          const matchesSource = streamConfig.sources.some(source => 
             (source.type === 'holodex' && stream.platform === 'youtube') ||
             (source.type === 'twitch' && stream.platform === 'twitch')
-          )
-        );
+          );
+          
+          logger.debug(`Stream ${stream.url}: watched=${isWatched}, matchesSource=${matchesSource}`, 'StreamManager');
+          return !isWatched && matchesSource;
+        });
+
+        logger.debug(`Found ${availableStreams.length} available streams for screen ${streamConfig.id}`, 'StreamManager');
 
         // Add streams to this screen's list
-        availableStreams.forEach(stream => {
-          screenStreams.push({
-            ...stream,
-            screen: streamConfig.id
-          });
-          usedUrls.add(stream.url);
-        });
+        screenStreams.push(...availableStreams.map(stream => ({
+          ...stream,
+          screen: streamConfig.id
+        })));
 
         streamsByScreen.set(streamConfig.id, screenStreams);
       }
 
       // Process each screen's streams
       for (const [screen, screenStreams] of streamsByScreen) {
+        logger.debug(`Starting streams for screen ${screen} (${screenStreams.length} streams)`, 'StreamManager');
+        if(screen != 1){
+            logger.debug(`Secondary Screen ${screen}`)
+        }
         const screenConfig = this.config.streams.find(s => s.id === screen);
         if (!screenConfig || screenStreams.length === 0) {
-          logger.debug(`No streams available for screen ${screen}`);
+          logger.debug(`No streams available for screen ${screen}`, 'StreamManager');
           continue;
-        }
-
-        // Sort streams if needed
-        if (screenConfig?.sorting?.field === 'viewerCount') {
-          const platformPriorities = new Map<string, number>();
-          screenConfig.sources.forEach((source, index) => {
-            if (source.type === 'holodex') {
-              platformPriorities.set('youtube', index);
-            } else if (source.type === 'twitch') {
-              platformPriorities.set('twitch', index);
-            }
-          });
-
-          screenStreams.sort((a, b) => {
-            const aPriority = platformPriorities.get(a.platform) ?? 999;
-            const bPriority = platformPriorities.get(b.platform) ?? 999;
-            if (aPriority !== bPriority) return aPriority - bPriority;
-            
-            const aCount = a.viewerCount || 0;
-            const bCount = b.viewerCount || 0;
-            return screenConfig.sorting.order === 'desc' ? bCount - aCount : aCount - bCount;
-          });
         }
 
         // Start first stream and queue the rest
@@ -358,7 +342,7 @@ export class StreamManager {
           // Set queue for this screen only
           if (remainingStreams.length > 0) {
             this.streamQueue.set(screen, remainingStreams);
-            logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`);
+            logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`, 'StreamManager');
           }
         }
       }
