@@ -1291,3 +1291,57 @@ Body:
 2025-02-09T00:58:01.223Z [INFO] [HolodexService] Found 6 live streams
 2025-02-09T00:58:01.435Z [INFO] [HolodexService] Found 0 live streams
 2025-02-09T00:58:04.508Z [INFO] [StreamManager] Auto-starting 107 streams
+2025-02-09T01:09:19.988Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T01:09:19.995Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T01:09:20.002Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T01:09:20.007Z [INFO] [Server] Initializing database...
+2025-02-09T01:09:20.024Z [INFO] [Database] Database initialized successfully
+2025-02-09T01:09:20.024Z [INFO] [Server] Database initialized
+2025-02-09T01:09:20.024Z [INFO] [Server] Auto-starting streams...
+2025-02-09T01:09:21.005Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T01:09:21.234Z [INFO] [HolodexService] Found 4 live streams
+2025-02-09T01:09:21.460Z [INFO] [HolodexService] Found 6 live streams
+2025-02-09T01:09:21.682Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T01:09:23.261Z [INFO] [StreamManager] Auto-starting 110 streams
+2025-02-09T01:09:23.264Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=2dW1l_q1ipA (youtube)
+2025-02-09T01:09:23.275Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-09T01:09:23.276Z [INFO] [Server] Auto-start complete
+2025-02-09T01:09:23.285Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-09T01:09:23.285Z [INFO] [Server] Routes:
+2025-02-09T01:09:23.286Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-09T01:09:23.287Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-09T01:09:23.288Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-09T01:09:23.288Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-09T01:09:23.288Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-09T01:09:23.289Z [INFO] [Server] POST /api/streams
+2025-02-09T01:09:23.289Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T01:09:51.313Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-09T01:09:51.313Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-09T01:10:16.815Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-09T01:10:22.717Z [INFO] [TwitchService] Twitch service initialized
+2025-02-09T01:10:22.723Z [INFO] [HolodexService] Holodex service initialized
+2025-02-09T01:10:22.731Z [INFO] [StreamManager] Stream manager initialized
+2025-02-09T01:10:22.734Z [INFO] [Server] Initializing database...
+2025-02-09T01:10:22.740Z [INFO] [Database] Database initialized successfully
+2025-02-09T01:10:22.741Z [INFO] [Server] Database initialized
+2025-02-09T01:10:22.741Z [INFO] [Server] Auto-starting streams...
+2025-02-09T01:10:23.714Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T01:10:23.919Z [INFO] [HolodexService] Found 4 live streams
+2025-02-09T01:10:24.115Z [INFO] [HolodexService] Found 6 live streams
+2025-02-09T01:10:24.309Z [INFO] [HolodexService] Found 0 live streams
+2025-02-09T01:10:25.936Z [INFO] [StreamManager] Auto-starting 110 streams
+2025-02-09T01:10:25.936Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=2dW1l_q1ipA (youtube)
+2025-02-09T01:10:25.942Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-09T01:10:25.942Z [INFO] [Server] Auto-start complete
+2025-02-09T01:10:25.948Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-09T01:10:25.948Z [INFO] [Server] Routes:
+2025-02-09T01:10:25.949Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-09T01:10:25.949Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-09T01:10:25.949Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-09T01:10:25.949Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-09T01:10:25.949Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-09T01:10:25.949Z [INFO] [Server] POST /api/streams
+2025-02-09T01:10:25.949Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-09T01:10:35.166Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-09T01:10:35.167Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-09T01:11:07.549Z [INFO] [StreamManager] Cleaning up stream processes...
