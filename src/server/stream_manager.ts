@@ -18,6 +18,7 @@ import { HolodexService } from './services/holodex.js';
 import { PlayerService } from './services/player.js';
 import type { TwitchAuth } from './db/database.js';
 import { env } from '../config/env.js';
+import { queueService } from './services/queue_service.js';
 
 /**
  * Manages multiple video streams across different screens
@@ -28,8 +29,8 @@ export class StreamManager {
   private twitchService: TwitchService;
   private holodexService: HolodexService;
   private playerService: PlayerService;
-  private streamQueue: Map<number, StreamSource[]> = new Map(); // Add queue per screen
   private cleanupHandler: (() => void) | null = null;
+  private isShuttingDown = false;
 
   /**
    * Creates a new StreamManager instance
@@ -52,42 +53,15 @@ export class StreamManager {
     logger.info('Stream manager initialized', 'StreamManager');
 
     this.playerService.onStreamError(async (data) => {
-      // Only handle non-retrying streams to avoid duplicate handling
-      if (!this.playerService.isRetrying(data.screen)) {
-        logger.info(`Stream on screen ${data.screen} ended, finding next stream...`);
-        
-        // Get current streams if queue is empty
-        if (!this.streamQueue.get(data.screen)?.length) {
-          const newStreams = await this.getLiveStreams();
-          // Filter streams for this screen and not watched yet
-          const unwatchedStreams = newStreams.filter(s => 
-            s.screen === data.screen && 
-            !this.playerService.isStreamWatched(s.url)
-          );
-          this.streamQueue.set(data.screen, unwatchedStreams);
-        }
-
-        // Get next stream from queue
-        const queue = this.streamQueue.get(data.screen) || [];
-        const nextStream = queue.shift(); // Remove and get first stream
-        
-        if (nextStream) {
-          logger.info(`Starting next stream on screen ${data.screen}: ${nextStream.url}`);
-          await this.startStream({
-            url: nextStream.url,
-            quality: this.config.player.defaultQuality,
-            screen: data.screen,
-            windowMaximized: this.config.player.windowMaximized
-          });
-        } else {
-          logger.info(`No more unwatched streams for screen ${data.screen}`);
-        }
+      if (!this.playerService.isRetrying(data.screen) && !this.isShuttingDown) {
+        await this.handleStreamEnd(data.screen);
       }
     });
 
-    // Set up cleanup handler
+    // Update cleanup handler
     this.cleanupHandler = () => {
       logger.info('Cleaning up stream processes...', 'StreamManager');
+      this.isShuttingDown = true;
       for (const [screen] of this.streams) {
         this.stopStream(screen).catch(error => {
           logger.error(
@@ -104,6 +78,56 @@ export class StreamManager {
     process.on('SIGINT', this.cleanupHandler);
     process.on('SIGTERM', this.cleanupHandler);
     process.on('exit', this.cleanupHandler);
+
+    // Set up queue event handlers
+    queueService.on('all:watched', async (screen) => {
+      if (!this.isShuttingDown) {
+        await this.handleAllStreamsWatched(screen);
+      }
+    });
+
+    queueService.on('queue:empty', async (screen) => {
+      if (!this.isShuttingDown) {
+        await this.handleEmptyQueue(screen);
+      }
+    });
+  }
+
+  private async handleStreamEnd(screen: number) {
+    logger.info(`Stream on screen ${screen} ended, finding next stream...`);
+    
+    // Try to get next stream from current queue
+    const nextStream = queueService.getNextStream(screen);
+    if (nextStream) {
+      await this.startStream({
+        url: nextStream.url,
+        screen: screen,
+        quality: this.config.player.defaultQuality,
+        windowMaximized: this.config.player.windowMaximized
+      });
+      return;
+    }
+
+    // If no next stream, try to fetch new streams
+    await this.handleEmptyQueue(screen);
+  }
+
+  private async handleEmptyQueue(screen: number) {
+    logger.info(`Queue empty for screen ${screen}, fetching new streams...`);
+    const newStreams = await this.getLiveStreams();
+    const screenStreams = newStreams.filter(s => s.screen === screen);
+    queueService.setQueue(screen, screenStreams);
+  }
+
+  private async handleAllStreamsWatched(screen: number) {
+    logger.info(`All streams watched for screen ${screen}, waiting before refetching...`);
+    
+    // Wait a bit before refetching to avoid hammering the APIs
+    await new Promise(resolve => setTimeout(resolve, 30000)); // 30 second delay
+    
+    if (!this.isShuttingDown) {
+      await this.handleEmptyQueue(screen);
+    }
   }
 
   /**
@@ -178,7 +202,7 @@ export class StreamManager {
   /**
    * Fetches live streams from both Holodex and Twitch based on config
    */
-  async getLiveStreams(): Promise<StreamSource[]> {
+  async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
     try {
       const results: StreamSource[] = [];
       
@@ -228,6 +252,12 @@ export class StreamManager {
         platform: s.platform
       })))}`, 'StreamManager');
 
+      if (results.length === 0 && retryCount < 3) {
+        logger.info(`No streams found, retrying (attempt ${retryCount + 1})...`);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay between retries
+        return this.getLiveStreams(retryCount + 1);
+      }
+
       return results;
     } catch (error) {
       logger.error(
@@ -235,6 +265,13 @@ export class StreamManager {
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
+      
+      if (retryCount < 3) {
+        logger.info(`Error fetching streams, retrying (attempt ${retryCount + 1})...`);
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        return this.getLiveStreams(retryCount + 1);
+      }
+      
       return [];
     }
   }
@@ -341,7 +378,7 @@ export class StreamManager {
 
           // Set queue for this screen only
           if (remainingStreams.length > 0) {
-            this.streamQueue.set(screen, remainingStreams);
+            queueService.setQueue(screen, remainingStreams);
             logger.debug(`Queued ${remainingStreams.length} streams for screen ${screen}`, 'StreamManager');
           }
         }

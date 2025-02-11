@@ -13,24 +13,19 @@ import type {
 import { logger } from './logger.js';
 import { loadAllConfigs } from '../../config/loader.js';
 import { exec } from 'child_process';
+import { queueService } from './queue_service.js';
 
 export class PlayerService {
   private streams: Map<number, StreamInstance> = new Map();
-  private streamQueues: Map<number, string[]> = new Map(); // Queue of stream URLs for each screen
   private events: EventEmitter;
   private outputCallback?: (data: StreamOutput) => void;
   private errorCallback?: (data: StreamError) => void;
   private config = loadAllConfigs();
   private streamRetries: Map<number, number> = new Map();
-  private watchedStreams: Set<string> = new Set();
   private readonly MAX_RETRIES = 3;
 
   constructor() {
     this.events = new EventEmitter();
-    // Initialize empty queues for each screen
-    this.config.player.screens.forEach(screen => {
-      this.streamQueues.set(screen.id, []);
-    });
     
     // Check if mpv is installed
     exec('which mpv', (error, stdout) => {
@@ -42,38 +37,11 @@ export class PlayerService {
     });
   }
 
-  // Add streams to a screen's queue
-  setStreamQueue(screen: number, streams: StreamSource[]) {
-    const urls = streams.map(s => s.url);
-    this.streamQueues.set(screen, urls);
-    logger.debug(`Set stream queue for screen ${screen}: ${urls.join(', ')}`, 'PlayerService');
-  }
-
-  // Get the next unwatched stream for a screen
-  private getNextStream(screen: number): string | null {
-    const queue = this.streamQueues.get(screen) || [];
-    logger.debug(`Getting next stream from queue for screen ${screen}. Queue length: ${queue.length}`, 'PlayerService');
-    
-    while (queue.length > 0) {
-      const nextStream = queue[0];
-      if (!this.watchedStreams.has(nextStream)) {
-        queue.shift(); // Remove the stream we're about to use
-        logger.debug(`Found unwatched stream for screen ${screen}: ${nextStream}`, 'PlayerService');
-        return nextStream;
-      }
-      queue.shift(); // Remove watched stream
-      logger.debug(`Skipping watched stream: ${nextStream}`, 'PlayerService');
-    }
-    
-    logger.debug(`No unwatched streams left in queue for screen ${screen}`, 'PlayerService');
-    return null;
-  }
-
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
     try {
       // If no URL is provided, get next unwatched stream from queue
       if (!options.url) {
-        const nextStream = this.getNextStream(options.screen);
+        const nextStream = queueService.getNextStream(options.screen);
         if (!nextStream) {
           logger.info(`No unwatched streams left for screen ${options.screen}`, 'PlayerService');
           return {
@@ -82,25 +50,11 @@ export class PlayerService {
             error: 'NO_STREAMS'
           };
         }
-        options.url = nextStream;
+        options.url = nextStream.url;
       }
 
-      // Check if stream was already watched
-      if (this.watchedStreams.has(options.url)) {
-        logger.info(`Stream ${options.url} was already watched, trying next stream`, 'PlayerService');
-        const nextStream = this.getNextStream(options.screen);
-        if (!nextStream) {
-          return {
-            screen: options.screen,
-            message: 'All streams have been watched',
-            error: 'ALL_WATCHED'
-          };
-        }
-        options.url = nextStream;
-      }
-
-      // Add to watched streams
-      this.watchedStreams.add(options.url);
+      // Mark stream as watched
+      queueService.markStreamAsWatched(options.url);
 
       // Reset retry counter when starting a new stream intentionally
       if (!this.streamRetries.has(options.screen)) {
@@ -193,13 +147,13 @@ export class PlayerService {
         
         if (code === 0 || code === null) {
           // Normal exit - try to start next stream
-          const nextStream = this.getNextStream(options.screen);
+          const nextStream = queueService.getNextStream(options.screen);
           if (nextStream) {
-            logger.info(`Starting next stream on screen ${options.screen}: ${nextStream}`, 'PlayerService');
+            logger.info(`Starting next stream on screen ${options.screen}: ${nextStream.url}`, 'PlayerService');
             setTimeout(() => {
               this.startStream({
                 ...options,
-                url: nextStream
+                url: nextStream.url
               });
             }, 1000); // Small delay before starting next stream
           } else {
@@ -225,11 +179,11 @@ export class PlayerService {
           } else {
             logger.warn(`Max retries reached for screen ${options.screen}, trying next stream`, 'PlayerService');
             this.streamRetries.delete(options.screen);
-            const nextStream = this.getNextStream(options.screen);
+            const nextStream = queueService.getNextStream(options.screen);
             if (nextStream) {
               this.startStream({
                 ...options,
-                url: nextStream
+                url: nextStream.url
               });
             }
           }
@@ -314,35 +268,32 @@ export class PlayerService {
   }
 
   clearWatchedStreams() {
-    this.watchedStreams.clear();
+    queueService.clearWatchedStreams();
     logger.info('Cleared watched streams history', 'PlayerService');
   }
 
   isStreamWatched(url: string): boolean {
-    return this.watchedStreams.has(url);
+    return queueService.isStreamWatched(url);
   }
 
   getWatchedStreams(): string[] {
-    return Array.from(this.watchedStreams);
+    return queueService.getWatchedStreams();
   }
 
   // Get the current queue for a screen
   getStreamQueue(screen: number): string[] {
-    return this.streamQueues.get(screen) || [];
+    return queueService.getQueue(screen).map(s => s.url);
   }
 
   // Clear the queue for a screen
   clearStreamQueue(screen: number) {
-    this.streamQueues.set(screen, []);
+    queueService.clearQueue(screen);
     logger.info(`Cleared stream queue for screen ${screen}`, 'PlayerService');
   }
 
   // Clear all queues
   clearAllQueues() {
-    this.streamQueues.clear();
-    this.config.player.screens.forEach(screen => {
-      this.streamQueues.set(screen.id, []);
-    });
+    queueService.clearAllQueues();
     logger.info('Cleared all stream queues', 'PlayerService');
   }
 } 

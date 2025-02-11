@@ -1410,3 +1410,147 @@ Body:
 2025-02-09T15:30:54.722Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
 2025-02-09T15:30:54.722Z [INFO] [PlayerService] No more unwatched streams for screen 1
 2025-02-09T15:31:04.898Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-11T22:06:31.080Z [INFO] [TwitchService] Twitch service initialized
+2025-02-11T22:06:31.088Z [INFO] [HolodexService] Holodex service initialized
+2025-02-11T22:06:31.096Z [INFO] [StreamManager] Stream manager initialized
+2025-02-11T22:06:31.101Z [INFO] [Server] Initializing database...
+2025-02-11T22:06:31.111Z [INFO] [Database] Database initialized successfully
+2025-02-11T22:06:31.113Z [INFO] [Server] Database initialized
+2025-02-11T22:06:31.114Z [INFO] [Server] Auto-starting streams...
+2025-02-11T22:06:31.471Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:06:31.693Z [INFO] [HolodexService] Found 5 live streams
+2025-02-11T22:06:31.915Z [INFO] [HolodexService] Found 9 live streams
+2025-02-11T22:06:32.137Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:06:33.987Z [INFO] [StreamManager] Auto-starting 110 streams
+2025-02-11T22:06:33.988Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=QCuCLw-mrTM (youtube)
+2025-02-11T22:06:33.993Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:06:33.993Z [INFO] Starting stream on screen 2: https://twitch.tv/zackrawrr (twitch)
+2025-02-11T22:06:34.012Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-11T22:06:34.013Z [INFO] [Server] Auto-start complete
+2025-02-11T22:06:34.019Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-11T22:06:34.021Z [INFO] [Server] Routes:
+2025-02-11T22:06:34.022Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-11T22:06:34.023Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-11T22:06:34.024Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-11T22:06:34.024Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-11T22:06:34.025Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-11T22:06:34.025Z [INFO] [Server] POST /api/streams
+2025-02-11T22:06:34.026Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-11T22:07:09.623Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:07:43.620Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-11T22:08:07.248Z [INFO] [PlayerService] [streamlink-2-exit] Process exited with code 0
+2025-02-11T22:14:34.805Z [INFO] [TwitchService] Twitch service initialized
+2025-02-11T22:14:34.810Z [INFO] [HolodexService] Holodex service initialized
+2025-02-11T22:14:34.815Z [INFO] [StreamManager] Stream manager initialized
+2025-02-11T22:14:34.818Z [INFO] [Server] Initializing database...
+2025-02-11T22:14:34.827Z [INFO] [Database] Database initialized successfully
+2025-02-11T22:14:34.828Z [INFO] [Server] Database initialized
+2025-02-11T22:14:34.829Z [INFO] [Server] Auto-starting streams...
+2025-02-11T22:14:35.880Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:14:36.103Z [INFO] [HolodexService] Found 5 live streams
+2025-02-11T22:14:36.335Z [INFO] [HolodexService] Found 9 live streams
+2025-02-11T22:14:36.552Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:14:38.117Z [INFO] [StreamManager] Auto-starting 114 streams
+2025-02-11T22:14:38.120Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=QCuCLw-mrTM (youtube)
+2025-02-11T22:14:38.133Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:14:38.133Z [INFO] Starting stream on screen 2: https://twitch.tv/zackrawrr (twitch)
+2025-02-11T22:14:38.146Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-11T22:14:38.151Z [INFO] [Server] Auto-start complete
+2025-02-11T22:14:38.173Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-11T22:14:38.174Z [INFO] [Server] Routes:
+2025-02-11T22:14:38.174Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-11T22:14:38.175Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-11T22:14:38.180Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-11T22:14:38.182Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-11T22:14:38.183Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-11T22:14:38.184Z [INFO] [Server] POST /api/streams
+2025-02-11T22:14:38.184Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-11T22:15:02.018Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:15:02.019Z [INFO] [PlayerService] No more unwatched streams for screen 1
+2025-02-11T22:15:16.547Z [INFO] [PlayerService] [streamlink-2-exit] Process exited with code 0
+2025-02-11T22:15:16.547Z [INFO] [PlayerService] No more unwatched streams for screen 2
+2025-02-11T22:15:19.149Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-11T22:17:52.303Z [INFO] [TwitchService] Twitch service initialized
+2025-02-11T22:17:52.309Z [INFO] [HolodexService] Holodex service initialized
+2025-02-11T22:17:52.314Z [INFO] [StreamManager] Stream manager initialized
+2025-02-11T22:17:52.316Z [INFO] [Server] Initializing database...
+2025-02-11T22:17:52.325Z [INFO] [Database] Database initialized successfully
+2025-02-11T22:17:52.326Z [INFO] [Server] Database initialized
+2025-02-11T22:17:52.326Z [INFO] [Server] Auto-starting streams...
+2025-02-11T22:17:55.252Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:17:55.477Z [INFO] [HolodexService] Found 5 live streams
+2025-02-11T22:17:55.694Z [INFO] [HolodexService] Found 9 live streams
+2025-02-11T22:17:55.911Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:17:57.568Z [INFO] [StreamManager] Auto-starting 113 streams
+2025-02-11T22:17:57.571Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=QCuCLw-mrTM (youtube)
+2025-02-11T22:17:57.583Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:17:57.587Z [INFO] Starting stream on screen 2: https://twitch.tv/zackrawrr (twitch)
+2025-02-11T22:17:57.599Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-11T22:17:57.605Z [INFO] [Server] Auto-start complete
+2025-02-11T22:17:57.668Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-11T22:17:57.669Z [INFO] [Server] Routes:
+2025-02-11T22:17:57.669Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-11T22:17:57.669Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-11T22:17:57.669Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-11T22:17:57.669Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-11T22:17:57.669Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-11T22:17:57.669Z [INFO] [Server] POST /api/streams
+2025-02-11T22:17:57.669Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-11T22:18:24.037Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:18:24.038Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=gwqdFUSazao
+2025-02-11T22:18:25.053Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:18:34.242Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:18:34.242Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=ePdWplQxhkU
+2025-02-11T22:18:35.250Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:18:45.182Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:18:45.183Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=Eo0p5PCya28
+2025-02-11T22:18:46.198Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:18:55.251Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:18:55.251Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=eCwDxqCQvfM
+2025-02-11T22:18:56.263Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:19:06.853Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:19:06.853Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=MGLHCaB93KE
+2025-02-11T22:19:07.869Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:19:20.232Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:19:20.232Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=5j708IU3sPI
+2025-02-11T22:19:21.245Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:19:31.073Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:19:31.073Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=FMrcHEcGJ74
+2025-02-11T22:19:32.087Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:19:46.439Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:19:46.439Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=uDxSgThGJcQ
+2025-02-11T22:19:47.450Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:19:59.297Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-11T22:24:30.076Z [INFO] [TwitchService] Twitch service initialized
+2025-02-11T22:24:30.081Z [INFO] [HolodexService] Holodex service initialized
+2025-02-11T22:24:30.086Z [INFO] [StreamManager] Stream manager initialized
+2025-02-11T22:24:30.092Z [INFO] [Server] Initializing database...
+2025-02-11T22:24:30.098Z [INFO] [Database] Database initialized successfully
+2025-02-11T22:24:30.098Z [INFO] [Server] Database initialized
+2025-02-11T22:24:30.098Z [INFO] [Server] Auto-starting streams...
+2025-02-11T22:24:30.434Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:24:30.653Z [INFO] [HolodexService] Found 5 live streams
+2025-02-11T22:24:30.872Z [INFO] [HolodexService] Found 8 live streams
+2025-02-11T22:24:31.094Z [INFO] [HolodexService] Found 0 live streams
+2025-02-11T22:24:32.632Z [INFO] [StreamManager] Auto-starting 113 streams
+2025-02-11T22:24:32.634Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=QCuCLw-mrTM (youtube)
+2025-02-11T22:24:32.638Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:24:32.639Z [INFO] Starting stream on screen 2: https://twitch.tv/zackrawrr (twitch)
+2025-02-11T22:24:32.642Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-11T22:24:32.643Z [INFO] [Server] Auto-start complete
+2025-02-11T22:24:32.678Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-11T22:24:32.678Z [INFO] [Server] Routes:
+2025-02-11T22:24:32.678Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-11T22:24:32.679Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-11T22:24:32.679Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-11T22:24:32.679Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-11T22:24:32.679Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-11T22:24:32.679Z [INFO] [Server] POST /api/streams
+2025-02-11T22:24:32.679Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-11T22:24:58.748Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-11T22:24:58.749Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=gwqdFUSazao
+2025-02-11T22:24:59.756Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-11T22:25:11.765Z [INFO] [PlayerService] [streamlink-2-exit] Process exited with code 0
+2025-02-11T22:25:11.765Z [INFO] [PlayerService] Starting next stream on screen 2: https://twitch.tv/rainbow6
+2025-02-11T22:25:12.776Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-11T22:25:53.315Z [INFO] [StreamManager] Cleaning up stream processes...
