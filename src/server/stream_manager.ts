@@ -320,37 +320,92 @@ export class StreamManager {
           }
         }
 
-        // Log results for this screen
+        // After collecting all streams for a screen, sort them according to config
         const screenResults = results.filter(s => s.screen === streamConfig.id);
-        logger.debug('Total streams found for screen %s: %s', 
+        logger.info('Total streams found for screen %s: %s', 
           String(streamConfig.id), String(screenResults.length));
+
         if (screenResults.length > 0) {
-          logger.debug('First stream for screen %s: %s (Priority: %s)', 
+          // Sort streams based on priority first, then by viewer count if not favorites
+         /* screenResults.sort((a, b) => {
+            // First sort by priority
+            const priorityA = a.priority ?? 999;
+            const priorityB = b.priority ?? 999;
+            
+            if (priorityA !== priorityB) {
+              return priorityA - priorityB;
+            }
+
+            // For same priority, if either is from favorites, keep original order
+            const aIsFavorite = a.sourceName?.includes('favorites') ?? false;
+            const bIsFavorite = b.sourceName?.includes('favorites') ?? false;
+            
+            if (aIsFavorite && !bIsFavorite) return -1;
+            if (!aIsFavorite && bIsFavorite) return 1;
+            if (aIsFavorite && bIsFavorite) return 0;
+
+            // For non-favorites with same priority, sort by viewer count
+            const viewersA = a.viewerCount ?? 0;
+            const viewersB = b.viewerCount ?? 0;
+            
+            return streamConfig.sorting.order === 'desc' 
+              ? viewersB - viewersA 
+              : viewersA - viewersB;
+          });*/
+
+          logger.info('First stream for screen %s: %s (Priority: %s)', 
             String(streamConfig.id), 
             screenResults[0].sourceName || 'Unknown Source',
             String(screenResults[0].priority)
           );
+
+          // Update the results array in place
+          const nonScreenResults = results.filter(s => s.screen !== streamConfig.id);
+          results.length = 0; // Clear the array
+          results.push(...nonScreenResults, ...screenResults); // Add back all streams in correct order
         }
       }
 
-      // Sort results by priority first, then by viewer count within same priority
-      results.sort((a, b) => {
-        const priorityA = a.priority ?? 999;
-        const priorityB = b.priority ?? 999;
-        
-        if (priorityA !== priorityB) {
-          return priorityA - priorityB;
+      // Final sort of all streams by priority and source type
+      const streamsByPriority = new Map<number, StreamSource[]>();
+      
+      // First, group streams by priority
+      results.forEach(stream => {
+        const priority = stream.priority ?? 999;
+        if (!streamsByPriority.has(priority)) {
+          streamsByPriority.set(priority, []);
         }
-        
-        const viewersA = a.viewerCount ?? 0;
-        const viewersB = b.viewerCount ?? 0;
-        return viewersB - viewersA;
+        streamsByPriority.get(priority)!.push(stream);
       });
 
+      // Sort each priority group separately
+      const sortedResults: StreamSource[] = [];
+      
+      // Process priorities in ascending order (lower number = higher priority)
+      Array.from(streamsByPriority.keys())
+        .sort((a, b) => a - b)
+        .forEach(priority => {
+          const streamsInPriority = streamsByPriority.get(priority)!;
+          
+          // Separate streams by source type
+          const favoriteStreams = streamsInPriority.filter(s => s.sourceName?.includes('favorites'));
+          const nonFavoriteStreams = streamsInPriority.filter(s => !s.sourceName?.includes('favorites'));
+          
+          // Sort non-favorites by viewer count (descending)
+          //nonFavoriteStreams.sort((a, b) => (b.viewerCount ?? 0) - (a.viewerCount ?? 0));
+          
+          // Add favorites first (in original order), then sorted non-favorites
+          sortedResults.push(...favoriteStreams, ...nonFavoriteStreams);
+        });
+
+      // Replace the results array with our properly sorted streams
+      results.length = 0;
+      results.push(...sortedResults);
+
       // Add debug logging
-      logger.debug('Sorted streams:', 'StreamManager');
-      results.slice(0, 10).forEach(s => {
-        logger.debug(
+      logger.info('Sorted streams:', 'StreamManager');
+      results.slice(0, 100).forEach(s => {
+        logger.info(
           `  Priority: ${s.priority}, ` +
           `Viewers: ${s.viewerCount}, ` +
           `Platform: ${s.platform}, ` +
@@ -437,18 +492,18 @@ export class StreamManager {
         if (!screenConfig || !screenConfig.enabled) continue;
 
         // Sort streams by priority and viewer count
-        const sortedStreams = allScreenStreams.sort((a, b) => {
+        const sortedStreams = allScreenStreams; /*.sort((a, b) => {
           const priorityA = a.priority ?? 999;
           const priorityB = b.priority ?? 999;
           if (priorityA !== priorityB) return priorityA - priorityB;
           return (b.viewerCount ?? 0) - (a.viewerCount ?? 0);
-        });
+        });*/
 
         // Get unwatched streams
         const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
         
         if (unwatchedStreams.length === 0) {
-          logger.debug(`No unwatched streams for screen ${screen}`, 'StreamManager');
+          logger.info(`No unwatched streams for screen ${screen}`, 'StreamManager');
           continue;
         }
 
@@ -456,7 +511,7 @@ export class StreamManager {
         const [firstStream, ...remainingStreams] = unwatchedStreams;
         if (firstStream) {
           logger.info(`Starting stream on screen ${screen}: ${firstStream.url} (${firstStream.platform})`);
-          logger.debug(`Stream details: Priority ${firstStream.priority}, Source: ${firstStream.sourceName}`, 'StreamManager');
+          logger.info(`Stream details: Priority ${firstStream.priority}, Source: ${firstStream.sourceName}`, 'StreamManager');
           
           await this.startStream({
             url: firstStream.url,
@@ -469,7 +524,7 @@ export class StreamManager {
           // Queue remaining streams
           if (remainingStreams.length > 0) {
             queueService.setQueue(screen, remainingStreams);
-            logger.debug(
+            logger.info(
               `Queued ${remainingStreams.length} streams for screen ${screen}. ` +
               `First in queue: ${remainingStreams[0].sourceName} (Priority: ${remainingStreams[0].priority})`,
               'StreamManager'

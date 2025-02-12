@@ -2577,3 +2577,395 @@ Body:
 2025-02-12T04:14:18.686Z [INFO] [Server] Auto-starting streams...
 2025-02-12T04:14:19.683Z [INFO] [HolodexService] Found 0 live streams
 2025-02-12T04:14:19.896Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:19:03.639Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:19:03.645Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:19:03.651Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:19:03.659Z [INFO] [Server] Initializing database...
+2025-02-12T04:19:03.664Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:19:03.665Z [INFO] [Server] Database initialized
+2025-02-12T04:19:03.665Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:19:04.586Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:19:04.813Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:19:06.124Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:19:06.125Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:19:06.129Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:19:06.130Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FLBQbm1uw5Y (youtube)
+2025-02-12T04:19:06.134Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:19:06.134Z [INFO] [Server] Auto-start complete
+2025-02-12T04:19:06.144Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:19:06.145Z [INFO] [Server] Routes:
+2025-02-12T04:19:06.145Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:19:06.145Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:19:06.146Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:19:06.146Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:19:06.146Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:19:06.146Z [INFO] [Server] POST /api/streams
+2025-02-12T04:19:06.146Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:23:07.921Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:23:12.374Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:23:12.380Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:23:12.388Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:23:12.391Z [INFO] [Server] Initializing database...
+2025-02-12T04:23:12.398Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:23:12.399Z [INFO] [Server] Database initialized
+2025-02-12T04:23:12.399Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:23:14.008Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:23:14.224Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:23:15.584Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:23:15.586Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:23:15.599Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:23:15.602Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FLBQbm1uw5Y (youtube)
+2025-02-12T04:23:15.611Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:23:15.614Z [INFO] [Server] Auto-start complete
+2025-02-12T04:23:15.631Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:23:15.632Z [INFO] [Server] Routes:
+2025-02-12T04:23:15.632Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:23:15.633Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:23:15.633Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:23:15.633Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:23:15.633Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:23:15.634Z [INFO] [Server] POST /api/streams
+2025-02-12T04:23:15.634Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:24:02.568Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:24:09.089Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:24:09.098Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:24:09.105Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:24:09.108Z [INFO] [Server] Initializing database...
+2025-02-12T04:24:09.115Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:24:09.115Z [INFO] [Server] Database initialized
+2025-02-12T04:24:09.116Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:24:10.169Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:24:10.377Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:24:11.747Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:24:11.751Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:24:11.773Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:24:11.778Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FLBQbm1uw5Y (youtube)
+2025-02-12T04:24:11.793Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:24:11.794Z [INFO] [Server] Auto-start complete
+2025-02-12T04:24:11.803Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:24:11.803Z [INFO] [Server] Routes:
+2025-02-12T04:24:11.803Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:24:11.803Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:24:11.803Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:24:11.803Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:24:11.803Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:24:11.803Z [INFO] [Server] POST /api/streams
+2025-02-12T04:24:11.804Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:25:10.560Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:25:14.589Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:25:14.595Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:25:14.603Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:25:14.606Z [INFO] [Server] Initializing database...
+2025-02-12T04:25:14.654Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:25:14.655Z [INFO] [Server] Database initialized
+2025-02-12T04:25:14.655Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:25:15.598Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:25:15.859Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:25:15.861Z [INFO] [1] Total streams found for screen 8: %s
+2025-02-12T04:25:15.862Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.862Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.862Z [INFO] [7605] Viewers A: 686, Viewers B: %s
+2025-02-12T04:25:15.863Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.863Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.863Z [INFO] [5309] Viewers A: 7605, Viewers B: %s
+2025-02-12T04:25:15.863Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.863Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.863Z [INFO] [5309] Viewers A: 686, Viewers B: %s
+2025-02-12T04:25:15.864Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.864Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.864Z [INFO] [5309] Viewers A: 7605, Viewers B: %s
+2025-02-12T04:25:15.864Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.864Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.866Z [INFO] [3683] Viewers A: 5309, Viewers B: %s
+2025-02-12T04:25:15.866Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.866Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.866Z [INFO] [3683] Viewers A: 686, Viewers B: %s
+2025-02-12T04:25:15.866Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.867Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.867Z [INFO] [3609] Viewers A: 3683, Viewers B: %s
+2025-02-12T04:25:15.867Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.867Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.867Z [INFO] [3609] Viewers A: 686, Viewers B: %s
+2025-02-12T04:25:15.867Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.867Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.868Z [INFO] [9127] Viewers A: 3683, Viewers B: %s
+2025-02-12T04:25:15.868Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.868Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.868Z [INFO] [9127] Viewers A: 5309, Viewers B: %s
+2025-02-12T04:25:15.869Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.869Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.869Z [INFO] [9127] Viewers A: 7605, Viewers B: %s
+2025-02-12T04:25:15.869Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.869Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.869Z [INFO] [8259] Viewers A: 3683, Viewers B: %s
+2025-02-12T04:25:15.870Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.871Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.871Z [INFO] [8259] Viewers A: 7605, Viewers B: %s
+2025-02-12T04:25:15.871Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.872Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.872Z [INFO] [8259] Viewers A: 9127, Viewers B: %s
+2025-02-12T04:25:15.872Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.872Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.872Z [INFO] [524] Viewers A: 5309, Viewers B: %s
+2025-02-12T04:25:15.872Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.873Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.873Z [INFO] [524] Viewers A: 3609, Viewers B: %s
+2025-02-12T04:25:15.873Z [INFO] [1] Sorting streams for screen %s
+2025-02-12T04:25:15.873Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:15.873Z [INFO] [524] Viewers A: 686, Viewers B: %s
+2025-02-12T04:25:15.873Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:25:17.258Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:25:17.259Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.259Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.259Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.259Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.259Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.259Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.259Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.259Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.260Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.260Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.260Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.260Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.260Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.260Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.261Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.261Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.261Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.261Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.261Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.261Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.262Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.262Z [INFO] [2] Sorting streams for screen %s
+2025-02-12T04:25:17.262Z [INFO] [2] Priority A: 2, Priority B: %s
+2025-02-12T04:25:17.262Z [INFO] Either stream is from favorites, keeping original order
+2025-02-12T04:25:17.262Z [INFO] [2] First stream for screen twitch favorites: 2 (Priority: %s)
+2025-02-12T04:25:17.262Z [INFO] [StreamManager] Sorted streams:
+2025-02-12T04:25:17.263Z [INFO] [StreamManager]   Priority: 2, Viewers: 18672, Platform: twitch, Source: twitch favorites, Title: HALLO :3 ⭐ TOXIC TUESDAY ⭐ FIR...
+2025-02-12T04:25:17.263Z [INFO] [StreamManager]   Priority: 2, Viewers: 9127, Platform: youtube, Source: Hololive, Title: 【Minecraft】New Server Grind​...
+2025-02-12T04:25:17.263Z [INFO] [StreamManager]   Priority: 2, Viewers: 8259, Platform: youtube, Source: Hololive, Title: 【MINECRAFT NEW WORLD SERVER】my...
+2025-02-12T04:25:17.264Z [INFO] [StreamManager]   Priority: 2, Viewers: 7605, Platform: youtube, Source: Hololive, Title: Exploring the new frontier! | ...
+2025-02-12T04:25:17.264Z [INFO] [StreamManager]   Priority: 2, Viewers: 5309, Platform: youtube, Source: Hololive, Title: 【NEW MINECRAFT WORLD】 Hewo Cha...
+2025-02-12T04:25:17.264Z [INFO] [StreamManager]   Priority: 2, Viewers: 3683, Platform: youtube, Source: Hololive, Title: ≪NieR Replicant ver.1.22474487...
+2025-02-12T04:25:17.264Z [INFO] [StreamManager]   Priority: 2, Viewers: 3609, Platform: youtube, Source: Hololive, Title: 【Minecraft】We explore! We have...
+2025-02-12T04:25:17.265Z [INFO] [StreamManager]   Priority: 2, Viewers: 2604, Platform: twitch, Source: twitch favorites, Title: THE RETURN OF THE VR KING *QUE...
+2025-02-12T04:25:17.265Z [INFO] [StreamManager]   Priority: 2, Viewers: 2071, Platform: twitch, Source: twitch favorites, Title: WILL MY PC BLOW UP? OR WILL WE...
+2025-02-12T04:25:17.266Z [INFO] [StreamManager]   Priority: 2, Viewers: 762, Platform: twitch, Source: twitch favorites, Title: 🧡 SONIC MANIA SPEEDRUN / AHA ...
+2025-02-12T04:25:17.266Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:25:17.267Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:25:17.268Z [INFO] [StreamManager] Stream details: Priority 2, Source: twitch favorites
+2025-02-12T04:25:17.276Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:25:17.280Z [INFO] [StreamManager] Queued 8 streams for screen 2. First in queue: twitch favorites (Priority: 2)
+2025-02-12T04:25:17.282Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FLBQbm1uw5Y (youtube)
+2025-02-12T04:25:17.284Z [INFO] [StreamManager] Stream details: Priority 2, Source: Hololive
+2025-02-12T04:25:17.290Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:25:17.296Z [INFO] [StreamManager] Queued 7 streams for screen 1. First in queue: Hololive (Priority: 2)
+2025-02-12T04:25:17.297Z [INFO] [Server] Auto-start complete
+2025-02-12T04:25:17.354Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:25:17.355Z [INFO] [Server] Routes:
+2025-02-12T04:25:17.357Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:25:17.357Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:25:17.357Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:25:17.365Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:25:17.365Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:25:17.365Z [INFO] [Server] POST /api/streams
+2025-02-12T04:25:17.365Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:27:50.593Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:28:49.839Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:28:49.845Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:28:49.853Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:28:49.858Z [INFO] [Server] Initializing database...
+2025-02-12T04:28:49.865Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:28:49.866Z [INFO] [Server] Database initialized
+2025-02-12T04:28:49.866Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:28:50.775Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:28:51.024Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:28:51.025Z [INFO] [1] Total streams found for screen 8: %s
+2025-02-12T04:28:51.026Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:28:52.330Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:28:52.331Z [INFO] [2] First stream for screen twitch favorites: 2 (Priority: %s)
+2025-02-12T04:28:52.332Z [INFO] [StreamManager] Sorted streams:
+2025-02-12T04:28:52.332Z [INFO] [StreamManager]   Priority: 2, Viewers: 19, Platform: twitch, Source: twitch favorites, Title: in the senpai backpack @utahim...
+2025-02-12T04:28:52.333Z [INFO] [StreamManager]   Priority: 2, Viewers: 98, Platform: twitch, Source: twitch favorites, Title: 🐸👾Sonic R - CAN YOU FEEL THE...
+2025-02-12T04:28:52.333Z [INFO] [StreamManager]   Priority: 2, Viewers: 435, Platform: twitch, Source: twitch favorites, Title: OKAY FINE I'LL BE MOMMY [18+] ...
+2025-02-12T04:28:52.333Z [INFO] [StreamManager]   Priority: 2, Viewers: 630, Platform: twitch, Source: twitch favorites, Title: IRL STREAM 💛 SAPPORO SEAFOOD ...
+2025-02-12T04:28:52.333Z [INFO] [StreamManager]   Priority: 2, Viewers: 718, Platform: twitch, Source: twitch favorites, Title: reporting the news w/ @giwi @b...
+2025-02-12T04:28:52.333Z [INFO] [StreamManager]   Priority: 2, Viewers: 817, Platform: twitch, Source: twitch favorites, Title: 🧡 SONIC MANIA SPEEDRUN / AHA ...
+2025-02-12T04:28:52.334Z [INFO] [StreamManager]   Priority: 2, Viewers: 2192, Platform: twitch, Source: twitch favorites, Title: WILL MY PC BLOW UP? OR WILL WE...
+2025-02-12T04:28:52.334Z [INFO] [StreamManager]   Priority: 2, Viewers: 2604, Platform: twitch, Source: twitch favorites, Title: THE RETURN OF THE VR KING *QUE...
+2025-02-12T04:28:52.334Z [INFO] [StreamManager]   Priority: 2, Viewers: 18672, Platform: twitch, Source: twitch favorites, Title: HALLO :3 ⭐ TOXIC TUESDAY ⭐ FIR...
+2025-02-12T04:28:52.334Z [INFO] [StreamManager]   Priority: 2, Viewers: 9278, Platform: youtube, Source: Hololive, Title: 【Minecraft】New Server Grind​...
+2025-02-12T04:28:52.334Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:28:52.335Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:28:52.335Z [INFO] [StreamManager] Stream details: Priority 2, Source: twitch favorites
+2025-02-12T04:28:52.424Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:28:52.425Z [INFO] [StreamManager] Queued 8 streams for screen 2. First in queue: twitch favorites (Priority: 2)
+2025-02-12T04:28:52.425Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FLBQbm1uw5Y (youtube)
+2025-02-12T04:28:52.425Z [INFO] [StreamManager] Stream details: Priority 2, Source: Hololive
+2025-02-12T04:28:52.430Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:28:52.431Z [INFO] [StreamManager] Queued 7 streams for screen 1. First in queue: Hololive (Priority: 2)
+2025-02-12T04:28:52.431Z [INFO] [Server] Auto-start complete
+2025-02-12T04:28:52.437Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:28:52.438Z [INFO] [Server] Routes:
+2025-02-12T04:28:52.438Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:28:52.438Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:28:52.438Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:28:52.438Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:28:52.438Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:28:52.438Z [INFO] [Server] POST /api/streams
+2025-02-12T04:28:52.438Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:32:16.884Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:32:21.693Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:32:21.699Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:32:21.708Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:32:21.711Z [INFO] [Server] Initializing database...
+2025-02-12T04:32:21.717Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:32:21.718Z [INFO] [Server] Database initialized
+2025-02-12T04:32:21.718Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:32:22.649Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:32:22.881Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:32:22.889Z [INFO] [1] Total streams found for screen 8: %s
+2025-02-12T04:32:22.891Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:32:24.261Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:32:24.262Z [INFO] [2] First stream for screen twitch favorites: 2 (Priority: %s)
+2025-02-12T04:32:24.264Z [INFO] [StreamManager] Sorted streams:
+2025-02-12T04:32:24.265Z [INFO] [StreamManager]   Priority: 2, Viewers: 18, Platform: twitch, Source: twitch favorites, Title: in the senpai backpack @utahim...
+2025-02-12T04:32:24.266Z [INFO] [StreamManager]   Priority: 2, Viewers: 98, Platform: twitch, Source: twitch favorites, Title: 🐸👾Sonic R - CAN YOU FEEL THE...
+2025-02-12T04:32:24.266Z [INFO] [StreamManager]   Priority: 2, Viewers: 429, Platform: twitch, Source: twitch favorites, Title: OKAY FINE I'LL BE MOMMY [18+] ...
+2025-02-12T04:32:24.267Z [INFO] [StreamManager]   Priority: 2, Viewers: 630, Platform: twitch, Source: twitch favorites, Title: IRL STREAM 💛 SAPPORO SEAFOOD ...
+2025-02-12T04:32:24.267Z [INFO] [StreamManager]   Priority: 2, Viewers: 722, Platform: twitch, Source: twitch favorites, Title: reporting the news w/ @giwi @b...
+2025-02-12T04:32:24.267Z [INFO] [StreamManager]   Priority: 2, Viewers: 853, Platform: twitch, Source: twitch favorites, Title: 🧡 SONIC MANIA SPEEDRUN / AHA ...
+2025-02-12T04:32:24.267Z [INFO] [StreamManager]   Priority: 2, Viewers: 2331, Platform: twitch, Source: twitch favorites, Title: WILL MY PC BLOW UP? OR WILL WE...
+2025-02-12T04:32:24.268Z [INFO] [StreamManager]   Priority: 2, Viewers: 2402, Platform: twitch, Source: twitch favorites, Title: THE RETURN OF THE VR KING *QUE...
+2025-02-12T04:32:24.268Z [INFO] [StreamManager]   Priority: 2, Viewers: 18672, Platform: twitch, Source: twitch favorites, Title: HALLO :3 ⭐ TOXIC TUESDAY ⭐ FIR...
+2025-02-12T04:32:24.268Z [INFO] [StreamManager]   Priority: 2, Viewers: 9364, Platform: youtube, Source: Hololive, Title: 【MINECRAFT NEW WORLD SERVER】my...
+2025-02-12T04:32:24.268Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:32:24.270Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:32:24.273Z [INFO] [StreamManager] Stream details: Priority 2, Source: twitch favorites
+2025-02-12T04:32:24.308Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:32:24.316Z [INFO] [StreamManager] Queued 8 streams for screen 2. First in queue: twitch favorites (Priority: 2)
+2025-02-12T04:32:24.318Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=HXK9AUXV-C0 (youtube)
+2025-02-12T04:32:24.318Z [INFO] [StreamManager] Stream details: Priority 2, Source: Hololive
+2025-02-12T04:32:24.331Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:32:24.332Z [INFO] [StreamManager] Queued 7 streams for screen 1. First in queue: Hololive (Priority: 2)
+2025-02-12T04:32:24.332Z [INFO] [Server] Auto-start complete
+2025-02-12T04:32:24.342Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:32:24.343Z [INFO] [Server] Routes:
+2025-02-12T04:32:24.343Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:32:24.345Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:32:24.345Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:32:24.345Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:32:24.345Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:32:24.345Z [INFO] [Server] POST /api/streams
+2025-02-12T04:32:24.345Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:35:14.597Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:36:03.688Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:36:03.697Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:36:03.703Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:36:03.709Z [INFO] [Server] Initializing database...
+2025-02-12T04:36:03.715Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:36:03.715Z [INFO] [Server] Database initialized
+2025-02-12T04:36:03.715Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:36:04.816Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:36:05.036Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:36:05.042Z [INFO] [1] Total streams found for screen 8: %s
+2025-02-12T04:36:05.044Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:36:06.357Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:36:06.357Z [INFO] [2] First stream for screen twitch favorites: 2 (Priority: %s)
+2025-02-12T04:36:06.358Z [INFO] [StreamManager] Sorted streams:
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 18, Platform: twitch, Source: twitch favorites, Title: in the senpai backpack @utahim...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 83, Platform: twitch, Source: twitch favorites, Title: 🐸👾Sonic R - CAN YOU FEEL THE...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 409, Platform: twitch, Source: twitch favorites, Title: OKAY FINE I'LL BE MOMMY [18+] ...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 589, Platform: twitch, Source: twitch favorites, Title: IRL STREAM 💛 SAPPORO SEAFOOD ...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 696, Platform: twitch, Source: twitch favorites, Title: reporting the news w/ @giwi @b...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 881, Platform: twitch, Source: twitch favorites, Title: 🧡 SONIC MANIA SPEEDRUN / AHA ...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 2430, Platform: twitch, Source: twitch favorites, Title: THE RETURN OF THE VR KING *QUE...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 2477, Platform: twitch, Source: twitch favorites, Title: WILL MY PC BLOW UP? OR WILL WE...
+2025-02-12T04:36:06.359Z [INFO] [StreamManager]   Priority: 2, Viewers: 18884, Platform: twitch, Source: twitch favorites, Title: HALLO :3 ⭐ TOXIC TUESDAY ⭐ FIR...
+2025-02-12T04:36:06.360Z [INFO] [StreamManager]   Priority: 2, Viewers: 9994, Platform: youtube, Source: Hololive, Title: 【MINECRAFT NEW WORLD SERVER】my...
+2025-02-12T04:36:06.360Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:36:06.360Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:36:06.360Z [INFO] [StreamManager] Stream details: Priority 2, Source: twitch favorites
+2025-02-12T04:36:06.366Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:36:06.367Z [INFO] [StreamManager] Queued 8 streams for screen 2. First in queue: twitch favorites (Priority: 2)
+2025-02-12T04:36:06.367Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=HXK9AUXV-C0 (youtube)
+2025-02-12T04:36:06.367Z [INFO] [StreamManager] Stream details: Priority 2, Source: Hololive
+2025-02-12T04:36:06.372Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:36:06.379Z [INFO] [StreamManager] Queued 7 streams for screen 1. First in queue: Hololive (Priority: 2)
+2025-02-12T04:36:06.379Z [INFO] [Server] Auto-start complete
+2025-02-12T04:36:06.383Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:36:06.383Z [INFO] [Server] Routes:
+2025-02-12T04:36:06.383Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:36:06.383Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:36:06.383Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:36:06.383Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:36:06.383Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:36:06.383Z [INFO] [Server] POST /api/streams
+2025-02-12T04:36:06.384Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:37:03.403Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:37:07.734Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:37:07.742Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:37:07.747Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:37:07.750Z [INFO] [Server] Initializing database...
+2025-02-12T04:37:07.760Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:37:07.761Z [INFO] [Server] Database initialized
+2025-02-12T04:37:07.762Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:37:41.321Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:37:48.078Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:37:48.079Z [INFO] [1] Total streams found for screen 8: %s
+2025-02-12T04:37:48.080Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:38:57.296Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:43:06.359Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:43:06.368Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:43:06.374Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:43:06.377Z [INFO] [Server] Initializing database...
+2025-02-12T04:43:06.383Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:43:06.384Z [INFO] [Server] Database initialized
+2025-02-12T04:43:06.384Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:43:07.334Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:43:07.556Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:43:07.557Z [INFO] [1] Total streams found for screen 9: %s
+2025-02-12T04:43:07.557Z [INFO] [1] First stream for screen Hololive: 2 (Priority: %s)
+2025-02-12T04:43:08.913Z [INFO] [2] Total streams found for screen 9: %s
+2025-02-12T04:43:08.914Z [INFO] [2] First stream for screen twitch favorites: 2 (Priority: %s)
+2025-02-12T04:43:08.916Z [INFO] [StreamManager] Sorted streams:
+2025-02-12T04:43:08.917Z [INFO] [StreamManager]   Priority: 2, Viewers: 21, Platform: twitch, Source: twitch favorites, Title: in the senpai backpack @utahim...
+2025-02-12T04:43:08.917Z [INFO] [StreamManager]   Priority: 2, Viewers: 92, Platform: twitch, Source: twitch favorites, Title: 🐸👾Sonic R - CAN YOU FEEL THE...
+2025-02-12T04:43:08.918Z [INFO] [StreamManager]   Priority: 2, Viewers: 414, Platform: twitch, Source: twitch favorites, Title: OKAY FINE I'LL BE MOMMY [18+] ...
+2025-02-12T04:43:08.918Z [INFO] [StreamManager]   Priority: 2, Viewers: 659, Platform: twitch, Source: twitch favorites, Title: IRL STREAM 💛 SAPPORO SEAFOOD ...
+2025-02-12T04:43:08.919Z [INFO] [StreamManager]   Priority: 2, Viewers: 721, Platform: twitch, Source: twitch favorites, Title: reporting the news w/ @giwi @b...
+2025-02-12T04:43:08.920Z [INFO] [StreamManager]   Priority: 2, Viewers: 956, Platform: twitch, Source: twitch favorites, Title: 🧡 SONIC MANIA SPEEDRUN / AHA ...
+2025-02-12T04:43:08.920Z [INFO] [StreamManager]   Priority: 2, Viewers: 2411, Platform: twitch, Source: twitch favorites, Title: THE RETURN OF THE VR KING *QUE...
+2025-02-12T04:43:08.921Z [INFO] [StreamManager]   Priority: 2, Viewers: 2813, Platform: twitch, Source: twitch favorites, Title: WILL MY PC BLOW UP? OR WILL WE...
+2025-02-12T04:43:08.921Z [INFO] [StreamManager]   Priority: 2, Viewers: 18522, Platform: twitch, Source: twitch favorites, Title: HALLO :3 ⭐ TOXIC TUESDAY ⭐ FIR...
+2025-02-12T04:43:08.921Z [INFO] [StreamManager]   Priority: 2, Viewers: 627, Platform: youtube, Source: Hololive, Title: 【Fields of Mistria】YOU KNOW, I...
+2025-02-12T04:43:08.923Z [INFO] [StreamManager]   Priority: 2, Viewers: 6953, Platform: youtube, Source: Hololive, Title: Exploring the new frontier! | ...
+2025-02-12T04:43:08.923Z [INFO] [StreamManager]   Priority: 2, Viewers: 4965, Platform: youtube, Source: Hololive, Title: 【NEW MINECRAFT WORLD】 Hewo Cha...
+2025-02-12T04:43:08.923Z [INFO] [StreamManager]   Priority: 2, Viewers: 3643, Platform: youtube, Source: Hololive, Title: ≪NieR Replicant ver.1.22474487...
+2025-02-12T04:43:08.924Z [INFO] [StreamManager]   Priority: 2, Viewers: 3333, Platform: youtube, Source: Hololive, Title: 【Minecraft】We explore! We have...
+2025-02-12T04:43:08.924Z [INFO] [StreamManager]   Priority: 2, Viewers: 10167, Platform: youtube, Source: Hololive, Title: 【Minecraft】New Server Grind​...
+2025-02-12T04:43:08.924Z [INFO] [StreamManager]   Priority: 2, Viewers: 10405, Platform: youtube, Source: Hololive, Title: 【MINECRAFT NEW WORLD SERVER】my...
+2025-02-12T04:43:08.924Z [INFO] [StreamManager]   Priority: 2, Viewers: 621, Platform: youtube, Source: Hololive, Title: 【JURARD RUN】AN OFFICIAL HOLO I...
+2025-02-12T04:43:08.925Z [INFO] [StreamManager]   Priority: 2, Viewers: 1840, Platform: youtube, Source: Hololive, Title: 【 Minecraft 】ホロ鯖にちょっとだけ(当社比)【火...
+2025-02-12T04:43:08.925Z [INFO] [StreamManager] Auto-starting 18 streams
+2025-02-12T04:43:08.926Z [INFO] Starting stream on screen 2: https://twitch.tv/bluebelleve (twitch)
+2025-02-12T04:43:08.927Z [INFO] [StreamManager] Stream details: Priority 2, Source: twitch favorites
+2025-02-12T04:43:08.944Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:43:08.949Z [INFO] [StreamManager] Queued 8 streams for screen 2. First in queue: twitch favorites (Priority: 2)
+2025-02-12T04:43:08.950Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=FPUXtTbnZpI (youtube)
+2025-02-12T04:43:08.952Z [INFO] [StreamManager] Stream details: Priority 2, Source: Hololive
+2025-02-12T04:43:08.978Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:43:08.979Z [INFO] [StreamManager] Queued 8 streams for screen 1. First in queue: Hololive (Priority: 2)
+2025-02-12T04:43:08.979Z [INFO] [Server] Auto-start complete
+2025-02-12T04:43:08.997Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:43:08.997Z [INFO] [Server] Routes:
+2025-02-12T04:43:08.997Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:43:08.997Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:43:08.997Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:43:08.998Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:43:08.998Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:43:08.998Z [INFO] [Server] POST /api/streams
+2025-02-12T04:43:08.998Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:43:23.774Z [INFO] [PlayerService] [mpv-1-exit] Process exited with code 0
+2025-02-12T04:43:23.774Z [INFO] [PlayerService] Starting next stream on screen 1: https://youtube.com/watch?v=4-cq6vYf9W4
+2025-02-12T04:43:24.789Z [INFO] [PlayerService] Stream started on screen 1
