@@ -218,7 +218,7 @@ export class StreamManager {
   async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
     try {
       const results: StreamSource[] = [];
-      const seenUrls = new Set<string>(); // Track unique streams
+      const seenUrlsByScreen = new Map<number, Set<string>>(); // Track unique streams per screen
       
       // Process each screen's sources
       for (const streamConfig of this.config.streams) {
@@ -227,6 +227,8 @@ export class StreamManager {
           continue;
         }
 
+        // Initialize seen URLs set for this screen
+        seenUrlsByScreen.set(streamConfig.id, new Set<string>());
         logger.debug('Processing sources for screen %s', String(streamConfig.id));
 
         // Sort sources by priority before processing
@@ -254,6 +256,11 @@ export class StreamManager {
               logger.debug('Fetched %s favorite Holodex streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.subtype === 'organization' && source.name) {
+              if (results.some(s => s.screen === streamConfig.id && s.sourceName?.includes('favorites'))) {
+                logger.debug('Skipping %s streams as we already have favorite streams for screen %s', 
+                  source.name, String(streamConfig.id));
+                continue;
+              }
               logger.debug('Fetching %s %s streams', String(limit), source.name);
               streams.push(...await this.holodexService.getLiveStreams({
                 organization: source.name,
@@ -272,6 +279,11 @@ export class StreamManager {
               logger.debug('Fetched %s favorite Twitch streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.tags) {
+              if (results.some(s => s.screen === streamConfig.id && s.sourceName?.includes('favorites'))) {
+                logger.debug('Skipping tagged Twitch streams as we already have favorite streams for screen %s', 
+                  String(streamConfig.id));
+                continue;
+              }
               streams.push(...await this.twitchService.getStreams({
                 limit: limit * 2, // Increase limit to get more streams
                 tags: source.tags
@@ -281,7 +293,7 @@ export class StreamManager {
             }
           }
 
-          // Filter out duplicate streams and add screen/source info
+          // Filter out duplicate streams only within the same screen
           if (streams.length > 0) {
             logger.debug('Adding %s streams from %s%s to screen %s', 
               String(streams.length), 
@@ -290,10 +302,11 @@ export class StreamManager {
               String(streamConfig.id)
             );
 
+            const seenUrls = seenUrlsByScreen.get(streamConfig.id)!;
             streams
-              .filter(stream => !seenUrls.has(stream.url)) // Only add unseen streams
+              .filter(stream => !seenUrls.has(stream.url)) // Only filter duplicates within same screen
               .forEach(stream => {
-                seenUrls.add(stream.url); // Mark as seen
+                seenUrls.add(stream.url); // Mark as seen for this screen
                 results.push({
                   ...stream,
                   screen: streamConfig.id,
@@ -305,7 +318,7 @@ export class StreamManager {
                 });
               });
 
-            // If we have favorite streams, skip lower priority sources
+            // If we have favorite streams, skip lower priority sources for this screen
             if (source.subtype === 'favorites' && streams.length > 0) {
               logger.debug('Found %s favorite streams for screen %s, skipping lower priority sources', 
                 String(streams.length), String(streamConfig.id));

@@ -88,9 +88,9 @@ export class PlayerService {
           '--player-args',
           `--volume=${this.config.player.defaultVolume} ` +
           `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} ` +
-          `--keep-open=yes --no-terminal --msg-level=all=debug ` +
+          `--keep-open=yes --no-terminal ` +
+          `--hwdec=auto --cache=yes --demuxer-max-bytes=500M ` +
           `${this.config.player.windowMaximized ? '--window-maximized=yes' : ''}`,
-          '--verbose-player',
           '--stream-sorting-excludes', '>1080p,<480p',
           '--twitch-disable-hosting',
           '--twitch-disable-ads',
@@ -102,11 +102,13 @@ export class PlayerService {
       } else {
         args = [
           options.url,
-          '--msg-level=all=debug',
           `--volume=${this.config.player.defaultVolume}`,
           `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
           '--keep-open=yes',
           '--no-terminal',
+          '--hwdec=auto',
+          '--cache=yes',
+          '--demuxer-max-bytes=500M',
           this.config.player.windowMaximized ? '--window-maximized=yes' : ''
         ];
       }
