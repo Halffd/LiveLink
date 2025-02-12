@@ -83,7 +83,10 @@ export class PlayerService {
           options.quality || this.config.player.defaultQuality,
           '--player', 'mpv',
           '--player-args',
-          `--volume=${options.volume || this.config.player.defaultVolume} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --keep-open=yes --no-terminal --msg-level=all=debug`,
+          `--volume=${options.volume || this.config.player.defaultVolume} ` +
+          `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} ` +
+          `--keep-open=yes --no-terminal --msg-level=all=debug ` +
+          `${options.windowMaximized ? '--window-maximized=yes' : ''}`,
           '--verbose-player',
           '--stream-sorting-excludes', '>1080p,<480p',
           '--twitch-disable-hosting',
@@ -101,7 +104,8 @@ export class PlayerService {
           `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
           '--keep-open=yes',
           '--no-terminal',
-          '--force-window=yes'
+          '--force-window=yes',
+          options.windowMaximized ? '--window-maximized=yes' : ''
         ];
       }
 
@@ -145,7 +149,8 @@ export class PlayerService {
       process.on('exit', (code) => {
         logger.info(`[${command}-${options.screen}-exit] Process exited with code ${code}`, 'PlayerService');
         
-        if (code === 0 || code === null) {
+        // Handle different exit codes
+        if (code === 0) {
           // Normal exit - try to start next stream
           const nextStream = queueService.getNextStream(options.screen);
           if (nextStream) {
@@ -155,7 +160,7 @@ export class PlayerService {
                 ...options,
                 url: nextStream.url
               });
-            }, 1000); // Small delay before starting next stream
+            }, 1000);
           } else {
             logger.info(`No more unwatched streams for screen ${options.screen}`, 'PlayerService');
             if (this.errorCallback) {
@@ -167,8 +172,31 @@ export class PlayerService {
             }
           }
           this.streamRetries.delete(options.screen);
+        } else if (code === 2) {
+          // Code 2 typically means stream is unavailable/offline
+          logger.warn(`Stream unavailable on screen ${options.screen}, marking as watched and trying next`, 'PlayerService');
+          queueService.markStreamAsWatched(options.url);
+          
+          const nextStream = queueService.getNextStream(options.screen);
+          if (nextStream) {
+            logger.info(`Starting next stream on screen ${options.screen}: ${nextStream.url}`, 'PlayerService');
+            this.streamRetries.delete(options.screen); // Reset retries for new stream
+            this.startStream({
+              ...options,
+              url: nextStream.url
+            });
+          } else {
+            logger.info(`No more unwatched streams for screen ${options.screen}`, 'PlayerService');
+            if (this.errorCallback) {
+              this.errorCallback({
+                screen: options.screen,
+                error: 'No more streams available',
+                code: 2
+              });
+            }
+          }
         } else {
-          // Abnormal exit - handle retries
+          // Other error codes - handle retries
           const retryCount = (this.streamRetries.get(options.screen) || 0) + 1;
           if (retryCount <= this.MAX_RETRIES) {
             logger.info(`Retrying stream on screen ${options.screen} (attempt ${retryCount})`, 'PlayerService');
@@ -179,6 +207,7 @@ export class PlayerService {
           } else {
             logger.warn(`Max retries reached for screen ${options.screen}, trying next stream`, 'PlayerService');
             this.streamRetries.delete(options.screen);
+            queueService.markStreamAsWatched(options.url); // Mark as watched to avoid retrying
             const nextStream = queueService.getNextStream(options.screen);
             if (nextStream) {
               this.startStream({

@@ -24,20 +24,31 @@ export class QueueService {
       return;
     }
 
-    // Filter out already watched streams
+    // Filter out invalid and watched streams
     const validStreams = streams
       .filter(s => s && s.url)
       .filter(s => !this.watchedStreams.has(s.url));
 
-    this.queues.set(screen, validStreams);
+    // Check if these streams are already queued in other monitors
+    const otherQueues = Array.from(this.queues.entries())
+      .filter(([qScreen]) => qScreen !== screen)
+      .map(([, queue]) => queue)
+      .flat();
+
+    // Filter out streams that are queued in other monitors
+    const uniqueStreams = validStreams.filter(stream => 
+      !otherQueues.some(queuedStream => queuedStream.url === stream.url)
+    );
+
+    this.queues.set(screen, uniqueStreams);
     
-    logger.debug(`Set queue for screen ${screen}. Queue size: ${validStreams.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(validStreams)}`, 'QueueService');
+    logger.debug(`Set queue for screen ${screen}. Queue size: ${uniqueStreams.length}`, 'QueueService');
+    logger.debug(`Queue contents: ${JSON.stringify(uniqueStreams)}`, 'QueueService');
     
-    if (validStreams.length === 0) {
+    if (uniqueStreams.length === 0) {
       this.events.emit('all:watched', screen);
     } else {
-      this.events.emit('queue:updated', screen, validStreams);
+      this.events.emit('queue:updated', screen, uniqueStreams);
     }
   }
 
@@ -108,6 +119,16 @@ export class QueueService {
 
   off<K extends keyof QueueEvents>(event: K, listener: QueueEvents[K]) {
     this.events.off(event, listener);
+  }
+
+  // Add method to check if any streams are unwatched
+  hasUnwatchedStreams(streams: StreamSource[]): boolean {
+    return streams.some(stream => !this.watchedStreams.has(stream.url));
+  }
+
+  // Add method to filter unwatched streams
+  filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
+    return streams.filter(stream => !this.watchedStreams.has(stream.url));
   }
 }
 

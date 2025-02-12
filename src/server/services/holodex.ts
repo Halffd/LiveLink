@@ -17,6 +17,12 @@ interface StreamSourceResult {
   streams: Video[];
 }
 
+interface GetStreamsOptions {
+  organization?: string;
+  limit?: number;
+  channels?: string[];
+}
+
 export class HolodexService {
   private client: HolodexApiClient | null = null;
   private favoriteChannels: string[];
@@ -39,37 +45,76 @@ export class HolodexService {
     }
   }
 
-  async getLiveStreams(options: StreamLimits = {}): Promise<StreamSource[]> {
+  async getLiveStreams(options?: GetStreamsOptions): Promise<StreamSource[]> {
     try {
       if (!this.client) {
         logger.warn('Holodex service not initialized - returning empty streams', 'HolodexService');
         return [];
       }
 
-      const { limit = 25, organization } = options;
-      logger.debug(`Fetching ${limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
+      const limit = options?.limit || 25;
+      const organization = options?.organization;
+      const channels = options?.channels;
 
-      const videos = await this.client.getLiveVideos({
-        limit,
-        org: organization,
-        status: 'live' as VideoStatus
-      });
+      let videos: Video[];
+      
+      if (channels && channels.length > 0) {
+        // Fetch streams from specific channels
+        logger.debug(`Fetching streams for ${channels.length} channels`, 'HolodexService');
+        const promises = channels.map(channelId =>
+          this.client!.getLiveVideos({
+            channel_id: channelId,
+            status: 'live' as VideoStatus,
+            type: 'stream' as VideoType
+          }).catch(error => {
+            logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
+            logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+            return [];
+          })
+        );
+        
+        const results = await Promise.all(promises);
+        videos = results.flat();
+        logger.debug(`Found ${videos.length} live streams from favorite channels`, 'HolodexService');
+      } else {
+        // Fetch streams by organization or all
+        const params: VideosParam = {
+          limit,
+          status: 'live' as VideoStatus,
+          type: 'stream' as VideoType
+        };
+
+        if (organization) {
+          params.org = organization;
+        }
+
+        logger.debug(`Fetching ${limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
+        videos = await this.client.getLiveVideos(params);
+      }
 
       logger.info(`Found ${videos.length} live streams`, 'HolodexService');
-      logger.debug(`Stream details: ${JSON.stringify(videos.map(v => ({
-        title: v.title,
-        channel: v.channel?.name,
-        viewers: v.liveViewers
-      })))}`, 'HolodexService');
+      if (videos.length > 0) {
+        logger.debug(`Stream details: ${JSON.stringify(videos.slice(0, 3).map(v => ({
+          title: v.title,
+          channel: v.channel?.name,
+          viewers: v.liveViewers,
+          id: v.videoId,
+          status: v.status
+        })))}`, 'HolodexService');
+      }
 
-      return videos.map(video => ({
-        url: `https://youtube.com/watch?v=${video.videoId}`,
-        title: video.title,
-        platform: 'youtube',
-        viewerCount: video.liveViewers,
-        thumbnail: video.channel?.avatarUrl,
-        startedAt: video.actualStart ? new Date(video.actualStart) : undefined
-      }));
+      return videos
+        .filter(video => !this.isChannelFiltered(video))
+        .map(video => ({
+          url: `https://youtube.com/watch?v=${video.videoId}`,
+          title: video.title,
+          platform: 'youtube' as const,
+          viewerCount: video.liveViewers,
+          thumbnail: video.channel?.avatarUrl,
+          startedAt: video.actualStart ? new Date(video.actualStart) : undefined,
+          channelId: video.channel?.channelId,
+          organization: video.channel?.organization
+        }));
     } catch (error) {
       logger.error('Failed to fetch Holodex live streams', 'HolodexService');
       logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');

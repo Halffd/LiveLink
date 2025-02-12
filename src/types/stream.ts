@@ -38,12 +38,17 @@ export interface Stream {
 
 export interface StreamSource {
   url: string;
-  title: string;
-  platform: 'twitch' | 'youtube';
+  title?: string;
+  platform: 'youtube' | 'twitch';
   viewerCount?: number;
   thumbnail?: string;
   startedAt?: Date;
+  channelId?: string;
+  organization?: string;
   screen?: number;
+  priority?: number;
+  source?: string;
+  sourceName?: string;
 }
 
 export interface StreamResponse {
@@ -69,6 +74,11 @@ export interface StreamLimits {
 export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch' | 'holodex';
 export type StreamSourceSubtype = 'favorites' | 'organization' | null;
 
+export interface FavoriteChannels {
+  holodex: string[];  // YouTube channel IDs
+  twitch: string[];   // Twitch usernames
+}
+
 export interface StreamSourceConfig {
   type: StreamSourceType;
   subtype?: StreamSourceSubtype;
@@ -78,4 +88,5 @@ export interface StreamSourceConfig {
   priority: number;
   tags?: string[];
   language?: string;
+  channels?: string[]; // For favorite channels
 } 

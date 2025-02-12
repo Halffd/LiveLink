@@ -48,3 +48,73 @@ Body:
   "status": 400,
   "message": "invalid client"
 }
+2025-02-12T01:19:07.228Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:19:12.650Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:19:18.073Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:19:23.850Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:20:06.646Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:20:12.095Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:28:03.249Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:28:08.722Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:28:14.683Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}
+2025-02-12T01:28:20.173Z [ERROR] [TwitchService] Failed to fetch Twitch streams
+HttpStatusCodeError: Encountered HTTP status code 400: Bad Request
+
+URL: streams?first=200
+Method: GET
+Body:
+{"error":"Bad Request","status":400,"message":"The parameter \"first\" was malformed: the value must be less than or equal to 100"}

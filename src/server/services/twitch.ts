@@ -13,6 +13,13 @@ import { logger } from './logger.js';
 import { db } from '../db/database.js';
 import { env } from '../../config/env.js';
 
+interface GetStreamsOptions {
+  limit?: number;
+  tags?: string[];
+  language?: string;
+  channels?: string[];
+}
+
 export class TwitchService {
   private client: ApiClient | null = null;
   private clientId: string;
@@ -39,29 +46,66 @@ export class TwitchService {
     }
   }
 
-  async getStreams(limit = 50, options: { tags?: string[], language?: string } = {}): Promise<StreamSource[]> {
+  async getStreams(options?: GetStreamsOptions, channels?: string[] | undefined): Promise<StreamSource[]> {
     if (!this.client) return [];
 
     try {
-      const queryOptions: HelixPaginatedStreamFilter = { 
-        limit,
-        type: 'live'
-      };
+      const limit = options?.limit || 25;
+      const tags = options?.tags || [];
+
+      let streams: HelixStream[];
       
-      // Add language filter if specified
-      if (options.language) {
-        queryOptions.language = options.language;
+      if (channels && channels.length > 0) {
+        // Fetch streams from specific channels (favorites)
+        const channelBatches = [];
+        // Process in batches of 100 due to API limitations
+        for (let i = 0; i < channels.length; i += 100) {
+          const batch = channels.slice(i, i + 100);
+          channelBatches.push(batch);
+        }
+
+        // Fetch each batch
+        const batchResults = await Promise.all(
+          channelBatches.map(batch => 
+            this.client!.streams.getStreamsByUserNames(batch)
+          )
+        );
+
+        // Combine all results
+        streams = batchResults.flat();
+        
+        // If no stream data available, create basic entries for offline channels
+        if (streams.length === 0) {
+          logger.debug('No live favorite channels found, creating basic entries', 'TwitchService');
+          return channels.map(channel => ({
+            url: `https://twitch.tv/${channel}`,
+            title: `${channel}'s channel`,
+            platform: 'twitch' as const,
+            viewerCount: 0,
+            thumbnail: undefined,
+            startedAt: undefined
+          }));
+        }
+      } else {
+        // Get regular streams with tag filtering
+        const response = await this.client.streams.getStreams({
+          limit: Math.min(limit * 2, 100), // Ensure we don't exceed Twitch's limit
+          language: options?.language
+        });
+
+        // Filter by tags if needed
+        if (tags.length > 0) {
+          streams = response.data.filter(stream => 
+            tags.some(requestedTag => 
+              stream.tags.some(tag => tag.toLowerCase() === requestedTag.toLowerCase())
+            )
+          ).slice(0, limit);
+        } else {
+          streams = response.data;
+        }
       }
 
-      // Add tags filter if specified
-      if (options.tags?.length) {
-        // @ts-expect-error - Twitch API types are incomplete
-        queryOptions.tags = options.tags;
-      }
-
-      const streams = await this.client.streams.getStreams(queryOptions);
-      
-      return streams.data
+      return streams
         .filter(stream => !this.filters.includes(stream.userName.toLowerCase()))
         .map(stream => ({
           url: `https://twitch.tv/${stream.userName}`,
@@ -71,22 +115,43 @@ export class TwitchService {
           thumbnail: stream.thumbnailUrl,
           startedAt: stream.startDate
         }));
+
     } catch (error) {
       logger.error(
         'Failed to fetch Twitch streams', 
         'TwitchService',
         error instanceof Error ? error : new Error(String(error))
       );
+
+      // If this was a favorites request, return basic entries for the channels
+      if (options?.channels?.length) {
+        logger.debug('Returning basic entries for favorite channels after error', 'TwitchService');
+        return options.channels.map(channel => ({
+          url: `https://twitch.tv/${channel}`,
+          title: `${channel}'s channel`,
+          platform: 'twitch' as const,
+          viewerCount: 0,
+          thumbnail: undefined,
+          startedAt: undefined
+        }));
+      }
+
       return [];
     }
   }
 
   async getVTuberStreams(limit = 50): Promise<StreamSource[]> {
-    return this.getStreams(limit, { tags: ['vtuber'] });
+    return this.getStreams({
+      limit,
+      tags: ['VTuber']
+    });
   }
 
   async getJapaneseStreams(limit = 50): Promise<StreamSource[]> {
-    return this.getStreams(limit, { language: 'ja' });
+    return this.getStreams({
+      limit,
+      language: 'ja'
+    });
   }
 
   async getFollowedStreams(userId: string): Promise<StreamSource[]> {

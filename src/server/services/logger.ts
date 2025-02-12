@@ -19,12 +19,26 @@ interface LogMessage {
   error?: Error | unknown;
 }
 
-const logFormat = printf(({ level, message, timestamp, context, error }) => {
-  let logMessage = `${timestamp} [${level.toUpperCase()}] ${context ? `[${context}] ` : ''}${message}`;
+// Create a custom format for consistent logging
+const customFormat = printf(({ level, message, timestamp, context, error }) => {
+  const colorize = {
+    [LogLevel.ERROR]: chalk.red,
+    [LogLevel.WARN]: chalk.yellow,
+    [LogLevel.INFO]: chalk.blue,
+    [LogLevel.DEBUG]: chalk.gray
+  };
+
+  const colorFn = colorize[level as LogLevel] || chalk.white;
+  const contextStr = context ? `[${context}] ` : '';
+  const baseMessage = `${timestamp} [${level.toUpperCase()}] ${contextStr}${message}`;
+  
+  let fullMessage = colorFn(baseMessage);
+  
   if (error instanceof Error) {
-    logMessage += `\n${error.stack}`;
+    fullMessage += '\n' + chalk.red(error.stack);
   }
-  return logMessage;
+  
+  return fullMessage;
 });
 
 export class Logger {
@@ -35,21 +49,18 @@ export class Logger {
     this.logger = createLogger({
       format: combine(
         timestamp(),
-        logFormat
+        customFormat
       ),
       transports: [
-        new transports.Console({
-          format: format.combine(
-            format.colorize(),
-            logFormat
-          )
-        }),
+        new transports.Console(),
         new transports.File({ 
           filename: path.join('logs', 'error.log'), 
-          level: 'error' 
+          level: 'error',
+          format: format.uncolorize() // Remove colors for file output
         }),
         new transports.File({ 
-          filename: path.join('logs', 'combined.log') 
+          filename: path.join('logs', 'combined.log'),
+          format: format.uncolorize() // Remove colors for file output
         })
       ]
     });
@@ -58,7 +69,7 @@ export class Logger {
   setLevel(level: LogLevel | string) {
     this.currentLevel = level.toLowerCase() as LogLevel;
     this.logger.level = this.currentLevel;
-    this.debug(`Log level set to ${this.currentLevel}`, 'Logger');
+    this.debug('Log level set to %s', this.currentLevel);
   }
 
   shouldLog(level: LogLevel): boolean {
@@ -71,6 +82,26 @@ export class Logger {
     return levels[level] <= levels[this.currentLevel];
   }
 
+  private formatMessage(message: string, ...args: (string | number)[]): string {
+    if (args.length === 0) return message;
+    
+    try {
+      return message.replace(/%[sdj%]/g, (match: string): string => {
+        if (match === '%%') return '%';
+        if (args.length === 0) return match;
+        const arg = args.shift();
+        switch (match) {
+          case '%s': return String(arg);
+          case '%d': return String(Number(arg));
+          case '%j': return JSON.stringify(arg);
+          default: return match;
+        }
+      });
+    } catch (error) {
+      return message;
+    }
+  }
+
   log(logData: LogMessage) {
     if (!this.shouldLog(logData.level)) return;
 
@@ -78,40 +109,42 @@ export class Logger {
       level: logData.level,
       message: logData.message,
       context: logData.context,
-      error: logData.error
+      error: logData.error,
+      timestamp: new Date().toISOString()
     });
-
-    // Console output with colors in development
-    if (process.env.NODE_ENV !== 'production') {
-      const colorize = {
-        [LogLevel.ERROR]: chalk.red,
-        [LogLevel.WARN]: chalk.yellow,
-        [LogLevel.INFO]: chalk.blue,
-        [LogLevel.DEBUG]: chalk.gray
-      };
-
-      const colorFn = colorize[logData.level];
-      const timestamp = new Date().toISOString();
-      console.log(
-        colorFn(`${timestamp} [${logData.level.toUpperCase()}] ${logData.context ? `[${logData.context}] ` : ''}${logData.message}`)
-      );
-    }
   }
 
   error(message: string, context?: string, error?: Error) {
-    this.log({ level: LogLevel.ERROR, message, context, error });
+    this.log({ 
+      level: LogLevel.ERROR, 
+      message: this.formatMessage(message), 
+      context, 
+      error 
+    });
   }
 
-  warn(message: string, context?: string) {
-    this.log({ level: LogLevel.WARN, message, context });
+  warn(message: string, context?: string, ...args: (string | number)[]) {
+    this.log({ 
+      level: LogLevel.WARN, 
+      message: this.formatMessage(message, ...args), 
+      context 
+    });
   }
 
-  info(message: string, context?: string) {
-    this.log({ level: LogLevel.INFO, message, context });
+  info(message: string, context?: string, ...args: (string | number)[]) {
+    this.log({ 
+      level: LogLevel.INFO, 
+      message: this.formatMessage(message, ...args), 
+      context 
+    });
   }
 
-  debug(message: string, context?: string) {
-    this.log({ level: LogLevel.DEBUG, message, context });
+  debug(message: string, context?: string, ...args: (string | number)[]) {
+    this.log({ 
+      level: LogLevel.DEBUG, 
+      message: this.formatMessage(message, ...args), 
+      context 
+    });
   }
 }
 
