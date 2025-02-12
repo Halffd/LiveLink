@@ -158,12 +158,12 @@ export class HolodexService {
     const channelName = video.channel?.name?.toLowerCase();
     const channelId = video.channel?.channelId;
     
+    // If channel is in favorites, don't filter it
     if (channelId && this.favoriteChannels.includes(channelId)) {
       return false;
     }
     
-    return Boolean(channelName && this.filters.some((filter: string) => 
-      channelName.includes(filter.toLowerCase())
-    ));
+    // If channel name matches any filter exactly, filter it
+    return Boolean(channelName && this.filters.includes(channelName));
   }
 } 

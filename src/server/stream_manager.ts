@@ -44,12 +44,12 @@ export class StreamManager {
     this.twitchService = new TwitchService(
       env.TWITCH_CLIENT_ID,
       env.TWITCH_CLIENT_SECRET,
-      [] // We'll handle filters differently
+      this.config.filters?.filters || [] // Handle potential undefined filters
     );
 
     this.holodexService = new HolodexService(
       env.HOLODEX_API_KEY,
-      [], // We'll handle filters differently
+      this.config.filters?.filters || [], // Handle potential undefined filters
       this.favoriteChannels.holodex,
       this.config
     );
@@ -218,6 +218,7 @@ export class StreamManager {
   async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
     try {
       const results: StreamSource[] = [];
+      const seenUrls = new Set<string>(); // Track unique streams
       
       // Process each screen's sources
       for (const streamConfig of this.config.streams) {
@@ -248,20 +249,15 @@ export class StreamManager {
                 String(limit), String(this.favoriteChannels.holodex.length));
               streams.push(...await this.holodexService.getLiveStreams({
                 channels: this.favoriteChannels.holodex,
-                limit: limit
+                limit: limit * 2 // Increase limit to get more streams
               }));
               logger.debug('Fetched %s favorite Holodex streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.subtype === 'organization' && source.name) {
-              if (results.some(s => s.screen === streamConfig.id)) {
-                logger.debug('Skipping %s streams as we already have higher priority streams for screen %s', 
-                  source.name, String(streamConfig.id));
-                continue;
-              }
               logger.debug('Fetching %s %s streams', String(limit), source.name);
               streams.push(...await this.holodexService.getLiveStreams({
                 organization: source.name,
-                limit: limit
+                limit: limit * 2 // Increase limit to get more streams
               }));
               logger.debug('Fetched %s %s streams for screen %s', 
                 String(streams.length), source.name, String(streamConfig.id));
@@ -269,20 +265,15 @@ export class StreamManager {
           } else if (source.type === 'twitch') {
             if (source.subtype === 'favorites') {
               const favoriteStreams = await this.twitchService.getStreams({
-                limit: limit
+                limit: limit * 2 // Increase limit to get more streams
               }, this.favoriteChannels.twitch);
               favoriteStreams.reverse();
               streams.push(...favoriteStreams);
               logger.debug('Fetched %s favorite Twitch streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.tags) {
-              if (results.some(s => s.screen === streamConfig.id)) {
-                logger.debug('Skipping tagged Twitch streams as we already have higher priority streams for screen %s', 
-                  String(streamConfig.id));
-                continue;
-              }
               streams.push(...await this.twitchService.getStreams({
-                limit: limit,
+                limit: limit * 2, // Increase limit to get more streams
                 tags: source.tags
               }));
               logger.debug('Fetched %s tagged Twitch streams for screen %s', 
@@ -290,7 +281,7 @@ export class StreamManager {
             }
           }
 
-          // Add screen and source info to each stream
+          // Filter out duplicate streams and add screen/source info
           if (streams.length > 0) {
             logger.debug('Adding %s streams from %s%s to screen %s', 
               String(streams.length), 
@@ -299,20 +290,23 @@ export class StreamManager {
               String(streamConfig.id)
             );
 
-            streams.forEach(stream => {
-              results.push({
-                ...stream,
-                screen: streamConfig.id,
-                priority: source.priority,
-                source: source.type,
-                sourceName: source.subtype === 'favorites' 
-                  ? `${source.type} favorites`
-                  : source.name || source.type
+            streams
+              .filter(stream => !seenUrls.has(stream.url)) // Only add unseen streams
+              .forEach(stream => {
+                seenUrls.add(stream.url); // Mark as seen
+                results.push({
+                  ...stream,
+                  screen: streamConfig.id,
+                  priority: source.priority,
+                  source: source.type,
+                  sourceName: source.subtype === 'favorites' 
+                    ? `${source.type} favorites`
+                    : source.name || source.type
+                });
               });
-            });
 
             // If we have favorite streams, skip lower priority sources
-            if (source.subtype === 'favorites') {
+            if (source.subtype === 'favorites' && streams.length > 0) {
               logger.debug('Found %s favorite streams for screen %s, skipping lower priority sources', 
                 String(streams.length), String(streamConfig.id));
               break;
@@ -322,47 +316,15 @@ export class StreamManager {
 
         // After collecting all streams for a screen, sort them according to config
         const screenResults = results.filter(s => s.screen === streamConfig.id);
-        logger.info('Total streams found for screen %s: %s', 
+        logger.info('Total streams found for screen %d: %d', 
           String(streamConfig.id), String(screenResults.length));
 
         if (screenResults.length > 0) {
-          // Sort streams based on priority first, then by viewer count if not favorites
-         /* screenResults.sort((a, b) => {
-            // First sort by priority
-            const priorityA = a.priority ?? 999;
-            const priorityB = b.priority ?? 999;
-            
-            if (priorityA !== priorityB) {
-              return priorityA - priorityB;
-            }
-
-            // For same priority, if either is from favorites, keep original order
-            const aIsFavorite = a.sourceName?.includes('favorites') ?? false;
-            const bIsFavorite = b.sourceName?.includes('favorites') ?? false;
-            
-            if (aIsFavorite && !bIsFavorite) return -1;
-            if (!aIsFavorite && bIsFavorite) return 1;
-            if (aIsFavorite && bIsFavorite) return 0;
-
-            // For non-favorites with same priority, sort by viewer count
-            const viewersA = a.viewerCount ?? 0;
-            const viewersB = b.viewerCount ?? 0;
-            
-            return streamConfig.sorting.order === 'desc' 
-              ? viewersB - viewersA 
-              : viewersA - viewersB;
-          });*/
-
-          logger.info('First stream for screen %s: %s (Priority: %s)', 
+          logger.info('First stream for screen %d: %s (Priority: %d)', 
             String(streamConfig.id), 
             screenResults[0].sourceName || 'Unknown Source',
-            String(screenResults[0].priority)
+            String(screenResults[0].priority || 999)
           );
-
-          // Update the results array in place
-          const nonScreenResults = results.filter(s => s.screen !== streamConfig.id);
-          results.length = 0; // Clear the array
-          results.push(...nonScreenResults, ...screenResults); // Add back all streams in correct order
         }
       }
 
@@ -404,7 +366,7 @@ export class StreamManager {
 
       // Add debug logging
       logger.info('Sorted streams:', 'StreamManager');
-      results.slice(0, 100).forEach(s => {
+      results.forEach(s => {
         logger.info(
           `  Priority: ${s.priority}, ` +
           `Viewers: ${s.viewerCount}, ` +
