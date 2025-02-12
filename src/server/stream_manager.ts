@@ -240,16 +240,16 @@ export class StreamManager {
 
         for (const source of sortedSources) {
           const limit = source.limit || 25;
-          let streams: StreamSource[] = [];
+          const streams: StreamSource[] = [];
 
           if (source.type === 'holodex') {
             if (source.subtype === 'favorites') {
               logger.debug('Fetching %s favorite Holodex streams from %s channels', 
                 String(limit), String(this.favoriteChannels.holodex.length));
-              streams = await this.holodexService.getLiveStreams({
+              streams.push(...await this.holodexService.getLiveStreams({
                 channels: this.favoriteChannels.holodex,
                 limit: limit
-              });
+              }));
               logger.debug('Fetched %s favorite Holodex streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.subtype === 'organization' && source.name) {
@@ -259,18 +259,20 @@ export class StreamManager {
                 continue;
               }
               logger.debug('Fetching %s %s streams', String(limit), source.name);
-              streams = await this.holodexService.getLiveStreams({
+              streams.push(...await this.holodexService.getLiveStreams({
                 organization: source.name,
                 limit: limit
-              });
+              }));
               logger.debug('Fetched %s %s streams for screen %s', 
                 String(streams.length), source.name, String(streamConfig.id));
             }
           } else if (source.type === 'twitch') {
             if (source.subtype === 'favorites') {
-              streams = await this.twitchService.getStreams({
+              const favoriteStreams = await this.twitchService.getStreams({
                 limit: limit
-              }, [...this.favoriteChannels.twitch.reverse()]);
+              }, this.favoriteChannels.twitch);
+              favoriteStreams.reverse();
+              streams.push(...favoriteStreams);
               logger.debug('Fetched %s favorite Twitch streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             } else if (source.tags) {
@@ -279,10 +281,10 @@ export class StreamManager {
                   String(streamConfig.id));
                 continue;
               }
-              streams = await this.twitchService.getStreams({
+              streams.push(...await this.twitchService.getStreams({
                 limit: limit,
                 tags: source.tags
-              });
+              }));
               logger.debug('Fetched %s tagged Twitch streams for screen %s', 
                 String(streams.length), String(streamConfig.id));
             }

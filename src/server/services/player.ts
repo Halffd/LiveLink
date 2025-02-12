@@ -23,6 +23,7 @@ export class PlayerService {
   private config = loadAllConfigs();
   private streamRetries: Map<number, number> = new Map();
   private readonly MAX_RETRIES = 3;
+  private RETRY_INTERVAL = 10000; // 10 seconds
 
   constructor() {
     this.events = new EventEmitter();
@@ -43,11 +44,13 @@ export class PlayerService {
       if (!options.url) {
         const nextStream = queueService.getNextStream(options.screen);
         if (!nextStream) {
-          logger.info(`No unwatched streams left for screen ${options.screen}`, 'PlayerService');
+          logger.info(`No unwatched streams left for screen ${options.screen}, will retry in 10s`, 'PlayerService');
+          setTimeout(async () => {
+            await this.handleEmptyQueue(options.screen);
+          }, this.RETRY_INTERVAL);
           return {
             screen: options.screen,
-            message: 'No unwatched streams available',
-            error: 'NO_STREAMS'
+            message: 'No unwatched streams available, will retry'
           };
         }
         options.url = nextStream.url;
@@ -83,10 +86,10 @@ export class PlayerService {
           options.quality || this.config.player.defaultQuality,
           '--player', 'mpv',
           '--player-args',
-          `--volume=${options.volume || this.config.player.defaultVolume} ` +
+          `--volume=${this.config.player.defaultVolume} ` +
           `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} ` +
           `--keep-open=yes --no-terminal --msg-level=all=debug ` +
-          `${options.windowMaximized ? '--window-maximized=yes' : ''}`,
+          `${this.config.player.windowMaximized ? '--window-maximized=yes' : ''}`,
           '--verbose-player',
           '--stream-sorting-excludes', '>1080p,<480p',
           '--twitch-disable-hosting',
@@ -100,12 +103,11 @@ export class PlayerService {
         args = [
           options.url,
           '--msg-level=all=debug',
-          `--volume=${options.volume || this.config.player.defaultVolume}`,
+          `--volume=${this.config.player.defaultVolume}`,
           `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
           '--keep-open=yes',
           '--no-terminal',
-          '--force-window=yes',
-          options.windowMaximized ? '--window-maximized=yes' : ''
+          this.config.player.windowMaximized ? '--window-maximized=yes' : ''
         ];
       }
 
@@ -180,20 +182,16 @@ export class PlayerService {
           const nextStream = queueService.getNextStream(options.screen);
           if (nextStream) {
             logger.info(`Starting next stream on screen ${options.screen}: ${nextStream.url}`, 'PlayerService');
-            this.streamRetries.delete(options.screen); // Reset retries for new stream
+            this.streamRetries.delete(options.screen);
             this.startStream({
               ...options,
               url: nextStream.url
             });
           } else {
-            logger.info(`No more unwatched streams for screen ${options.screen}`, 'PlayerService');
-            if (this.errorCallback) {
-              this.errorCallback({
-                screen: options.screen,
-                error: 'No more streams available',
-                code: 2
-              });
-            }
+            logger.info(`No more streams available for screen ${options.screen}, will retry in 10s`, 'PlayerService');
+            setTimeout(() => {
+              this.handleEmptyQueue(options.screen);
+            }, this.RETRY_INTERVAL);
           }
         } else {
           // Other error codes - handle retries
@@ -207,13 +205,18 @@ export class PlayerService {
           } else {
             logger.warn(`Max retries reached for screen ${options.screen}, trying next stream`, 'PlayerService');
             this.streamRetries.delete(options.screen);
-            queueService.markStreamAsWatched(options.url); // Mark as watched to avoid retrying
+            queueService.markStreamAsWatched(options.url);
             const nextStream = queueService.getNextStream(options.screen);
             if (nextStream) {
               this.startStream({
                 ...options,
                 url: nextStream.url
               });
+            } else {
+              logger.info(`No more streams available for screen ${options.screen}, will retry in 10s`, 'PlayerService');
+              setTimeout(() => {
+                this.handleEmptyQueue(options.screen);
+              }, this.RETRY_INTERVAL);
             }
           }
         }
@@ -324,5 +327,27 @@ export class PlayerService {
   clearAllQueues() {
     queueService.clearAllQueues();
     logger.info('Cleared all stream queues', 'PlayerService');
+  }
+
+  private async handleEmptyQueue(screen: number) {
+    try {
+      logger.info(`Attempting to fetch new streams for screen ${screen}`, 'PlayerService');
+      // Emit event to trigger stream manager to fetch new streams
+      this.errorCallback?.({
+        screen,
+        error: 'Fetching new streams',
+        code: -1
+      });
+    } catch (error) {
+      logger.error(
+        'Failed to handle empty queue', 
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      // Retry after interval
+      setTimeout(() => {
+        this.handleEmptyQueue(screen);
+      }, this.RETRY_INTERVAL);
+    }
   }
 } 

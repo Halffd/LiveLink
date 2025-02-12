@@ -2350,3 +2350,230 @@ Body:
 2025-02-12T03:44:53.682Z [INFO] [HolodexService] Found 1 live streams
 2025-02-12T03:44:53.913Z [INFO] All streams watched for screen 1, waiting before refetching...
 2025-02-12T03:45:24.013Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:45:24.899Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:45:25.130Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:45:55.230Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:45:56.067Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:45:56.295Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:46:26.297Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:46:27.170Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:46:27.419Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:46:57.426Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:46:58.241Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:46:58.465Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:47:28.476Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:47:29.366Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:47:29.595Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:47:59.613Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:48:00.516Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:48:00.770Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:48:30.793Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:48:31.689Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:48:31.929Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:48:56.156Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T03:48:56.162Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T03:48:56.169Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T03:48:56.172Z [INFO] [Server] Initializing database...
+2025-02-12T03:48:56.185Z [INFO] [Database] Database initialized successfully
+2025-02-12T03:49:01.964Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:49:03.045Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:49:03.309Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:49:33.344Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:49:34.490Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:49:34.732Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:48:56.186Z [INFO] [Server] Database initialized
+2025-02-12T03:48:56.186Z [INFO] [Server] Auto-starting streams...
+2025-02-12T03:49:41.938Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:50:04.774Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:50:06.566Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:50:06.810Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:50:36.861Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:50:37.663Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:50:37.954Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:51:08.014Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:51:10.018Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:51:10.269Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:51:40.341Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:51:41.301Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:51:41.547Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:52:11.621Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:52:12.440Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:52:12.669Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:52:42.748Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:52:43.558Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:52:43.869Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:53:13.966Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:53:14.884Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:53:15.121Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:53:45.212Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:53:46.075Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:53:46.315Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:54:16.414Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:54:17.231Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:54:17.486Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:54:47.587Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:54:48.463Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:54:48.719Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:55:18.819Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:55:19.634Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:55:19.866Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:55:49.966Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:55:50.830Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:55:51.057Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:56:21.157Z [INFO] Queue empty for screen 1, fetching new streams...
+2025-02-12T03:56:21.993Z [INFO] [HolodexService] Found 1 live streams
+2025-02-12T03:56:22.254Z [INFO] All streams watched for screen 1, waiting before refetching...
+2025-02-12T03:56:27.496Z [INFO] [StreamManager] Auto-starting 8 streams
+2025-02-12T03:56:33.470Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T03:59:03.413Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T03:59:03.419Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T03:59:03.425Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T03:59:03.428Z [INFO] [Server] Initializing database...
+2025-02-12T03:59:03.437Z [INFO] [Database] Database initialized successfully
+2025-02-12T03:59:03.437Z [INFO] [Server] Database initialized
+2025-02-12T03:59:03.437Z [INFO] [Server] Auto-starting streams...
+2025-02-12T03:59:04.417Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T03:59:04.641Z [INFO] [HolodexService] Found 7 live streams
+2025-02-12T03:59:06.114Z [INFO] [StreamManager] Auto-starting 15 streams
+2025-02-12T03:59:06.115Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T03:59:06.129Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T03:59:06.132Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=vFSpwHOyLfs (youtube)
+2025-02-12T03:59:06.139Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T03:59:06.140Z [INFO] [Server] Auto-start complete
+2025-02-12T03:59:06.172Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T03:59:06.173Z [INFO] [Server] Routes:
+2025-02-12T03:59:06.173Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T03:59:06.173Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T03:59:06.173Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T03:59:06.173Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T03:59:06.173Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T03:59:06.173Z [INFO] [Server] POST /api/streams
+2025-02-12T03:59:06.173Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:02:31.251Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:04:00.242Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:04:00.249Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:04:00.254Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:04:00.257Z [INFO] [Server] Initializing database...
+2025-02-12T04:04:00.269Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:04:00.270Z [INFO] [Server] Database initialized
+2025-02-12T04:04:00.270Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:04:09.255Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:04:16.145Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:05:03.406Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:05:03.412Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:05:03.418Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:05:03.420Z [INFO] [Server] Initializing database...
+2025-02-12T04:05:03.426Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:05:03.426Z [INFO] [Server] Database initialized
+2025-02-12T04:05:03.426Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:05:04.523Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:05:04.729Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:05:06.204Z [INFO] [StreamManager] Auto-starting 18 streams
+2025-02-12T04:05:06.207Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:05:06.270Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:05:06.272Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=vFSpwHOyLfs (youtube)
+2025-02-12T04:05:06.297Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:05:06.301Z [INFO] [Server] Auto-start complete
+2025-02-12T04:05:06.316Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:05:06.316Z [INFO] [Server] Routes:
+2025-02-12T04:05:06.317Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:05:06.317Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:05:06.317Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:05:06.317Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:05:06.317Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:05:06.318Z [INFO] [Server] POST /api/streams
+2025-02-12T04:05:06.318Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:05:14.756Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:06:03.130Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:06:03.136Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:06:03.141Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:06:03.146Z [INFO] [Server] Initializing database...
+2025-02-12T04:06:03.158Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:06:03.159Z [INFO] [Server] Database initialized
+2025-02-12T04:06:03.159Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:06:04.083Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:06:04.290Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:06:08.151Z [INFO] [StreamManager] Auto-starting 18 streams
+2025-02-12T04:06:08.152Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:06:09.463Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:06:09.464Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=vFSpwHOyLfs (youtube)
+2025-02-12T04:06:11.057Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:06:11.058Z [INFO] [Server] Auto-start complete
+2025-02-12T04:06:11.066Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:06:11.068Z [INFO] [Server] Routes:
+2025-02-12T04:06:11.069Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:06:11.071Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:06:11.072Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:06:11.073Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:06:11.074Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:06:11.074Z [INFO] [Server] POST /api/streams
+2025-02-12T04:06:11.075Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:06:22.250Z [INFO] [PlayerService] [streamlink-2-exit] Process exited with code null
+2025-02-12T04:06:22.250Z [INFO] [PlayerService] Retrying stream on screen 2 (attempt 1)
+2025-02-12T04:06:29.960Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:06:29.974Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:06:29.994Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:06:29.998Z [INFO] [Server] Initializing database...
+2025-02-12T04:06:30.016Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:06:30.017Z [INFO] [Server] Database initialized
+2025-02-12T04:06:30.017Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:06:31.008Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:06:31.239Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:07:09.814Z [INFO] [StreamManager] Auto-starting 18 streams
+2025-02-12T04:07:24.941Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:07:53.611Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:07:53.612Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=vFSpwHOyLfs (youtube)
+2025-02-12T04:08:25.387Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:08:25.388Z [INFO] [Server] Auto-start complete
+2025-02-12T04:08:25.408Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:08:25.408Z [INFO] [Server] Routes:
+2025-02-12T04:08:25.408Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:08:25.408Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:08:25.408Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:08:25.408Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:08:25.409Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:08:25.409Z [INFO] [Server] POST /api/streams
+2025-02-12T04:08:25.409Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:09:05.664Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:09:05.670Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:09:05.676Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:09:05.679Z [INFO] [Server] Initializing database...
+2025-02-12T04:09:05.691Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:09:05.692Z [INFO] [Server] Database initialized
+2025-02-12T04:09:05.692Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:09:06.688Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:09:06.939Z [INFO] [HolodexService] Found 9 live streams
+2025-02-12T04:13:34.155Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:13:34.161Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:13:34.168Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:13:34.172Z [INFO] [Server] Initializing database...
+2025-02-12T04:13:34.181Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:13:34.181Z [INFO] [Server] Database initialized
+2025-02-12T04:13:34.181Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:13:35.143Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:13:35.355Z [INFO] [HolodexService] Found 8 live streams
+2025-02-12T04:13:36.819Z [INFO] [StreamManager] Auto-starting 17 streams
+2025-02-12T04:13:36.820Z [INFO] Starting stream on screen 2: https://twitch.tv/emiru (twitch)
+2025-02-12T04:13:36.826Z [INFO] [PlayerService] Stream started on screen 2
+2025-02-12T04:13:36.827Z [INFO] Starting stream on screen 1: https://youtube.com/watch?v=4-cq6vYf9W4 (youtube)
+2025-02-12T04:13:36.830Z [INFO] [PlayerService] Stream started on screen 1
+2025-02-12T04:13:36.830Z [INFO] [Server] Auto-start complete
+2025-02-12T04:13:36.835Z [INFO] [Server] Server running on http://localhost:3001
+2025-02-12T04:13:36.835Z [INFO] [Server] Routes:
+2025-02-12T04:13:36.836Z [INFO] [Server] HEAD,GET /api/organizations
+2025-02-12T04:13:36.836Z [INFO] [Server] HEAD,GET /api/streams/active
+2025-02-12T04:13:36.836Z [INFO] [Server] HEAD,GET /api/streams/vtubers
+2025-02-12T04:13:36.836Z [INFO] [Server] HEAD,GET /api/streams/japanese
+2025-02-12T04:13:36.836Z [INFO] [Server] HEAD,GET /api/streams
+2025-02-12T04:13:36.836Z [INFO] [Server] POST /api/streams
+2025-02-12T04:13:36.836Z [INFO] [Server] DELETE /api/streams/:screen
+2025-02-12T04:14:08.900Z [INFO] [StreamManager] Cleaning up stream processes...
+2025-02-12T04:14:18.598Z [INFO] [TwitchService] Twitch service initialized
+2025-02-12T04:14:18.624Z [INFO] [HolodexService] Holodex service initialized
+2025-02-12T04:14:18.645Z [INFO] [StreamManager] Stream manager initialized
+2025-02-12T04:14:18.657Z [INFO] [Server] Initializing database...
+2025-02-12T04:14:18.684Z [INFO] [Database] Database initialized successfully
+2025-02-12T04:14:18.686Z [INFO] [Server] Database initialized
+2025-02-12T04:14:18.686Z [INFO] [Server] Auto-starting streams...
+2025-02-12T04:14:19.683Z [INFO] [HolodexService] Found 0 live streams
+2025-02-12T04:14:19.896Z [INFO] [HolodexService] Found 8 live streams

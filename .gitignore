@@ -41,3 +41,4 @@ data/
 *.db
 src/config/default/*
 !src/config/default/.gitkeep
+logs/
