@@ -392,7 +392,7 @@ export class StreamManager {
           const nonFavoriteStreams = streamsInPriority.filter(s => !s.sourceName?.includes('favorites'));
           
           // Sort non-favorites by viewer count (descending)
-          //nonFavoriteStreams.sort((a, b) => (b.viewerCount ?? 0) - (a.viewerCount ?? 0));
+          nonFavoriteStreams.sort((a, b) => (b.viewerCount ?? 0) - (a.viewerCount ?? 0));
           
           // Add favorites first (in original order), then sorted non-favorites
           sortedResults.push(...favoriteStreams, ...nonFavoriteStreams);
@@ -491,13 +491,37 @@ export class StreamManager {
         const screenConfig = this.config.streams.find(s => s.id === screen);
         if (!screenConfig || !screenConfig.enabled) continue;
 
-        // Sort streams by priority and viewer count
-        const sortedStreams = allScreenStreams; /*.sort((a, b) => {
-          const priorityA = a.priority ?? 999;
-          const priorityB = b.priority ?? 999;
-          if (priorityA !== priorityB) return priorityA - priorityB;
-          return (b.viewerCount ?? 0) - (a.viewerCount ?? 0);
-        });*/
+        // Group streams by priority
+        const streamsByPriority = new Map<number, StreamSource[]>();
+        
+        // First, group streams by priority
+        allScreenStreams.forEach(stream => {
+          const priority = stream.priority ?? 999;
+          if (!streamsByPriority.has(priority)) {
+            streamsByPriority.set(priority, []);
+          }
+          streamsByPriority.get(priority)!.push(stream);
+        });
+
+        // Sort each priority group separately
+        const sortedStreams: StreamSource[] = [];
+        
+        // Process priorities in ascending order (lower number = higher priority)
+        Array.from(streamsByPriority.keys())
+          .sort((a, b) => a - b)
+          .forEach(priority => {
+            const streamsInPriority = streamsByPriority.get(priority)!;
+            
+            // Separate streams by source type
+            const favoriteStreams = streamsInPriority.filter(s => s.sourceName?.includes('favorites'));
+            const nonFavoriteStreams = streamsInPriority.filter(s => !s.sourceName?.includes('favorites'));
+            
+            // Sort non-favorites by viewer count (descending)
+            nonFavoriteStreams.sort((a, b) => (b.viewerCount ?? 0) - (a.viewerCount ?? 0));
+            
+            // Add favorites first (in original order), then sorted non-favorites
+            sortedStreams.push(...favoriteStreams, ...nonFavoriteStreams);
+          });
 
         // Get unwatched streams
         const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
