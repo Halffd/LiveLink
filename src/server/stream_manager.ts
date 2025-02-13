@@ -80,8 +80,6 @@ export class StreamManager {
     };
 
     // Register cleanup handlers
-    process.on('SIGINT', this.cleanupHandler);
-    process.on('SIGTERM', this.cleanupHandler);
     process.on('exit', this.cleanupHandler);
 
     // Set up queue event handlers

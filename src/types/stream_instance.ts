@@ -9,7 +9,7 @@ export interface StreamInstance {
   screen: number;
   url: string;
   quality: string;
-  process: NodeJS.Process;
+  process: ChildProcess;
   /** Stream title (if available) */
   title?: string;
   /** Platform the stream is from */

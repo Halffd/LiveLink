@@ -79,9 +79,11 @@ export class PlayerService {
     this.events.on('cleanup', () => {
       clearInterval(logRotation);
       // Force kill all processes
-      this.streams.forEach((_, screen) => {
-        const process = this.streams.get(screen)?.process as unknown as ChildProcess;
-        process?.kill('SIGKILL');
+      this.streams.forEach((stream) => {
+        const process = stream.process;
+        if (process && process.pid) {
+          process.kill('SIGKILL');
+        }
       });
       this.streams.clear();
     });
@@ -235,55 +237,81 @@ export class PlayerService {
     }
   }
 
-  private getMpvVideoArgs(): string[] {
-    const mpvConfig = this.config.mpv || {};
-    const args: string[] = [];
-
-    // Video output configuration
-    if (mpvConfig.vo) {
-      args.push(`--vo=${mpvConfig.vo}`);
-    }
-    if (mpvConfig['gpu-api']) {
-      args.push(`--gpu-api=${mpvConfig['gpu-api']}`);
-    }
-    if (mpvConfig['gpu-context']) {
-      args.push(`--gpu-context=${mpvConfig['gpu-context']}`);
-    }
-    if (mpvConfig.hwdec) {
-      args.push(`--hwdec=${mpvConfig.hwdec}`);
-    }
-    if (mpvConfig['gpu-hwdec-interop']) {
-      args.push(`--gpu-hwdec-interop=${mpvConfig['gpu-hwdec-interop']}`);
+  private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
+    // Get screen config from player config
+    const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
+    if (!screenConfig) {
+      logger.error(`No screen config found for screen ${options.screen}`, 'PlayerService');
+      throw new Error(`Invalid screen configuration for screen ${options.screen}`);
     }
 
-    // Add common video options with optimizations
-    args.push(
-      '--no-audio-display',           // Disable audio visualization
-      '--force-window=immediate',     // Create window immediately
-      '--no-terminal',               // No terminal output
-      '--no-osc',                    // No on-screen controls
-      '--no-osd-bar',                // No on-screen display bar
-      '--osd-level=0',               // Disable on-screen display
-      '--cursor-autohide=always',    // Always hide cursor
-      '--no-border',                 // Borderless window
-      '--no-keepaspect-window',      // Don't keep window aspect ratio
-      '--gpu-dumb-mode=yes',         // Disable advanced GPU features
-      '--opengl-swapinterval=0',     // Disable vsync
-      '--opengl-early-flush=no',     // Reduce GPU-CPU synchronization
-      '--vd-lavc-threads=4',         // Use 4 decoder threads
-      '--hwdec-codecs=all',          // Enable hardware decoding for all codecs
-      '--deband=no',                 // Disable debanding
-      '--temporal-dither=no',        // Disable temporal dithering
-      '--scale=bilinear',            // Use fast bilinear scaling
-      '--cscale=bilinear',           // Use fast bilinear chroma scaling
-      '--dscale=bilinear',           // Use fast bilinear downscaling
-      '--scale-antiring=0',          // Disable scale ring filtering
-      '--cscale-antiring=0',         // Disable chroma scale ring filtering
-      '--correct-downscaling=no',    // Disable downscaling correction
-      '--linear-downscaling=no',     // Disable linear downscaling
-      '--sigmoid-upscaling=no',      // Disable sigmoid upscaling
-      '--hdr-compute-peak=no'        // Disable HDR peak computation
-    );
+    const ipcPath = `/tmp/mpv-ipc-${options.screen}`;
+    const inputFifoPath = `/tmp/mpv-input-${options.screen}`;
+    this.ipcPaths.set(options.screen, ipcPath);
+    this.fifoPaths.set(options.screen, inputFifoPath);
+
+    const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
+
+    // Base arguments that override mpv.json settings
+    const args = [
+      `--title=LiveLink-${options.screen}`,
+      `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+      `--volume=${this.config.player.defaultVolume}`,
+      `--input-ipc-server=${ipcPath}`,
+      `--input-file=${inputFifoPath}`,
+      `--log-file=${mpvLogPath}`,
+      this.config.player.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
+    ];
+
+    // Add all mpv.json config settings
+    if (this.config.mpv) {
+      Object.entries(this.config.mpv).forEach(([key, value]) => {
+        // Skip null values
+        if (value === null) return;
+        // Handle boolean values
+        if (typeof value === 'boolean') {
+          args.push(value ? `--${key}` : `--no-${key}`);
+        }
+        // Handle all other values
+        else if (value !== undefined) {
+          args.push(`--${key}=${value}`);
+        }
+      });
+    }
+
+    return args;
+  }
+
+  private getStreamlinkArgs(): string[] {
+    const args: string[] = ['--stdout'];
+
+    // Add all streamlink.json config settings
+    if (this.config.streamlink) {
+      Object.entries(this.config.streamlink).forEach(([key, value]) => {
+        // Skip null values and http_header (handled separately)
+        if (value === null || key === 'http_header') return;
+
+        // Handle arrays (like default_stream)
+        if (Array.isArray(value)) {
+          args.push(`--${key}`, value.join(','));
+        }
+        // Handle booleans
+        else if (typeof value === 'boolean') {
+          if (value) args.push(`--${key}`);
+        }
+        // Handle all other values
+        else if (value !== undefined) {
+          args.push(`--${key}`, value.toString());
+        }
+      });
+
+      // Handle http headers separately
+      if (this.config.streamlink.http_header) {
+        Object.entries(this.config.streamlink.http_header).forEach(([header, value]) => {
+          args.push('--http-header', `${header}=${value}`);
+        });
+      }
+    }
 
     return args;
   }
@@ -292,6 +320,16 @@ export class PlayerService {
     try {
       // Clear inactive timer when starting a stream
       this.clearInactiveTimer(options.screen);
+
+      // Validate screen configuration
+      const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
+      if (!screenConfig) {
+        logger.error(`No screen config found for screen ${options.screen}`, 'PlayerService');
+        return {
+          screen: options.screen,
+          error: `Invalid screen configuration for screen ${options.screen}`
+        };
+      }
 
       // If no URL is provided, get next unwatched stream from queue
       if (!options.url) {
@@ -317,12 +355,6 @@ export class PlayerService {
         this.streamRetries.set(options.screen, 0);
       }
 
-      const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
-      if (!screenConfig) {
-        logger.error(`No screen config found for screen ${options.screen}`, 'PlayerService');
-        throw new Error(`Invalid screen configuration for screen ${options.screen}`);
-      }
-
       // Stop any existing stream on this screen
       await this.stopStream(options.screen);
 
@@ -342,7 +374,7 @@ export class PlayerService {
 
       if (useStreamlink) {
         command = 'streamlink';
-        const mpvArgs = this.getMpvVideoArgs();
+        const mpvArgs = this.getMpvArgs(options);
         // Streamlink base arguments
         args = [
           options.url,
@@ -350,17 +382,8 @@ export class PlayerService {
           '--player', 'mpv',
           '--player-args',
           [
-            `--volume=${this.config.player.defaultVolume}`,
-            `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-            '--keep-open=yes',
-            '--no-terminal',
-            '--hwdec=auto-safe',
-            '--force-seekable=yes',
-            '--keep-open-pause=yes',
-            '--idle=yes',
-            `--log-file=${mpvLogPath}`,
             ...mpvArgs,
-            this.config.player.windowMaximized ? '--window-maximized=yes' : ''
+            ...this.getStreamlinkArgs()
           ].join(' ')
         ];
 
@@ -395,35 +418,13 @@ export class PlayerService {
         this.ipcPaths.set(options.screen, ipcPath);
         this.fifoPaths.set(options.screen, inputFifoPath);
 
-        // Then construct the args array using the now-defined ipcPath
-        const mpvArgs = this.getMpvVideoArgs();
-        args = [
-          options.url,
-          `--volume=${this.config.player.defaultVolume}`,
-          `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-          '--no-terminal',
-          '--hwdec=auto-safe',
-          '--force-seekable=yes',
-          '--keep-open-pause=yes',
-          '--idle=yes',
-          '--cache=yes',
-          '--demuxer-max-bytes=500M',
-          '--cache-secs=30',
-          '--network-timeout=30',
-          `--input-ipc-server=${ipcPath}`,
-          `--input-file=${inputFifoPath}`,
-          '--vo=gpu',
-          '--gpu-context=auto',
-          '--no-border',
-          this.config.player.windowMaximized ? '--window-maximized=yes' : '',
-          '--sub-auto=all',
-          ...mpvArgs
-        ];
+        // Get all MPV arguments including screen config and window settings
+        args = this.getMpvArgs(options);
 
-        // Add error recovery options
+        // Add additional MPV-specific arguments that aren't in getMpvArgs
         args.push(
-          '--script-opts=ytdl_hook-ytdl_path=yt-dlp',  // Use yt-dlp instead of youtube-dl
-          '--ytdl-raw-options=ignore-errors=,quiet=,no-warnings=,retries=10'
+          options.url,
+          '--script-opts=ytdl_hook-ytdl_path=yt-dlp'
         );
 
         // Create FIFO file if it doesn't exist
@@ -583,7 +584,7 @@ export class PlayerService {
         screen: options.screen,
         url: options.url,
         quality: options.quality || 'best',
-        process: process as unknown as NodeJS.Process,
+        process: process,
         platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
       };
 
@@ -626,8 +627,8 @@ export class PlayerService {
       this.clearStreamRefresh(screen);
 
       // Cleanup process
-      const process = stream.process as unknown as ChildProcess;
-      if (process.pid) {
+      const process = stream.process;
+      if (process && process.pid) {
         // Double termination pattern
         process.kill('SIGINT');
         setTimeout(() => {
