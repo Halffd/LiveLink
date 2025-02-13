@@ -541,10 +541,108 @@ export class StreamManager {
     }
   }
 
+  async disableScreen(screen: number): Promise<void> {
+    const streamConfig = this.config.streams.find(s => s.id === screen);
+    if (!streamConfig) {
+      throw new Error(`Invalid screen number: ${screen}`);
+    }
+    
+    // Stop any active streams
+    await this.stopStream(screen);
+    
+    // Disable the screen in config
+    streamConfig.enabled = false;
+    logger.info(`Screen ${screen} disabled`, 'StreamManager');
+  }
+
+  async enableScreen(screen: number): Promise<void> {
+    const streamConfig = this.config.streams.find(s => s.id === screen);
+    if (!streamConfig) {
+      throw new Error(`Invalid screen number: ${screen}`);
+    }
+    
+    streamConfig.enabled = true;
+    logger.info(`Screen ${screen} enabled`, 'StreamManager');
+    
+    // Start streams if auto-start is enabled
+    if (this.config.player.autoStart) {
+      await this.handleEmptyQueue(screen);
+    }
+  }
+
+  async restartStreams(screen?: number): Promise<void> {
+    if (screen) {
+      // Restart specific screen
+      await this.stopStream(screen);
+      await this.handleEmptyQueue(screen);
+    } else {
+      // Restart all screens
+      const activeScreens = Array.from(this.streams.keys());
+      for (const screenId of activeScreens) {
+        await this.stopStream(screenId);
+        await this.handleEmptyQueue(screenId);
+      }
+    }
+  }
+
+  async reorderQueue(screen: number, sourceIndex: number, targetIndex: number): Promise<void> {
+    const queue = queueService.getQueue(screen);
+    if (sourceIndex < 0 || sourceIndex >= queue.length || 
+        targetIndex < 0 || targetIndex >= queue.length) {
+      throw new Error('Invalid source or target index');
+    }
+
+    // Reorder the queue
+    const [item] = queue.splice(sourceIndex, 1);
+    queue.splice(targetIndex, 0, item);
+    queueService.setQueue(screen, queue);
+    
+    logger.info(`Reordered queue for screen ${screen}: moved item from ${sourceIndex} to ${targetIndex}`, 'StreamManager');
+  }
+
+  getQueueForScreen(screen: number): StreamSource[] {
+    return queueService.getQueue(screen);
+  }
+
+  async setPlayerPriority(priority: string): Promise<void> {
+    // Validate priority
+    const validPriorities = ['realtime', 'high', 'above_normal', 'normal', 'below_normal', 'low', 'idle'];
+    if (!validPriorities.includes(priority.toLowerCase())) {
+      throw new Error(`Invalid priority: ${priority}. Valid values are: ${validPriorities.join(', ')}`);
+    }
+
+    // Update config
+    if (!this.config.mpv) {
+      this.config.mpv = {};
+    }
+    this.config.mpv.priority = priority;
+
+    // Restart all streams to apply new priority
+    logger.info(`Setting player priority to ${priority}`, 'StreamManager');
+    await this.restartStreams();
+  }
+
+  getWatchedStreams(): string[] {
+    return queueService.getWatchedStreams();
+  }
+
+  clearWatchedStreams(): void {
+    queueService.clearWatchedStreams();
+    logger.info('Cleared watched streams history', 'StreamManager');
+  }
+
   cleanup() {
     if (this.cleanupHandler) {
       this.cleanupHandler();
     }
+  }
+
+  public sendCommandToScreen(screen: number, command: string): void {
+    this.playerService.sendCommandToScreen(screen, command);
+  }
+
+  public sendCommandToAll(command: string): void {
+    this.playerService.sendCommandToAll(command);
   }
 }
 
