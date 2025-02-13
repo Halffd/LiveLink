@@ -2,16 +2,18 @@
   import type { Stream } from '$types/stream';
   import { createEventDispatcher } from 'svelte';
 
-  export let stream: Stream;
+  const $props = {
+    stream: {} as Stream
+  };
   
   const dispatch = createEventDispatcher();
 
-  let volume = 50;
-  let showControls = false;
+  const volume = $state(50);
+  const showControls = $state(false);
 
   async function sendCommand(command: string) {
     try {
-      await fetch(`/api/player/command/${stream.screen}`, {
+      await fetch(`/api/player/command/${$props.stream.screen}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command })
