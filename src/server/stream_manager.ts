@@ -20,6 +20,8 @@ import { PlayerService } from './services/player.js';
 import type { TwitchAuth } from './db/database.js';
 import { env } from '../config/env.js';
 import { queueService } from './services/queue_service.js';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Manages multiple video streams across different screens
@@ -641,6 +643,56 @@ export class StreamManager {
 
   public sendCommandToAll(command: string): void {
     this.playerService.sendCommandToAll(command);
+  }
+
+  public async addToQueue(screen: number, source: StreamSource): Promise<void> {
+    const queue = this.queues.get(screen) || [];
+    queue.push(source);
+    this.queues.set(screen, queue);
+    this.emit('queueUpdate', screen, queue);
+  }
+
+  public async removeFromQueue(screen: number, index: number): Promise<void> {
+    const queue = this.queues.get(screen) || [];
+    if (index >= 0 && index < queue.length) {
+      queue.splice(index, 1);
+      this.queues.set(screen, queue);
+      this.emit('queueUpdate', screen, queue);
+    }
+  }
+
+  public getPlayerSettings() {
+    return {
+      preferStreamlink: this.config.player.preferStreamlink,
+      defaultQuality: this.config.player.defaultQuality,
+      defaultVolume: this.config.player.defaultVolume,
+      windowMaximized: this.config.player.windowMaximized,
+      maxStreams: this.config.player.maxStreams,
+      autoStart: this.config.player.autoStart
+    };
+  }
+
+  public async updatePlayerSettings(settings: Partial<PlayerSettings>): Promise<void> {
+    Object.assign(this.config.player, settings);
+    this.emit('settingsUpdate', this.config.player);
+    await this.saveConfig();
+  }
+
+  public getScreenConfigs() {
+    return this.config.player.screens;
+  }
+
+  public async saveConfig(): Promise<void> {
+    try {
+      await fs.writeFile(
+        path.join(process.cwd(), 'config', 'config.json'),
+        JSON.stringify(this.config, null, 2)
+      );
+      this.emit('configUpdate', this.config);
+    } catch (error) {
+      this.emit('error', error);
+      throw error;
+    }
   }
 }
 

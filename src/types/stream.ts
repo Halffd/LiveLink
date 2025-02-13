@@ -39,16 +39,13 @@ export interface Stream {
 export interface StreamSource {
   url: string;
   title?: string;
-  platform: 'youtube' | 'twitch';
+  platform?: string;
   viewerCount?: number;
-  thumbnail?: string;
-  startedAt?: Date;
-  channelId?: string;
-  organization?: string;
+  thumbnailUrl?: string;
   screen?: number;
   priority?: number;
-  source?: string;
   sourceName?: string;
+  source?: string;
 }
 
 export interface StreamResponse {
@@ -89,4 +86,78 @@ export interface StreamSourceConfig {
   tags?: string[];
   language?: string;
   channels?: string[]; // For favorite channels
-} 
+}
+
+export interface Stream extends StreamSource {
+  screen: number;
+  status: 'playing' | 'paused' | 'stopped' | 'error';
+  quality: string;
+  volume: number;
+  error?: string;
+  startTime?: number;
+  duration?: number;
+}
+
+export interface StreamConfig {
+  enabled: boolean;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  volume: number;
+  quality: string;
+  windowMaximized: boolean;
+}
+
+export interface PlayerSettings {
+  preferStreamlink: boolean;
+  defaultQuality: string;
+  defaultVolume: number;
+  windowMaximized: boolean;
+  maxStreams: number;
+  autoStart: boolean;
+}
+
+export interface StreamUpdate {
+  type: 'streamUpdate';
+  data: {
+    stream: Stream;
+  };
+}
+
+export interface QueueUpdate {
+  type: 'queueUpdate';
+  data: {
+    screen: number;
+    queue: StreamSource[];
+  };
+}
+
+export interface ScreenUpdate {
+  type: 'screenUpdate';
+  data: {
+    screen: number;
+    config: StreamConfig;
+  };
+}
+
+export interface SettingsUpdate {
+  type: 'settingsUpdate';
+  data: {
+    settings: PlayerSettings;
+  };
+}
+
+export interface ErrorUpdate {
+  type: 'error';
+  data: {
+    message: string;
+  };
+}
+
+export type WebSocketMessage = 
+  | StreamUpdate 
+  | QueueUpdate 
+  | ScreenUpdate 
+  | SettingsUpdate 
+  | ErrorUpdate; 

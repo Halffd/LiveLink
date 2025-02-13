@@ -1,7 +1,7 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamOptions, StreamResponse } from '../../types/stream.js';
+import type { StreamOptions, StreamResponse, StreamSource } from '../../types/stream.js';
 import { logger } from '../services/logger.js';
 
 const router = new Router();
@@ -9,6 +9,35 @@ const router = new Router();
 interface StreamQuery {
   organization?: string;
   limit?: string;
+}
+
+// Add type for request body
+interface AddToQueueBody {
+  url: string;
+  title?: string;
+  platform?: string;
+}
+
+interface ReorderQueueBody {
+  screen: number;
+  sourceIndex: number;
+  targetIndex: number;
+}
+
+// Add type for request body
+interface StartStreamBody {
+  url: string;
+  screen?: number;
+  quality?: string;
+}
+
+interface UpdateConfigBody {
+  streams?: any[];
+  organizations?: string[];
+  favoriteChannels?: {
+    holodex: string[];
+    twitch: string[];
+  };
 }
 
 // Static routes first (most specific to least specific)
@@ -84,17 +113,23 @@ router.get('/api/streams', async (ctx: Context) => {
 
 router.post('/api/streams', async (ctx: Context) => {
   try {
-    const options = ctx.request.body as StreamOptions;
-    const result = await streamManager.startStream(options);
-    ctx.body = result;
-  } catch (error: unknown) {
-    logger.error(
-      'Failed to start stream',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    const body = ctx.request.body as StartStreamBody;
+    if (!body.url) {
+      ctx.status = 400;
+      ctx.body = { error: 'URL is required' };
+      return;
+    }
+
+    await streamManager.startStream({
+      url: body.url,
+      screen: body.screen || 1,
+      quality: body.quality
+    });
+
+    ctx.body = { success: true };
+  } catch (error) {
     ctx.status = 500;
-    ctx.body = { error: 'Failed to start stream' };
+    ctx.body = { error: String(error) };
   }
 });
 
@@ -182,21 +217,6 @@ router.post('/api/streams/restart', async (ctx: Context) => {
 });
 
 // Queue Management
-router.post('/api/streams/reorder', async (ctx: Context) => {
-  try {
-    const { screen, sourceIndex, targetIndex } = ctx.request.body as { 
-      screen: number; 
-      sourceIndex: number; 
-      targetIndex: number 
-    };
-    await streamManager.reorderQueue(screen, sourceIndex, targetIndex);
-    ctx.body = { success: true };
-  } catch (error) {
-    ctx.status = 500;
-    ctx.body = { error: String(error) };
-  }
-});
-
 router.get('/api/streams/queue/:screen', async (ctx: Context) => {
   try {
     const screen = parseInt(ctx.params.screen);
@@ -205,7 +225,113 @@ router.get('/api/streams/queue/:screen', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    ctx.body = streamManager.getQueueForScreen(screen);
+
+    const queue = streamManager.getQueueForScreen(screen);
+    ctx.body = queue;
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.post('/api/streams/queue/:screen', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen, 10);
+    const body = ctx.request.body as AddToQueueBody;
+    
+    if (!body.url) {
+      ctx.status = 400;
+      ctx.body = { error: 'URL is required' };
+      return;
+    }
+
+    const source: StreamSource = {
+      url: body.url,
+      title: body.title,
+      platform: body.platform
+    };
+
+    await streamManager.addToQueue(screen, source);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.delete('/api/streams/queue/:screen/:index', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    const index = parseInt(ctx.params.index);
+    
+    if (isNaN(screen) || isNaN(index)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number or index' };
+      return;
+    }
+
+    await streamManager.removeFromQueue(screen, index);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.post('/api/streams/reorder', async (ctx: Context) => {
+  try {
+    const body = ctx.request.body as ReorderQueueBody;
+    
+    if (typeof body.screen !== 'number' || typeof body.sourceIndex !== 'number' || typeof body.targetIndex !== 'number') {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid parameters' };
+      return;
+    }
+
+    await streamManager.reorderQueue(body.screen, body.sourceIndex, body.targetIndex);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Add stream control endpoints
+router.post('/api/streams/start/:screen', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+
+    const { url } = ctx.request.body;
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { error: 'URL is required' };
+      return;
+    }
+
+    await streamManager.startStream(screen, url);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.post('/api/streams/stop/:screen', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+
+    await streamManager.stopStream(screen);
+    ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -315,20 +441,45 @@ router.post('/api/player/volume/:target', async (ctx: Context) => {
       return;
     }
     
-    sendCommand(target, `set volume ${level}`);
+    if (target === 'all') {
+      streamManager.sendCommandToAll(`set volume ${level}`);
+    } else {
+      const screen = parseInt(target);
+      if (isNaN(screen)) {
+        ctx.status = 400;
+        ctx.body = { error: 'Invalid screen number' };
+        return;
+      }
+      streamManager.sendCommandToScreen(screen, `set volume ${level}`);
+    }
+    
     ctx.body = { success: true };
   } catch (error) {
-    handleError(ctx, error);
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
   }
 });
 
 router.post('/api/player/pause/:target', async (ctx: Context) => {
   try {
     const target = ctx.params.target;
-    sendCommand(target, 'cycle pause');
+    
+    if (target === 'all') {
+      streamManager.sendCommandToAll('cycle pause');
+    } else {
+      const screen = parseInt(target);
+      if (isNaN(screen)) {
+        ctx.status = 400;
+        ctx.body = { error: 'Invalid screen number' };
+        return;
+      }
+      streamManager.sendCommandToScreen(screen, 'cycle pause');
+    }
+    
     ctx.body = { success: true };
   } catch (error) {
-    handleError(ctx, error);
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
   }
 });
 
@@ -343,30 +494,135 @@ router.post('/api/player/seek/:target', async (ctx: Context) => {
       return;
     }
     
-    sendCommand(target, `seek ${seconds}`);
+    if (target === 'all') {
+      streamManager.sendCommandToAll(`seek ${seconds}`);
+    } else {
+      const screen = parseInt(target);
+      if (isNaN(screen)) {
+        ctx.status = 400;
+        ctx.body = { error: 'Invalid screen number' };
+        return;
+      }
+      streamManager.sendCommandToScreen(screen, `seek ${seconds}`);
+    }
+    
     ctx.body = { success: true };
   } catch (error) {
-    handleError(ctx, error);
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
   }
 });
 
-// Helper functions
-function sendCommand(target: string, command: string) {
-  if (target === 'all') {
-    streamManager.sendCommandToAll(command);
-  } else {
-    const screen = parseInt(target);
-    if (isNaN(screen)) throw new Error('Invalid screen number');
-    streamManager.sendCommandToScreen(screen, command);
+// Add player settings endpoints
+router.get('/api/player/settings', async (ctx: Context) => {
+  try {
+    ctx.body = streamManager.getPlayerSettings();
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
   }
-}
+});
 
-function handleError(ctx: Context, error: unknown) {
-  ctx.status = 500;
-  ctx.body = { 
-    error: error instanceof Error ? error.message : 'Unknown error',
-    timestamp: new Date().toISOString()
-  };
-}
+router.put('/api/player/settings', async (ctx: Context) => {
+  try {
+    const settings = ctx.request.body;
+    await streamManager.updatePlayerSettings(settings);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Add screen configuration endpoints
+router.get('/api/screens', async (ctx: Context) => {
+  try {
+    ctx.body = streamManager.getScreenConfigs();
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.put('/api/screens/:screen', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+
+    const config = ctx.request.body;
+    const screenConfig = streamManager.config.player.screens.find(s => s.id === screen);
+    if (!screenConfig) {
+      ctx.status = 404;
+      ctx.body = { error: 'Screen not found' };
+      return;
+    }
+
+    // Update screen configuration
+    Object.assign(screenConfig, config);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Add these new routes before the export
+router.get('/api/config', async (ctx: Context) => {
+  try {
+    const config = streamManager.config;
+    ctx.body = {
+      streams: config.streams,
+      organizations: config.organizations,
+      favoriteChannels: config.favoriteChannels,
+      holodex: {
+        apiKey: config.holodex.apiKey
+      },
+      twitch: {
+        clientId: config.twitch.clientId,
+        clientSecret: config.twitch.clientSecret,
+        streamersFile: config.twitch.streamersFile
+      }
+    };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.put('/api/config', async (ctx: Context) => {
+  try {
+    const newConfig = ctx.request.body as UpdateConfigBody;
+    
+    if (newConfig.streams && !Array.isArray(newConfig.streams)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid streams configuration' };
+      return;
+    }
+
+    if (newConfig.organizations && !Array.isArray(newConfig.organizations)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid organizations configuration' };
+      return;
+    }
+
+    if (newConfig.favoriteChannels &&
+        (!Array.isArray(newConfig.favoriteChannels.holodex) ||
+         !Array.isArray(newConfig.favoriteChannels.twitch))) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid favorite channels configuration' };
+      return;
+    }
+
+    await streamManager.updateConfig(newConfig);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
 
 export const apiRouter = router; 

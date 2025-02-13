@@ -7,7 +7,13 @@
 		"build:server": "rm -rf dist && mkdir -p dist/config/default && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json --listEmittedFiles && echo '{\"type\":\"module\"}' > dist/package.json && ls -la dist/server",
 		"preview": "vite preview",
 		"server": "npm run build:server && node dist/server/api.js",
-		"dev:all": "concurrently \"npm run dev\" \"npm run server\"",
+		"dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
+		"dev:server": "ts-node --esm src/server/api.ts",
+		"start": "node dist/server/api.js",
+		"start:all": "concurrently \"npm run preview\" \"npm run start\"",
+		"build:all": "npm run build && npm run build:server",
+		"clean": "rm -rf dist",
+		"prebuild:server": "npm run clean",
 		"cli": "ts-node src/cli/test-api.ts",
 		"prepare": "svelte-kit sync || echo ''",
 		"prepack": "svelte-kit sync && svelte-package && publint",
@@ -20,10 +26,7 @@
 		"test:e2e": "playwright test",
 		"storybook": "storybook dev -p 6006",
 		"build-storybook": "storybook build",
-		"clean": "rm -rf dist",
-		"prebuild:server": "npm run clean",
-		"tsc:watch": "tsc -p tsconfig.server.json --watch",
-		"dev:server": "ts-node src/server/api.ts"
+		"tsc:watch": "tsc -p tsconfig.server.json --watch"
 	},
 	"files": [
 		"dist",
@@ -66,6 +69,7 @@
 		"@tailwindcss/typography": "^0.5.16",
 		"@types/koa-send": "^4.1.6",
 		"@types/koa-static": "^4.0.4",
+		"@types/ws": "^8.5.14",
 		"autoprefixer": "^10.4.20",
 		"concurrently": "^8.2.2",
 		"eslint": "^9.18.0",
@@ -81,11 +85,11 @@
 		"svelte": "^5.0.0",
 		"svelte-check": "^4.0.0",
 		"tailwindcss": "^3.4.17",
+		"ts-node": "^10.9.2",
 		"typescript": "^5.0.0",
 		"typescript-eslint": "^8.20.0",
 		"vite": "^6.0.0",
-		"vitest": "^3.0.0",
-		"ts-node": "^10.9.2"
+		"vitest": "^3.0.0"
 	},
 	"dependencies": {
 		"@inlang/paraglide-sveltekit": "^0.15.5",
