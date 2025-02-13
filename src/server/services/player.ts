@@ -258,7 +258,6 @@ export class PlayerService {
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--volume=${this.config.player.defaultVolume}`,
       `--input-ipc-server=${ipcPath}`,
-      `--input-file=${inputFifoPath}`,
       `--log-file=${mpvLogPath}`,
       this.config.player.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
     ];
