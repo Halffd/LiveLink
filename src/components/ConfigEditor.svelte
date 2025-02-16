@@ -2,41 +2,43 @@
   import { createEventDispatcher } from 'svelte';
   import type { StreamSourceConfig } from '$types/stream';
   
-  export let config: {
-    streams: Array<{
-      id: number;
-      enabled: boolean;
-      screen: number;
-      sources: StreamSourceConfig[];
-      sorting: {
-        field: string;
-        order: 'asc' | 'desc';
+  let { config } = $props<{
+    config: {
+      streams: Array<{
+        id: number;
+        enabled: boolean;
+        screen: number;
+        sources: StreamSourceConfig[];
+        sorting: {
+          field: string;
+          order: 'asc' | 'desc';
+        };
+        refresh: number;
+        autoStart: boolean;
+        quality: string;
+        volume: number;
+        windowMaximized: boolean;
+      }>;
+      organizations: string[];
+      favoriteChannels: {
+        holodex: string[];
+        twitch: string[];
       };
-      refresh: number;
-      autoStart: boolean;
-      quality: string;
-      volume: number;
-      windowMaximized: boolean;
-    }>;
-    organizations: string[];
-    favoriteChannels: {
-      holodex: string[];
-      twitch: string[];
+      holodex: {
+        apiKey: string;
+      };
+      twitch: {
+        clientId: string;
+        clientSecret: string;
+        streamersFile: string;
+      };
     };
-    holodex: {
-      apiKey: string;
-    };
-    twitch: {
-      clientId: string;
-      clientSecret: string;
-      streamersFile: string;
-    };
-  };
+  }>();
 
   const dispatch = createEventDispatcher();
   
-  let editingStream: number | null = null;
-  let editingSource: number | null = null;
+  let editingStream = $state<number | null>(null);
+  let editingSource = $state<number | null>(null);
   
   const sourceTypes = ['holodex', 'twitch'] as const;
   const sourceSubtypes = ['favorites', 'organization'] as const;

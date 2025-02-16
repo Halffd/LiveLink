@@ -1,9 +1,9 @@
 import type { 
   StreamSource, 
-  StreamOptions, 
-  StreamLimits, 
-  StreamSourceType,
-  StreamSourceConfig,
+  StreamOptions,
+  PlayerSettings,
+  Config,
+  StreamConfig,
   FavoriteChannels
 } from '../types/stream.js';
 import type { 
@@ -22,25 +22,28 @@ import { env } from '../config/env.js';
 import { queueService } from './services/queue_service.js';
 import fs from 'fs';
 import path from 'path';
+import { EventEmitter } from 'events';
 
 /**
  * Manages multiple video streams across different screens
  */
-export class StreamManager {
+export class StreamManager extends EventEmitter {
   private streams: Map<number, StreamInstance> = new Map();
-  private config = loadAllConfigs();
+  private config: Config;
   private twitchService: TwitchService;
   private holodexService: HolodexService;
   private playerService: PlayerService;
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
   private favoriteChannels: FavoriteChannels;
+  private queues: Map<number, StreamSource[]> = new Map();
 
   /**
    * Creates a new StreamManager instance
    */
   constructor() {
-    // No need for type assertion since Config type is properly defined
+    super(); // Initialize EventEmitter
+    this.config = loadAllConfigs();
     this.favoriteChannels = this.config.favoriteChannels;
 
     this.twitchService = new TwitchService(
@@ -146,14 +149,14 @@ export class StreamManager {
   /**
    * Starts a new stream on the specified screen
    */
-  async startStream(options: Partial<StreamOptions> & { url: string }): Promise<StreamResponse> {
+  async startStream(options: StreamOptions & { url: string }): Promise<StreamResponse> {
     // Find first available screen
     let screen = options.screen;
     if (!screen) {
       const activeScreens = new Set(this.streams.keys());
       for (const streamConfig of this.config.streams) {
-        if (!activeScreens.has(streamConfig.id)) {
-          screen = streamConfig.id;
+        if (!activeScreens.has(streamConfig.screen)) {
+          screen = streamConfig.screen;
           break;
         }
       }
@@ -166,7 +169,7 @@ export class StreamManager {
       };
     }
 
-    const streamConfig = this.config.streams.find(s => s.id === screen);
+    const streamConfig = this.config.streams.find(s => s.screen === screen);
     if (!streamConfig) {
       return {
         screen,
@@ -222,14 +225,15 @@ export class StreamManager {
       
       // Process each screen's sources
       for (const streamConfig of this.config.streams) {
+        const screenNumber = streamConfig.screen;
         if (!streamConfig.enabled) {
-          logger.debug('Screen %s is disabled, skipping', String(streamConfig.id));
+          logger.debug('Screen %s is disabled, skipping', String(screenNumber));
           continue;
         }
 
         // Initialize seen URLs set for this screen
-        seenUrlsByScreen.set(streamConfig.id, new Set<string>());
-        logger.debug('Processing sources for screen %s', String(streamConfig.id));
+        seenUrlsByScreen.set(screenNumber, new Set<string>());
+        logger.debug('Processing sources for screen %s', String(screenNumber));
 
         // Sort sources by priority before processing
         const sortedSources = [...streamConfig.sources]
@@ -239,7 +243,7 @@ export class StreamManager {
         const sourceList = sortedSources
           .map(s => `${s.type}${s.subtype ? `:${s.subtype}` : ''} (priority: ${s.priority})`)
           .join(', ');
-        logger.debug('Enabled sources for screen %s: %s', String(streamConfig.id), sourceList);
+        logger.debug('Enabled sources for screen %s: %s', String(screenNumber), sourceList);
 
         for (const source of sortedSources) {
           const limit = source.limit || 25;
@@ -254,11 +258,11 @@ export class StreamManager {
                 limit: limit * 2 // Increase limit to get more streams
               }));
               logger.debug('Fetched %s favorite Holodex streams for screen %s', 
-                String(streams.length), String(streamConfig.id));
+                String(streams.length), String(screenNumber));
             } else if (source.subtype === 'organization' && source.name) {
-              if (results.some(s => s.screen === streamConfig.id && s.sourceName?.includes('favorites'))) {
+              if (results.some(s => s.screen === screenNumber && s.sourceName?.includes('favorites'))) {
                 logger.debug('Skipping %s streams as we already have favorite streams for screen %s', 
-                  source.name, String(streamConfig.id));
+                  source.name, String(screenNumber));
                 continue;
               }
               logger.debug('Fetching %s %s streams', String(limit), source.name);
@@ -267,7 +271,7 @@ export class StreamManager {
                 limit: limit * 2 // Increase limit to get more streams
               }));
               logger.debug('Fetched %s %s streams for screen %s', 
-                String(streams.length), source.name, String(streamConfig.id));
+                String(streams.length), source.name, String(screenNumber));
             }
           } else if (source.type === 'twitch') {
             if (source.subtype === 'favorites') {
@@ -277,11 +281,11 @@ export class StreamManager {
               favoriteStreams.reverse();
               streams.push(...favoriteStreams);
               logger.debug('Fetched %s favorite Twitch streams for screen %s', 
-                String(streams.length), String(streamConfig.id));
+                String(streams.length), String(screenNumber));
             } else if (source.tags) {
-              if (results.some(s => s.screen === streamConfig.id && s.sourceName?.includes('favorites'))) {
+              if (results.some(s => s.screen === screenNumber && s.sourceName?.includes('favorites'))) {
                 logger.debug('Skipping tagged Twitch streams as we already have favorite streams for screen %s', 
-                  String(streamConfig.id));
+                  String(screenNumber));
                 continue;
               }
               streams.push(...await this.twitchService.getStreams({
@@ -289,7 +293,7 @@ export class StreamManager {
                 tags: source.tags
               }));
               logger.debug('Fetched %s tagged Twitch streams for screen %s', 
-                String(streams.length), String(streamConfig.id));
+                String(streams.length), String(screenNumber));
             }
           }
 
@@ -299,17 +303,17 @@ export class StreamManager {
               String(streams.length), 
               source.type,
               source.subtype ? `:${source.subtype}` : '',
-              String(streamConfig.id)
+              String(screenNumber)
             );
 
-            const seenUrls = seenUrlsByScreen.get(streamConfig.id)!;
+            const seenUrls = seenUrlsByScreen.get(screenNumber)!;
             streams
               .filter(stream => !seenUrls.has(stream.url)) // Only filter duplicates within same screen
               .forEach(stream => {
                 seenUrls.add(stream.url); // Mark as seen for this screen
                 results.push({
                   ...stream,
-                  screen: streamConfig.id,
+                  screen: screenNumber,
                   priority: source.priority,
                   source: source.type,
                   sourceName: source.subtype === 'favorites' 
@@ -321,20 +325,20 @@ export class StreamManager {
             // If we have favorite streams, skip lower priority sources for this screen
             if (source.subtype === 'favorites' && streams.length > 0) {
               logger.debug('Found %s favorite streams for screen %s, skipping lower priority sources', 
-                String(streams.length), String(streamConfig.id));
+                String(streams.length), String(screenNumber));
               break;
             }
           }
         }
 
         // After collecting all streams for a screen, sort them according to config
-        const screenResults = results.filter(s => s.screen === streamConfig.id);
-        logger.info('Total streams found for screen %d: %d', 
-          String(streamConfig.id), String(screenResults.length));
+        const screenResults = results.filter(s => s.screen === screenNumber);
+        logger.info('Total streams found for screen %s: %s', 
+          String(screenNumber), String(screenResults.length));
 
         if (screenResults.length > 0) {
-          logger.info('First stream for screen %d: %s (Priority: %d)', 
-            String(streamConfig.id), 
+          logger.info('First stream for screen %s: %s (Priority: %s)', 
+            String(screenNumber), 
             screenResults[0].sourceName || 'Unknown Source',
             String(screenResults[0].priority || 999)
           );
@@ -463,7 +467,7 @@ export class StreamManager {
 
       // Process each screen's streams
       for (const [screen, allScreenStreams] of streamsByScreen) {
-        const screenConfig = this.config.streams.find(s => s.id === screen);
+        const screenConfig = this.config.streams.find(s => s.screen === screen);
         if (!screenConfig || !screenConfig.enabled) continue;
 
         // Group streams by priority
@@ -542,7 +546,7 @@ export class StreamManager {
   }
 
   async disableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.streams.find(s => s.id === screen);
+    const streamConfig = this.config.streams.find(s => s.screen === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -556,7 +560,7 @@ export class StreamManager {
   }
 
   async enableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.streams.find(s => s.id === screen);
+    const streamConfig = this.config.streams.find(s => s.screen === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -684,15 +688,51 @@ export class StreamManager {
 
   public async saveConfig(): Promise<void> {
     try {
-      await fs.writeFile(
+      await fs.promises.writeFile(
         path.join(process.cwd(), 'config', 'config.json'),
-        JSON.stringify(this.config, null, 2)
+        JSON.stringify(this.config, null, 2),
+        'utf-8'
       );
       this.emit('configUpdate', this.config);
     } catch (error) {
       this.emit('error', error);
       throw error;
     }
+  }
+
+  public getScreenConfig(screen: number): StreamConfig | undefined {
+    return this.config.player.screens.find(s => s.screen === screen);
+  }
+
+  public updateScreenConfig(screen: number, config: Partial<StreamConfig>): void {
+    const screenConfig = this.getScreenConfig(screen);
+    if (!screenConfig) {
+      throw new Error(`Screen ${screen} not found`);
+    }
+    Object.assign(screenConfig, config);
+    this.emit('screenUpdate', screen, screenConfig);
+  }
+
+  public getConfig() {
+    return {
+      streams: this.config.streams,
+      organizations: this.config.organizations,
+      favoriteChannels: this.config.favoriteChannels,
+      holodex: {
+        apiKey: this.config.holodex.apiKey
+      },
+      twitch: {
+        clientId: this.config.twitch.clientId,
+        clientSecret: this.config.twitch.clientSecret,
+        streamersFile: this.config.twitch.streamersFile
+      }
+    };
+  }
+
+  public async updateConfig(newConfig: Partial<Config>): Promise<void> {
+    Object.assign(this.config, newConfig);
+    await this.saveConfig();
+    this.emit('configUpdate', this.getConfig());
   }
 }
 

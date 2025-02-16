@@ -1,4 +1,4 @@
-import { WebSocketServer } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
 import { Server } from 'http';
 import type { Stream, StreamSource } from '../types/stream.js';
 import { StreamManager } from './stream-manager.js';
@@ -17,7 +17,7 @@ export class WebSocketService {
     this.wss.on('connection', (ws: WebSocket) => {
       this.clients.add(ws);
 
-      ws.on('close', () => {
+      ws.addEventListener('close', () => {
         this.clients.delete(ws);
       });
 
@@ -26,7 +26,7 @@ export class WebSocketService {
         type: 'init',
         data: {
           streams: this.streamManager.getActiveStreams(),
-          queues: this.streamManager.getAllQueues(),
+          queues: this.streamManager.getQueueForScreen,
           screens: this.streamManager.getScreenConfigs()
         }
       });

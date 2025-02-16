@@ -2,10 +2,12 @@
   import type { StreamSource } from '$types/stream';
   import { streamQueues } from '$lib/stores';
 
-  export let screen: number;
-  export let queue: StreamSource[];
+  let { screen, queue } = $props<{
+    screen: number;
+    queue: StreamSource[];
+  }>();
 
-  let draggedIndex: number | null = null;
+  let draggedIndex = $state<number | null>(null);
 
   async function reorderQueue(sourceIndex: number, targetIndex: number) {
     try {

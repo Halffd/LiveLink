@@ -99,14 +99,59 @@ export interface Stream extends StreamSource {
 }
 
 export interface StreamConfig {
+  id: number;
+  screen: number;
   enabled: boolean;
+  quality: string;
+  volume: number;
+  windowMaximized: boolean;
   width: number;
   height: number;
   x: number;
   y: number;
-  volume: number;
-  quality: string;
-  windowMaximized: boolean;
+  primary: boolean;
+  sources: StreamSourceConfig[];
+}
+
+export interface Config {
+  streams: StreamConfig[];
+  organizations: string[];
+  favoriteChannels: {
+    holodex: string[];
+    twitch: string[];
+  };
+  holodex: {
+    apiKey: string;
+  };
+  twitch: {
+    clientId: string;
+    clientSecret: string;
+    streamersFile: string;
+  };
+  player: {
+    preferStreamlink: boolean;
+    defaultQuality: string;
+    defaultVolume: number;
+    windowMaximized: boolean;
+    maxStreams: number;
+    autoStart: boolean;
+    screens: StreamConfig[];
+  };
+  mpv: {
+    priority?: string;
+    'gpu-context'?: string;
+    vo?: string;
+    hwdec?: string;
+    'gpu-api'?: string;
+  };
+  streamlink: {
+    path?: string;
+    options?: Record<string, string>;
+    http_header?: Record<string, string>;
+  };
+  filters: {
+    filters: string[];
+  };
 }
 
 export interface PlayerSettings {

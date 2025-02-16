@@ -1,14 +1,27 @@
 import { EventEmitter } from 'events';
 import type { Stream, StreamSource, StreamConfig, PlayerSettings } from '../types/stream.js';
 import type { Config } from './config.js';
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
 
+interface StreamInstance {
+  screen: number;
+  url: string;
+  status: 'playing' | 'paused' | 'stopped' | 'error';
+  quality: string;
+  volume: number;
+  error?: string;
+  startTime?: number;
+  duration?: number;
+  process: ChildProcess | null;
+  platform: 'youtube' | 'twitch';
+}
+
 export class StreamManager extends EventEmitter {
-  private activeStreams: Map<number, Stream> = new Map();
+  private activeStreams: Map<number, StreamInstance> = new Map();
   private queues: Map<number, StreamSource[]> = new Map();
-  private processes: Map<number, any> = new Map();
+  private processes: Map<number, ChildProcess> = new Map();
 
   constructor(private config: Config) {
     super();
@@ -33,7 +46,7 @@ export class StreamManager extends EventEmitter {
       await this.stopStream(options.screen);
 
       // Create stream object
-      const stream: Stream = {
+      const stream: StreamInstance = {
         screen: options.screen,
         url: options.url,
         status: 'playing',
@@ -139,19 +152,21 @@ export class StreamManager extends EventEmitter {
   // Player Control
   sendCommandToScreen(screen: number, command: string) {
     const process = this.processes.get(screen);
-    if (process) {
+    if (process?.stdin) {
       process.stdin.write(command + '\n');
     }
   }
 
   sendCommandToAll(command: string) {
     this.processes.forEach(process => {
-      process.stdin.write(command + '\n');
+      if (process?.stdin) {
+        process.stdin.write(command + '\n');
+      }
     });
   }
 
   // Getters
-  getActiveStreams(): Stream[] {
+  getActiveStreams(): StreamInstance[] {
     return Array.from(this.activeStreams.values());
   }
 

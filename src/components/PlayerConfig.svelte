@@ -2,8 +2,10 @@
   import type { MPVConfig, StreamlinkConfig } from '../types/config';
   import { createEventDispatcher } from 'svelte';
 
-  export let mpvConfig: MPVConfig = {};
-  export let streamlinkConfig: StreamlinkConfig = {};
+  let { mpvConfig = {}, streamlinkConfig = {} } = $props<{
+    mpvConfig: MPVConfig;
+    streamlinkConfig: StreamlinkConfig;
+  }>();
 
   const dispatch = createEventDispatcher();
 

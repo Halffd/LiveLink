@@ -1,15 +1,10 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamOptions, StreamResponse, StreamSource } from '../../types/stream.js';
+import type { StreamSource, PlayerSettings, StreamConfig, StreamOptions } from '../../types/stream.js';
 import { logger } from '../services/logger.js';
 
 const router = new Router();
-
-interface StreamQuery {
-  organization?: string;
-  limit?: string;
-}
 
 // Add type for request body
 interface AddToQueueBody {
@@ -24,15 +19,8 @@ interface ReorderQueueBody {
   targetIndex: number;
 }
 
-// Add type for request body
-interface StartStreamBody {
-  url: string;
-  screen?: number;
-  quality?: string;
-}
-
 interface UpdateConfigBody {
-  streams?: any[];
+  streams?: StreamConfig[];
   organizations?: string[];
   favoriteChannels?: {
     holodex: string[];
@@ -111,25 +99,26 @@ router.get('/api/streams', async (ctx: Context) => {
   }
 });
 
-router.post('/api/streams', async (ctx: Context) => {
+router.post('/api/streams/start', async (ctx: Context) => {
   try {
-    const body = ctx.request.body as StartStreamBody;
+    const body = ctx.request.body as { url: string } & Partial<StreamOptions>;
     if (!body.url) {
       ctx.status = 400;
       ctx.body = { error: 'URL is required' };
       return;
     }
 
-    await streamManager.startStream({
+    const response = await streamManager.startStream({
       url: body.url,
       screen: body.screen || 1,
-      quality: body.quality
+      quality: body.quality || 'best',
+      volume: body.volume || 50,
+      windowMaximized: body.windowMaximized ?? true
     });
-
-    ctx.body = { success: true };
+    ctx.body = response;
   } catch (error) {
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    ctx.body = { error: error instanceof Error ? error.message : String(error) };
   }
 });
 
@@ -197,7 +186,11 @@ router.post('/api/streams/url', async (ctx: Context) => {
       ctx.body = { error: 'URL is required' };
       return;
     }
-    const result = await streamManager.startStream({ url, screen, quality });
+    const result = await streamManager.startStream({ 
+      url, 
+      screen: screen || 1, 
+      quality: quality || 'best' 
+    });
     ctx.body = result;
   } catch (error) {
     ctx.status = 500;
@@ -306,15 +299,15 @@ router.post('/api/streams/start/:screen', async (ctx: Context) => {
       return;
     }
 
-    const { url } = ctx.request.body;
+    const { url } = ctx.request.body as { url: string };
     if (!url) {
       ctx.status = 400;
       ctx.body = { error: 'URL is required' };
       return;
     }
 
-    await streamManager.startStream(screen, url);
-    ctx.body = { success: true };
+    const result = await streamManager.startStream({ url, screen });
+    ctx.body = { success: true, ...result };
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -513,35 +506,31 @@ router.post('/api/player/seek/:target', async (ctx: Context) => {
   }
 });
 
-// Add player settings endpoints
+// Get player settings endpoint
 router.get('/api/player/settings', async (ctx: Context) => {
   try {
     ctx.body = streamManager.getPlayerSettings();
   } catch (error) {
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    ctx.body = { error: error instanceof Error ? error.message : String(error) };
   }
 });
 
-router.put('/api/player/settings', async (ctx: Context) => {
+// Update player settings endpoint
+router.post('/api/player/settings', async (ctx: Context) => {
   try {
-    const settings = ctx.request.body;
+    const settings = ctx.request.body as Partial<PlayerSettings>;
     await streamManager.updatePlayerSettings(settings);
     ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    ctx.body = { error: error instanceof Error ? error.message : String(error) };
   }
 });
 
 // Add screen configuration endpoints
-router.get('/api/screens', async (ctx: Context) => {
-  try {
-    ctx.body = streamManager.getScreenConfigs();
-  } catch (error) {
-    ctx.status = 500;
-    ctx.body = { error: String(error) };
-  }
+router.get('/api/screens', (ctx: Context) => {
+  ctx.body = streamManager.getScreenConfigs();
 });
 
 router.put('/api/screens/:screen', async (ctx: Context) => {
@@ -553,16 +542,8 @@ router.put('/api/screens/:screen', async (ctx: Context) => {
       return;
     }
 
-    const config = ctx.request.body;
-    const screenConfig = streamManager.config.player.screens.find(s => s.id === screen);
-    if (!screenConfig) {
-      ctx.status = 404;
-      ctx.body = { error: 'Screen not found' };
-      return;
-    }
-
-    // Update screen configuration
-    Object.assign(screenConfig, config);
+    const config = ctx.request.body as Partial<StreamConfig>;
+    streamManager.updateScreenConfig(screen, config);
     ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
@@ -571,53 +552,14 @@ router.put('/api/screens/:screen', async (ctx: Context) => {
 });
 
 // Add these new routes before the export
-router.get('/api/config', async (ctx: Context) => {
-  try {
-    const config = streamManager.config;
-    ctx.body = {
-      streams: config.streams,
-      organizations: config.organizations,
-      favoriteChannels: config.favoriteChannels,
-      holodex: {
-        apiKey: config.holodex.apiKey
-      },
-      twitch: {
-        clientId: config.twitch.clientId,
-        clientSecret: config.twitch.clientSecret,
-        streamersFile: config.twitch.streamersFile
-      }
-    };
-  } catch (error) {
-    ctx.status = 500;
-    ctx.body = { error: String(error) };
-  }
+router.get('/api/config', (ctx: Context) => {
+  ctx.body = streamManager.getConfig();
 });
 
 router.put('/api/config', async (ctx: Context) => {
   try {
-    const newConfig = ctx.request.body as UpdateConfigBody;
-    
-    if (newConfig.streams && !Array.isArray(newConfig.streams)) {
-      ctx.status = 400;
-      ctx.body = { error: 'Invalid streams configuration' };
-      return;
-    }
-
-    if (newConfig.organizations && !Array.isArray(newConfig.organizations)) {
-      ctx.status = 400;
-      ctx.body = { error: 'Invalid organizations configuration' };
-      return;
-    }
-
-    if (newConfig.favoriteChannels &&
-        (!Array.isArray(newConfig.favoriteChannels.holodex) ||
-         !Array.isArray(newConfig.favoriteChannels.twitch))) {
-      ctx.status = 400;
-      ctx.body = { error: 'Invalid favorite channels configuration' };
-      return;
-    }
-
-    await streamManager.updateConfig(newConfig);
+    const body = ctx.request.body as UpdateConfigBody;
+    await streamManager.updateConfig(body);
     ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;

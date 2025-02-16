@@ -2,7 +2,7 @@
   import { page } from '$app/stores';
   import { activeStreams } from '$lib/stores';
 
-  $: activeStreamCount = $activeStreams.length;
+  let activeStreamCount = $derived($activeStreams.length);
 </script>
 
 <header class="bg-gray-800 shadow-lg">

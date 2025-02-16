@@ -2,7 +2,7 @@
   import type { LayerConfig } from '../types/config';
   import { createEventDispatcher } from 'svelte';
 
-  export let layer: LayerConfig;
+  let { layer } = $props<{ layer: LayerConfig }>();
   
   const dispatch = createEventDispatcher();
 
