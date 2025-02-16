@@ -4,7 +4,8 @@ import type {
   PlayerSettings,
   Config,
   StreamConfig,
-  FavoriteChannels
+  FavoriteChannels,
+  StreamSourceConfig
 } from '../types/stream.js';
 import type { 
   StreamOutput, 
@@ -35,31 +36,36 @@ export class StreamManager extends EventEmitter {
   private playerService: PlayerService;
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
-  private favoriteChannels: FavoriteChannels;
+  private favoriteChannels: FavoriteChannels = {
+    holodex: [],
+    twitch: [],
+    youtube: []
+  };
   private queues: Map<number, StreamSource[]> = new Map();
+  private readonly RETRY_INTERVAL = 5000; // 5 seconds
+  private errorCallback?: (data: StreamError) => void;
 
   /**
    * Creates a new StreamManager instance
    */
-  constructor() {
+  constructor(
+    config: Config,
+    holodexService: HolodexService,
+    twitchService: TwitchService,
+    playerService: PlayerService
+  ) {
     super(); // Initialize EventEmitter
-    this.config = loadAllConfigs();
-    this.favoriteChannels = this.config.favoriteChannels;
+    this.config = config;
+    this.holodexService = holodexService;
+    this.twitchService = twitchService;
+    this.playerService = playerService;
+    this.favoriteChannels = {
+      holodex: config.favoriteChannels.holodex || [],
+      twitch: config.favoriteChannels.twitch || [],
+      youtube: config.favoriteChannels.youtube || []
+    };
+    this.initializeQueues();
 
-    this.twitchService = new TwitchService(
-      env.TWITCH_CLIENT_ID,
-      env.TWITCH_CLIENT_SECRET,
-      this.config.filters?.filters || [] // Handle potential undefined filters
-    );
-
-    this.holodexService = new HolodexService(
-      env.HOLODEX_API_KEY,
-      this.config.filters?.filters || [], // Handle potential undefined filters
-      this.favoriteChannels.holodex,
-      this.config
-    );
-
-    this.playerService = new PlayerService();
     logger.info('Stream manager initialized', 'StreamManager');
 
     this.playerService.onStreamError(async (data) => {
@@ -121,18 +127,32 @@ export class StreamManager extends EventEmitter {
   }
 
   private async handleEmptyQueue(screen: number) {
-    logger.info(`Queue empty for screen ${screen}, fetching new streams...`);
-    const newStreams = await this.getLiveStreams();
-    const screenStreams = newStreams.filter(s => s.screen === screen);
-    
-    // Check if there are any unwatched streams
-    const unwatchedStreams = queueService.filterUnwatchedStreams(screenStreams);
-    if (unwatchedStreams.length === 0) {
-      await this.handleAllStreamsWatched(screen);
-      return;
+    try {
+      // Validate screen number
+      const screenConfig = this.config.player.screens.find(s => s.id === screen);
+      if (!screenConfig) {
+        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        return;
+      }
+
+      logger.info(`Attempting to fetch new streams for screen ${screen}`, 'StreamManager');
+      // Emit event to trigger stream manager to fetch new streams
+      this.errorCallback?.({
+        screen,
+        error: 'Fetching new streams',
+        code: -1
+      });
+    } catch (error) {
+      logger.error(
+        'Failed to handle empty queue', 
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      // Retry after interval
+      setTimeout(() => {
+        this.handleEmptyQueue(screen);
+      }, this.RETRY_INTERVAL);
     }
-    
-    queueService.setQueue(screen, unwatchedStreams);
   }
 
   private async handleAllStreamsWatched(screen: number) {
@@ -154,9 +174,9 @@ export class StreamManager extends EventEmitter {
     let screen = options.screen;
     if (!screen) {
       const activeScreens = new Set(this.streams.keys());
-      for (const streamConfig of this.config.streams) {
-        if (!activeScreens.has(streamConfig.screen)) {
-          screen = streamConfig.screen;
+      for (const streamConfig of this.config.player.screens) {
+        if (!activeScreens.has(streamConfig.id)) {
+          screen = streamConfig.id;
           break;
         }
       }
@@ -169,7 +189,7 @@ export class StreamManager extends EventEmitter {
       };
     }
 
-    const streamConfig = this.config.streams.find(s => s.screen === screen);
+    const streamConfig = this.config.player.screens.find(s => s.id === screen);
     if (!streamConfig) {
       return {
         screen,
@@ -224,8 +244,8 @@ export class StreamManager extends EventEmitter {
       const seenUrlsByScreen = new Map<number, Set<string>>(); // Track unique streams per screen
       
       // Process each screen's sources
-      for (const streamConfig of this.config.streams) {
-        const screenNumber = streamConfig.screen;
+      for (const streamConfig of this.config.player.screens) {
+        const screenNumber = streamConfig.id;
         if (!streamConfig.enabled) {
           logger.debug('Screen %s is disabled, skipping', String(screenNumber));
           continue;
@@ -467,7 +487,7 @@ export class StreamManager extends EventEmitter {
 
       // Process each screen's streams
       for (const [screen, allScreenStreams] of streamsByScreen) {
-        const screenConfig = this.config.streams.find(s => s.screen === screen);
+        const screenConfig = this.config.player.screens.find(s => s.id === screen);
         if (!screenConfig || !screenConfig.enabled) continue;
 
         // Group streams by priority
@@ -546,7 +566,7 @@ export class StreamManager extends EventEmitter {
   }
 
   async disableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.streams.find(s => s.screen === screen);
+    const streamConfig = this.config.player.screens.find(s => s.id === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -560,7 +580,7 @@ export class StreamManager extends EventEmitter {
   }
 
   async enableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.streams.find(s => s.screen === screen);
+    const streamConfig = this.config.player.screens.find(s => s.id === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -701,7 +721,7 @@ export class StreamManager extends EventEmitter {
   }
 
   public getScreenConfig(screen: number): StreamConfig | undefined {
-    return this.config.player.screens.find(s => s.screen === screen);
+    return this.config.player.screens.find(s => s.id === screen);
   }
 
   public updateScreenConfig(screen: number, config: Partial<StreamConfig>): void {
@@ -715,7 +735,7 @@ export class StreamManager extends EventEmitter {
 
   public getConfig() {
     return {
-      streams: this.config.streams,
+      streams: this.config.player.screens,
       organizations: this.config.organizations,
       favoriteChannels: this.config.favoriteChannels,
       holodex: {
@@ -734,7 +754,75 @@ export class StreamManager extends EventEmitter {
     await this.saveConfig();
     this.emit('configUpdate', this.getConfig());
   }
+
+  public async updateFavorites(favorites: FavoriteChannels): Promise<void> {
+    this.favoriteChannels = favorites;
+    this.config.favoriteChannels = favorites;
+    
+    // Update services with new favorites
+    this.holodexService.updateFavorites(favorites.holodex);
+    this.twitchService.updateFavorites(favorites.twitch);
+    
+    // Save to file
+    await fs.promises.writeFile(
+      path.join(process.cwd(), 'config', 'favorites.json'),
+      JSON.stringify(favorites, null, 2),
+      'utf-8'
+    );
+    
+    this.emit('favoritesUpdate', favorites);
+  }
+
+  public getFavorites(): FavoriteChannels {
+    return this.favoriteChannels;
+  }
+
+  public async addFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string): Promise<void> {
+    if (!this.favoriteChannels[platform]) {
+      this.favoriteChannels[platform] = [];
+    }
+    
+    if (!this.favoriteChannels[platform].includes(channelId)) {
+      this.favoriteChannels[platform].push(channelId);
+      await this.updateFavorites(this.favoriteChannels);
+    }
+  }
+
+  public async removeFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string): Promise<void> {
+    if (this.favoriteChannels[platform]) {
+      const index = this.favoriteChannels[platform].indexOf(channelId);
+      if (index !== -1) {
+        this.favoriteChannels[platform].splice(index, 1);
+        await this.updateFavorites(this.favoriteChannels);
+      }
+    }
+  }
+
+  private initializeQueues() {
+    this.config.player.screens.forEach(screen => {
+      this.queues.set(screen.id, []);
+    });
+  }
 }
 
-// Create and export stream manager instance
-export const streamManager = new StreamManager(); 
+// Create singleton instance
+const config = loadAllConfigs();
+const holodexService = new HolodexService(
+  env.HOLODEX_API_KEY,
+  config.filters?.filters || [],
+  config.favoriteChannels.holodex,
+  config
+);
+const twitchService = new TwitchService(
+  env.TWITCH_CLIENT_ID,
+  env.TWITCH_CLIENT_SECRET,
+  config.filters?.filters || []
+);
+const playerService = new PlayerService();
+
+export const streamManager = new StreamManager(
+  config,
+  holodexService,
+  twitchService,
+  playerService
+); 

@@ -15,7 +15,29 @@ import { exec } from 'child_process';
 import { queueService } from './queue_service.js';
 import path from 'path';
 import fs from 'fs';
-import { execSync } from 'child_process';
+
+interface IpcMessage {
+  type: string;
+  screen?: number;
+  data?: StreamInfo;
+  error?: string;
+  count?: number;
+  reason?: string;
+  url?: string;
+  playlist?: StreamInstance[];
+}
+
+interface StreamInfo {
+  path: string;
+  title: string;
+  duration: number;
+  position: number;
+  remaining: number;
+  playlist_pos: number;
+  playlist_count: number;
+  error_count: number;
+  last_error?: string;
+}
 
 export class PlayerService {
   private streams: Map<number, StreamInstance> = new Map();
@@ -35,6 +57,8 @@ export class PlayerService {
   private readonly BASE_LOG_DIR: string;
   private ipcPaths: Map<number, string> = new Map();
   private fifoPaths: Map<number, string> = new Map();
+  private disabledScreens: Set<number> = new Set();
+  private screenErrors: Map<number, { count: number; lastError: string }> = new Map();
 
   constructor() {
     this.events = new EventEmitter();
@@ -259,6 +283,8 @@ export class PlayerService {
       `--volume=${this.config.player.defaultVolume}`,
       `--input-ipc-server=${ipcPath}`,
       `--log-file=${mpvLogPath}`,
+      `--screen=${options.screen}`, // Add screen ID for the Lua script
+      `--scripts=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`, // Add Lua script
       this.config.player.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
     ];
 
@@ -330,28 +356,20 @@ export class PlayerService {
         };
       }
 
-      // If no URL is provided, get next unwatched stream from queue
-      if (!options.url) {
-        const nextStream = queueService.getNextStream(options.screen);
-        if (!nextStream) {
-          logger.info(`No unwatched streams left for screen ${options.screen}, will retry in 10s`, 'PlayerService');
-          setTimeout(async () => {
-            await this.handleEmptyQueue(options.screen);
-          }, this.RETRY_INTERVAL);
-          return {
-            screen: options.screen,
-            message: 'No unwatched streams available, will retry'
-          };
-        }
-        options.url = nextStream.url;
-      }
+      // Get queue for this screen
+      const queue = queueService.getQueue(options.screen);
+      const urls = [options.url, ...queue.map(s => s.url)];
 
-      // Mark stream as watched
-      queueService.markStreamAsWatched(options.url);
-
-      // Reset retry counter when starting a new stream intentionally
-      if (!this.streamRetries.has(options.screen)) {
-        this.streamRetries.set(options.screen, 0);
+      // If no URLs are provided, get next unwatched stream from queue
+      if (urls.length === 0) {
+        logger.info(`No unwatched streams left for screen ${options.screen}, will retry in 10s`, 'PlayerService');
+        setTimeout(async () => {
+          await this.handleEmptyQueue(options.screen);
+        }, this.RETRY_INTERVAL);
+        return {
+          screen: options.screen,
+          message: 'No unwatched streams available, will retry'
+        };
       }
 
       // Stop any existing stream on this screen
@@ -376,7 +394,7 @@ export class PlayerService {
         const mpvArgs = this.getMpvArgs(options);
         // Streamlink base arguments
         args = [
-          options.url,
+          urls[0], // Only first URL for streamlink
           options.quality || this.config.player.defaultQuality,
           '--player', 'mpv',
           '--player-args',
@@ -411,36 +429,18 @@ export class PlayerService {
           'Accept-Language=en-US,en;q=0.9'
         );
       } else {
-        // Move the IPC path declarations before their usage
-        const ipcPath = `/tmp/mpv-ipc-${options.screen}`;
-        const inputFifoPath = `/tmp/mpv-input-${options.screen}`;
-        this.ipcPaths.set(options.screen, ipcPath);
-        this.fifoPaths.set(options.screen, inputFifoPath);
-
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
 
-        // Add additional MPV-specific arguments that aren't in getMpvArgs
-        args.push(
-          options.url,
-          '--script-opts=ytdl_hook-ytdl_path=yt-dlp'
-        );
+        // Add all URLs to playlist
+        args.push(...urls);
 
-        // Create FIFO file if it doesn't exist
-        try {
-          if (!fs.existsSync(inputFifoPath)) {
-            execSync(`mkfifo ${inputFifoPath}`);
-          }
-          
-          // Set up FIFO listener
-          const fifoStream = fs.createReadStream(inputFifoPath);
-          fifoStream.on('data', (data) => {
-            logger.debug(`MPV[${options.screen}] received command: ${data.toString()}`, 'PlayerService');
-          });
-        } catch (error) {
-          logger.error(`Failed to create FIFO for screen ${options.screen}`, 'PlayerService', 
-            error instanceof Error ? error : new Error(String(error)));
-        }
+        // Add additional MPV-specific arguments
+        args.push(
+          '--script-opts=ytdl_hook-ytdl_path=yt-dlp',
+          '--keep-open=yes',
+          '--force-window=yes'
+        );
       }
 
       logger.debug(`Starting ${command} with args: ${args.join(' ')}`, 'PlayerService');
@@ -452,16 +452,15 @@ export class PlayerService {
       const spawnOptions: SpawnOptions & { nice?: number } = {
         nice: this.getProcessPriority()
       };
+
       logger.info(`Starting ${command} ${args.join(' ')}`, 'PlayerService');
       const process = spawn(command, args, spawnOptions) as unknown as ChildProcess;
-      let hasReceivedOutput = false;
 
       // Handle process output
       if (process.stdout) {
         process.stdout.on('data', (data: Buffer) => {
           const output = data.toString().trim();
           if (output) {
-            hasReceivedOutput = true;
             logger.debug(`[${command}-${options.screen}-stdout] ${output}`, 'PlayerService');
             this.outputCallback?.({
               screen: options.screen,
@@ -476,17 +475,7 @@ export class PlayerService {
         process.stderr.on('data', (data: Buffer) => {
           const output = data.toString().trim();
           if (output) {
-            hasReceivedOutput = true;
             logger.debug(`[${command}-${options.screen}-stderr] ${output}`, 'PlayerService');
-            
-            // Check for specific error conditions
-            if (output.includes('Failed to open') || 
-                output.includes('Error when loading file') ||
-                output.includes('Failed to get stream data')) {
-              logger.warn(`Stream error detected for screen ${options.screen}: ${output}`, 'PlayerService');
-              process.kill('SIGTERM');
-            }
-            
             this.errorCallback?.({
               screen: options.screen,
               error: output
@@ -495,16 +484,7 @@ export class PlayerService {
         });
       }
 
-      // Add initial startup timeout
-      const startupTimeout = setTimeout(() => {
-        if (!hasReceivedOutput) {
-          logger.warn(`No output received from stream on screen ${options.screen} after 10s, killing process`, 'PlayerService');
-          process.kill('SIGTERM');
-        }
-      }, 10000);
-
       process.on('error', (error: Error) => {
-        clearTimeout(startupTimeout);
         logger.error(`[${command}-${options.screen}-error] ${error.message}`, 'PlayerService', error);
         this.clearStreamRefresh(options.screen);
         this.errorCallback?.({
@@ -515,66 +495,9 @@ export class PlayerService {
 
       // Handle process exit
       process.on('exit', (code: number | null) => {
-        clearTimeout(startupTimeout);
         logger.info(`[${command}-${options.screen}-exit] Process exited with code ${code}`, 'PlayerService');
         this.clearStreamRefresh(options.screen);
-        
-        // Start inactive timer when stream ends
         this.setupInactiveTimer(options.screen);
-        
-        // Handle different exit codes
-        if (code === 0 || code === null) {
-          // Normal exit or killed - try to start next stream
-          const nextStream = queueService.getNextStream(options.screen);
-          if (nextStream) {
-            logger.info(`Starting next stream on screen ${options.screen}: ${nextStream.url}`, 'PlayerService');
-            setTimeout(() => {
-              this.startStream({
-                ...options,
-                url: nextStream.url
-              });
-            }, 2000); // Increased delay between streams
-          } else {
-            logger.info(`No more unwatched streams for screen ${options.screen}`, 'PlayerService');
-            if (this.errorCallback) {
-              this.errorCallback({
-                screen: options.screen,
-                error: 'All streams watched',
-                code: 0
-              });
-            }
-          }
-          this.streamRetries.delete(options.screen);
-        } else {
-          // Any error code - handle retries
-          const retryCount = (this.streamRetries.get(options.screen) || 0) + 1;
-          if (retryCount <= this.MAX_RETRIES) {
-            logger.info(`Retrying stream on screen ${options.screen} (attempt ${retryCount})`, 'PlayerService');
-            this.streamRetries.set(options.screen, retryCount);
-            setTimeout(() => {
-              this.startStream(options);
-            }, 2000); // Increased delay between retries
-          } else {
-            logger.warn(`Max retries reached for screen ${options.screen}, trying next stream`, 'PlayerService');
-            this.streamRetries.delete(options.screen);
-            queueService.markStreamAsWatched(options.url);
-            const nextStream = queueService.getNextStream(options.screen);
-            if (nextStream) {
-              setTimeout(() => {
-                this.startStream({
-                  ...options,
-                  url: nextStream.url
-                });
-              }, 2000); // Increased delay before next stream
-            } else {
-              logger.info(`No more streams available for screen ${options.screen}, will retry in 10s`, 'PlayerService');
-              setTimeout(() => {
-                this.handleEmptyQueue(options.screen);
-              }, this.RETRY_INTERVAL);
-            }
-          }
-        }
-        
         this.streams.delete(options.screen);
       });
 
@@ -584,7 +507,11 @@ export class PlayerService {
         url: options.url,
         quality: options.quality || 'best',
         process: process,
-        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
+        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
+        status: 'playing',
+        volume: this.config.player.defaultVolume,
+        startTime: Date.now(),
+        error: undefined
       };
 
       this.streams.set(options.screen, instance);
@@ -601,7 +528,6 @@ export class PlayerService {
 
     } catch (error) {
       this.clearStreamRefresh(options.screen);
-      // Start inactive timer on error
       this.setupInactiveTimer(options.screen);
       logger.error(
         'Failed to start stream',
@@ -641,7 +567,12 @@ export class PlayerService {
       setTimeout(() => {
         const fifoPath = this.fifoPaths.get(screen);
         if (fifoPath) {
-          try { fs.unlinkSync(fifoPath); } catch {} // Suppress errors
+          try { 
+            fs.unlinkSync(fifoPath); 
+          } catch {
+            // Ignore error, file may not exist
+            logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'PlayerService');
+          }
           this.fifoPaths.delete(screen);
         }
         this.ipcPaths.delete(screen);
@@ -765,5 +696,174 @@ export class PlayerService {
     this.ipcPaths.forEach((_, screen) => {
       this.sendCommandToScreen(screen, command);
     });
+  }
+
+  private handleStreamInfo(screen: number, data: StreamInfo): void {
+    logger.debug(`Stream info update for screen ${screen}: ${JSON.stringify(data)}`, 'PlayerService');
+    const stream = this.streams.get(screen);
+    if (stream) {
+      stream.title = data.title;
+      stream.progress = Math.floor((data.position / data.duration) * 100);
+    }
+  }
+
+  private handleWatchedStream(screen: number, url: string): void {
+    logger.debug(`Stream marked as watched on screen ${screen}: ${url}`, 'PlayerService');
+    const stream = this.streams.get(screen);
+    if (stream) {
+      stream.watched = true;
+    }
+  }
+
+  private handlePlaylistUpdate(screen: number, playlist: StreamInstance[]): void {
+    logger.debug(`Playlist update for screen ${screen}: ${JSON.stringify(playlist)}`, 'PlayerService');
+    const stream = this.streams.get(screen);
+    if (stream) {
+      stream.playlist = playlist;
+    }
+  }
+
+  private handleIpcMessage(screen: number, message: IpcMessage): void {
+    try {
+      switch (message.type) {
+        case 'stream_info':
+          if (message.data) this.handleStreamInfo(screen, message.data);
+          break;
+        case 'watched':
+          if (message.url) this.handleWatchedStream(screen, message.url);
+          break;
+        case 'playlist_update':
+          if (message.playlist) this.handlePlaylistUpdate(screen, message.playlist);
+          break;
+        case 'error':
+          if (message.error) this.handleStreamError(screen, message.error, message.count || 1);
+          break;
+        case 'disable_screen':
+          if (message.reason) this.handleDisableScreen(screen, message.reason);
+          break;
+        case 'player_shutdown':
+          void this.handlePlayerShutdown(screen);
+          break;
+        case 'toggle_screen':
+          if (message.screen !== undefined) void this.handleToggleScreen(message.screen);
+          break;
+        case 'request_update':
+          void this.handleRequestUpdate(screen);
+          break;
+        default:
+          logger.warn(`Unknown IPC message type: ${message.type}`, 'PlayerService');
+      }
+    } catch (error) {
+      logger.error(
+        `Error handling IPC message: ${error instanceof Error ? error.message : String(error)}`,
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  }
+
+  private handleStreamError(screen: number, error: string, count: number): void {
+    logger.error(`Stream error on screen ${screen}: ${error}`, 'PlayerService');
+    
+    const errorInfo = this.screenErrors.get(screen) || { count: 0, lastError: '' };
+    errorInfo.count = count;
+    errorInfo.lastError = error;
+    this.screenErrors.set(screen, errorInfo);
+
+    if (count >= this.MAX_RETRIES) {
+      this.handleDisableScreen(screen, `Too many errors: ${error}`);
+    } else {
+      // Attempt to restart the stream
+      const stream = this.streams.get(screen);
+      if (stream) {
+        void this.restartStream(screen, stream);
+      }
+    }
+  }
+
+  private handleDisableScreen(screen: number, reason: string): void {
+    logger.warn(`Disabling screen ${screen}: ${reason}`, 'PlayerService');
+    this.disabledScreens.add(screen);
+    void this.stopStream(screen);
+  }
+
+  private async handlePlayerShutdown(screen: number): Promise<void> {
+    logger.info(`Player shutdown on screen ${screen}`, 'PlayerService');
+    this.streams.delete(screen);
+    
+    // Check if all screens are closed
+    if (this.streams.size === 0) {
+      logger.info('All players closed, performing cleanup', 'PlayerService');
+      this.cleanup();
+    }
+  }
+
+  private async handleToggleScreen(screen: number): Promise<void> {
+    const stream = this.streams.get(screen);
+    
+    if (stream) {
+      // Screen is active, stop it
+      await this.stopStream(screen);
+    } else if (!this.disabledScreens.has(screen)) {
+      // Screen is inactive and not disabled, start it
+      const queue = queueService.getQueue(screen);
+      if (queue.length > 0) {
+        await this.startStream({ screen, url: queue[0].url });
+      } else {
+        logger.info(`No streams in queue for screen ${screen}`, 'PlayerService');
+      }
+    } else {
+      logger.warn(`Cannot toggle disabled screen ${screen}`, 'PlayerService');
+    }
+  }
+
+  private async handleRequestUpdate(screen: number): Promise<void> {
+    try {
+      const queue = queueService.getQueue(screen);
+      if (queue.length > 0) {
+        await this.startStream({ screen, url: queue[0].url });
+      }
+    } catch (error) {
+      logger.error(
+        `Failed to handle update request for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  }
+
+  private cleanup(): void {
+    // Clean up IPC and FIFO files
+    for (const [screen, ipcPath] of this.ipcPaths) {
+      try { 
+        fs.unlinkSync(ipcPath);
+        logger.debug(`Removed IPC file: ${ipcPath}`, 'PlayerService');
+      } catch {
+        logger.debug(`Failed to remove IPC file: ${ipcPath}`, 'PlayerService');
+      }
+      this.ipcPaths.delete(screen);
+    }
+    
+    for (const [screen, fifoPath] of this.fifoPaths) {
+      try { 
+        fs.unlinkSync(fifoPath);
+        logger.debug(`Removed FIFO file: ${fifoPath}`, 'PlayerService');
+      } catch {
+        logger.debug(`Failed to remove FIFO file: ${fifoPath}`, 'PlayerService');
+      }
+      this.fifoPaths.delete(screen);
+    }
+    
+    // Clear all timers and state
+    this.streamRefreshTimers.forEach((timer: NodeJS.Timeout) => clearTimeout(timer));
+    this.streamRefreshTimers.clear();
+    
+    this.inactiveTimers.forEach((timer: NodeJS.Timeout) => clearTimeout(timer));
+    this.inactiveTimers.clear();
+    
+    this.streamStartTimes.clear();
+    this.lastStreamEndTime.clear();
+    this.screenErrors.clear();
+    this.disabledScreens.clear();
   }
 } 

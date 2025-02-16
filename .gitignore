@@ -39,6 +39,6 @@ config
 # Database
 data/
 *.db
-src/config/default/*
+src/config/default/favorites.json
 !src/config/default/.gitkeep
 logs/

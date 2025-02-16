@@ -1,3 +1,4 @@
+import type { Stream } from './stream.js';
 import type { ChildProcess } from 'child_process';
 
 /** Platform type for streams */
@@ -9,11 +10,19 @@ export interface StreamInstance {
   screen: number;
   url: string;
   quality: string;
-  process: ChildProcess;
+  status: 'playing' | 'paused' | 'stopped' | 'error';
+  volume: number;
+  process: ChildProcess | null;
   /** Stream title (if available) */
   title?: string;
   /** Platform the stream is from */
   platform: StreamPlatform;
+  progress?: number;
+  watched?: boolean;
+  playlist?: StreamInstance[];
+  error?: string;
+  startTime?: number;
+  duration?: number;
 }
 
 /** Stream process output data */
@@ -34,5 +43,4 @@ export interface StreamResponse {
   screen: number;
   message?: string;
   error?: string;
-  success?: boolean;
 } 

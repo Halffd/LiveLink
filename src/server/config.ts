@@ -6,7 +6,11 @@ export interface Config {
   };
   streams: StreamConfig[];
   organizations: string[];
-  favoriteChannels: FavoriteChannels;
+  favoriteChannels: {
+    holodex: string[];
+    twitch: string[];
+    youtube: string[];
+  };
   holodex: {
     apiKey: string;
   };
@@ -69,7 +73,8 @@ export const defaultConfig: Config = {
   organizations: [],
   favoriteChannels: {
     holodex: [],
-    twitch: []
+    twitch: [],
+    youtube: []
   },
   holodex: {
     apiKey: ''

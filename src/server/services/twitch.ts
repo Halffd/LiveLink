@@ -12,6 +12,7 @@ import type { StreamSource } from '../../types/stream.js';
 import { logger } from './logger.js';
 import { db } from '../db/database.js';
 import { env } from '../../config/env.js';
+import type { StreamService } from '../../types/stream.js';
 
 interface GetStreamsOptions {
   limit?: number;
@@ -20,12 +21,13 @@ interface GetStreamsOptions {
   channels?: string[];
 }
 
-export class TwitchService {
+export class TwitchService implements StreamService {
   private client: ApiClient | null = null;
   private clientId: string;
   private clientSecret: string;
   private authProvider: RefreshingAuthProvider | null = null;
   private filters: string[];
+  private favoriteChannels: string[] = [];
 
   constructor(clientId: string, clientSecret: string, filters: string[]) {
     this.clientId = clientId;
@@ -204,5 +206,9 @@ export class TwitchService {
       logger.debug(error instanceof Error ? error.message : String(error), 'TwitchService');
       throw error;
     }
+  }
+
+  public updateFavorites(channels: string[]): void {
+    this.favoriteChannels = channels;
   }
 } 

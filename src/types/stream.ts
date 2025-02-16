@@ -72,8 +72,13 @@ export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch'
 export type StreamSourceSubtype = 'favorites' | 'organization' | null;
 
 export interface FavoriteChannels {
-  holodex: string[];  // YouTube channel IDs
-  twitch: string[];   // Twitch usernames
+  holodex: string[];
+  twitch: string[];
+  youtube: string[];
+}
+
+export interface StreamService {
+  updateFavorites(channels: string[]): void;
 }
 
 export interface StreamSourceConfig {

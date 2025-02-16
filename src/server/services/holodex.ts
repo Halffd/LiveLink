@@ -11,6 +11,7 @@ import type { StreamSource, StreamSourceConfig, StreamLimits } from '../../types
 import { logger } from './logger.js';
 import { env } from '../../config/env.js';
 import type { Config } from '../../config/loader.js';
+import type { StreamService } from '../../types/stream.js';
 
 interface StreamSourceResult {
   source: StreamSourceConfig;
@@ -23,7 +24,7 @@ interface GetStreamsOptions {
   channels?: string[];
 }
 
-export class HolodexService {
+export class HolodexService implements StreamService {
   private client: HolodexApiClient | null = null;
   private favoriteChannels: string[];
   private filters: string[];
@@ -165,5 +166,9 @@ export class HolodexService {
     
     // If channel name matches any filter exactly, filter it
     return Boolean(channelName && this.filters.includes(channelName));
+  }
+
+  public updateFavorites(channels: string[]): void {
+    this.favoriteChannels = channels;
   }
 } 
