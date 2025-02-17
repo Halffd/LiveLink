@@ -1,0 +1,75 @@
+{
+  "vo": "gpu",
+  "hwdec": "auto-copy-safe",
+  "gpu-api": "x11",
+  "gpu-context": "x11",
+  "hwdec-codecs": "all",
+  "gpu-hwdec-interop": "auto",
+
+  "priority": "high",
+
+  "deband": false,
+  "deband-iterations": 1,
+  "deband-threshold": 64,
+  "deband-range": 16,
+  "deband-grain": 48,
+  "temporal-dither": false,
+  "dither-depth": "auto",
+  "correct-downscaling": false,
+  "linear-downscaling": false,
+  "sigmoid-upscaling": false,
+
+  "scale": "bilinear",
+  "cscale": "bilinear",
+  "dscale": "bilinear",
+  "scale-antiring": 0.0,
+  "cscale-antiring": 0.0,
+  "scale-radius": null,
+  "scale-blur": null,
+  "scale-clamp": null,
+
+  "video-sync": "display-resample",
+  "interpolation": false,
+  "tscale": "oversample",
+  "video-sync-max-factor": 5,
+  "video-sync-adrop-size": 0.05,
+  "framedrop": "vo",
+
+  "cache": true,
+  "cache-secs": 60,
+  "demuxer-max-bytes": "800M",
+  "demuxer-max-back-bytes": "200M",
+  "network-timeout": 60,
+  "stream-buffer-size": "64M",
+
+  "keep-open": true,
+  "force-window": true,
+  "ontop": false,
+  "border": true,
+  "cursor-autohide": 1,
+
+  "audio-channels": "auto-safe",
+  "audio-pitch-correction": true,
+  "audio-fallback-to-null": true,
+  "audio-buffer": 0.2,
+  "audio-device": "auto",
+  "audio-normalize-downmix": false,
+
+  "osd-level": 1,
+  "osd-duration": 1000,
+  "osd-font": "sans-serif",
+  "osd-font-size": 32,
+  "osd-color": "#CCFFFFFF",
+  "osd-border-color": "#DD322640",
+
+  "msg-level": "all=v",
+  "log-file": "~/.config/mpv/mpv.log",
+
+  "ytdl-format": "bestvideo[height<=?1080]+bestaudio/best",
+  "ytdl-raw-options": "ignore-errors=,quiet=,no-warnings=,retries=10",
+
+  "screenshot-format": "png",
+  "screenshot-png-compression": 7,
+  "screenshot-directory": "~/Pictures/mpv",
+  "screenshot-template": "%F-%P-%n"
+} 

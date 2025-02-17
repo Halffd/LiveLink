@@ -1,0 +1,26 @@
+{
+  "preferStreamlink": false,
+  "defaultQuality": "best",
+  "defaultVolume": 0,
+  "windowMaximized": true,
+  "maxStreams": 2,
+  "autoStart": true,
+  "screens": [
+    {
+      "id": 1,
+      "width": 1940,
+      "height": 1100,
+      "x": 1340,
+      "y": 0,
+      "primary": true
+    },
+    {
+      "id": 2,
+      "width": 1366,
+      "height": 788,
+      "x": 0,
+      "y": 312,
+      "primary": false
+    }
+  ]
+} 

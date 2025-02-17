@@ -6,11 +6,7 @@ export interface Config {
   };
   streams: StreamConfig[];
   organizations: string[];
-  favoriteChannels: {
-    holodex: string[];
-    twitch: string[];
-    youtube: string[];
-  };
+  favoriteChannels: FavoriteChannels;
   holodex: {
     apiKey: string;
   };

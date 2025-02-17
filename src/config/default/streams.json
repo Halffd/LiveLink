@@ -1,0 +1,98 @@
+{
+  "streams": [
+    {
+      "id": 1,
+      "enabled": true,
+      "screen": 1,
+      "sources": [
+        {
+          "type": "holodex",
+          "subtype": "favorites",
+          "enabled": true,
+          "limit": 25,
+          "priority": 1
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "Hololive",
+          "enabled": true,
+          "limit": 25,
+          "priority": 2
+        },
+        {
+          "type": "twitch",
+          "subtype": "favorites",
+          "enabled": true,
+          "limit": 25,
+          "priority": 3
+        },
+        {
+          "type": "twitch",
+          "tags": ["VTuber"],
+          "enabled": true,
+          "limit": 25,
+          "priority": 4
+        }
+      ],
+      "sorting": {
+        "field": "viewerCount",
+        "order": "desc"
+      },
+      "refresh": 300,
+      "autoStart": true,
+      "quality": "best",
+      "volume": 50,
+      "windowMaximized": true
+    },
+    {
+      "id": 2,
+      "enabled": true,
+      "screen": 2,
+      "sources": [
+        {
+          "type": "holodex",
+          "subtype": "favorites",
+          "enabled": true,
+          "limit": 25,
+          "priority": 1
+        },
+        {
+          "type": "twitch",
+          "subtype": "favorites",
+          "enabled": true,
+          "limit": 25,
+          "priority": 2
+        }
+      ],
+      "sorting": {
+        "field": "viewerCount",
+        "order": "desc"
+      },
+      "refresh": 300,
+      "autoStart": true,
+      "quality": "best",
+      "volume": 50,
+      "windowMaximized": true
+    }
+  ],
+  "organizations": [
+    "Hololive",
+    "Nijisanji",
+    "VShojo",
+    "Phase-Connect",
+    "PRISM Project"
+  ],
+  "favoriteChannels": {
+    "holodex": [],
+    "twitch": []
+  },
+  "holodex": {
+    "apiKey": ""
+  },
+  "twitch": {
+    "clientId": "",
+    "clientSecret": "",
+    "streamersFile": "config/streamers.txt"
+  }
+} 

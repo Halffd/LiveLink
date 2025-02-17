@@ -121,10 +121,7 @@ export interface StreamConfig {
 export interface Config {
   streams: StreamConfig[];
   organizations: string[];
-  favoriteChannels: {
-    holodex: string[];
-    twitch: string[];
-  };
+  favoriteChannels: FavoriteChannels;
   holodex: {
     apiKey: string;
   };
