@@ -68,7 +68,7 @@ export interface StreamLimits {
   limit?: number;
 }
 
-export type StreamSourceType = 'favorites' | 'organization' | 'other' | 'twitch' | 'holodex';
+export type StreamSourceType = 'holodex' | 'twitch' | 'youtube' |  'favorites';
 export type StreamSourceSubtype = 'favorites' | 'organization' | null;
 
 export interface FavoriteChannels {

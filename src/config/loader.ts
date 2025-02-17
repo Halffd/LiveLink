@@ -1,108 +1,13 @@
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { z } from 'zod';
-import { env } from './env.js';
 import * as fs from 'fs';
-import type { StreamSourceConfig, FavoriteChannels, Config as StreamConfig } from '../types/stream.js';
-import { MpvConfigSchema, StreamlinkConfigSchema } from './schemas/player.js';
+import type { FavoriteChannels, Config, PlayerSettings, StreamConfig } from '../types/stream.js';
 import { logger } from '../server/services/logger.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const configPaths = {
-  default: path.join(__dirname, 'default'),
-  local: path.join(__dirname, 'local')
-};
-
-const StreamSourceConfigSchema = z.object({
-  type: z.enum(['favorites', 'organization', 'other', 'twitch', 'holodex']),
-  subtype: z.enum(['favorites', 'organization']).nullable().optional(),
-  name: z.string().optional(),
-  enabled: z.boolean(),
-  limit: z.number(),
-  priority: z.number(),
-  tags: z.array(z.string()).optional(),
-  language: z.string().optional(),
-  channels: z.array(z.string()).optional()
-});
-
-const StreamConfigSchema = z.object({
-  id: z.number(),
-  screen: z.number(),
-  enabled: z.boolean(),
-  quality: z.string(),
-  volume: z.number(),
-  windowMaximized: z.boolean(),
-  width: z.number(),
-  height: z.number(),
-  x: z.number(),
-  y: z.number(),
-  primary: z.boolean(),
-  sources: z.array(StreamSourceConfigSchema)
-});
-
-const StreamsConfigSchema = z.object({
-  streams: z.array(StreamConfigSchema),
-  organizations: z.array(z.string()),
-  favoriteChannels: z.object({
-    holodex: z.array(z.string()),
-    twitch: z.array(z.string())
-  }),
-  holodex: z.object({
-    apiKey: z.string()
-  }),
-  twitch: z.object({
-    clientId: z.string(),
-    clientSecret: z.string(),
-    streamersFile: z.string()
-  }),
-  player: z.object({
-    preferStreamlink: z.boolean(),
-    defaultQuality: z.string(),
-    defaultVolume: z.number(),
-    windowMaximized: z.boolean(),
-    maxStreams: z.number(),
-    autoStart: z.boolean(),
-    screens: z.array(StreamConfigSchema)
-  }),
-  mpv: z.object({
-    priority: z.string().optional(),
-    'gpu-context': z.string().optional(),
-    vo: z.string().optional(),
-    hwdec: z.string().optional(),
-    'gpu-api': z.string().optional()
-  }),
-  filters: z.object({
-    filters: z.array(z.string())
-  }),
-  streamlink: z.object({
-    path: z.string().optional(),
-    options: z.record(z.string()).optional(),
-    http_header: z.record(z.string()).optional()
-  })
-});
-
-const FiltersConfigSchema = z.object({
-  filters: z.array(z.string())
-});
-
-const PlayerConfigSchema = z.object({
-  defaultQuality: z.string(),
-  preferStreamlink: z.boolean(),
-  defaultVolume: z.number(),
-  windowMaximized: z.boolean(),
-  maxStreams: z.number(),
-  autoStart: z.boolean(),
-  screens: z.array(z.object({
-    id: z.number(),
-    width: z.number(),
-    height: z.number(),
-    x: z.number(),
-    y: z.number(),
-    primary: z.boolean()
-  }))
-});
+function loadJsonFile<T>(filename: string): T {
+  const filePath = path.join(process.cwd(), filename);
+  const fileContents = fs.readFileSync(filePath, 'utf-8');
+  return JSON.parse(fileContents) as T;
+}
 
 export interface PlayerConfig {
   defaultQuality: string;
@@ -121,62 +26,159 @@ export interface PlayerConfig {
   }>;
 }
 
-export type Config = StreamConfig;
-
-export type StreamsConfig = z.infer<typeof StreamsConfigSchema>;
-export type FiltersConfig = z.infer<typeof FiltersConfigSchema>;
-
-function loadConfig<T>(filename: string, schema: z.ZodSchema<T>): T {
-  const defaultPath = path.join(configPaths.default, filename);
-  const userPath = path.join(configPaths.local, filename);
-
-  // Load default config
-  const defaultConfig = JSON.parse(fs.readFileSync(defaultPath, 'utf-8'));
-
-  // Load and merge user config if it exists
-  let config = defaultConfig;
-  if (fs.existsSync(userPath)) {
-    const userConfig = JSON.parse(fs.readFileSync(userPath, 'utf-8'));
-    config = { ...defaultConfig, ...userConfig };
-  }
-
-  // Validate config
-  const result = schema.safeParse(config);
-  if (!result.success) {
-    throw new Error(`Invalid configuration in ${filename}: ${result.error.message}`);
-  }
-
-  return result.data;
-}
-
-function loadJsonFile<T>(filePath: string): T {
-  try {
-    const fullPath = path.join(process.cwd(), filePath);
-    const fileContents = fs.readFileSync(fullPath, 'utf8');
-    return JSON.parse(fileContents) as T;
-  } catch (error) {
-    logger.error(
-      `Failed to load JSON file: ${filePath}`,
-      'ConfigLoader',
-      error instanceof Error ? error : new Error(String(error))
-    );
-    throw error;
-  }
-}
-
 export function loadAllConfigs(): Config {
-  const config = loadJsonFile<Config>('config/config.json');
-  const favorites = loadJsonFile<FavoriteChannels>('config/favorites.json');
-  
-  // Merge favorites into config
-  config.favoriteChannels = favorites;
-  
-  return config;
+  try {
+    // Load individual config files
+    const favorites = loadJsonFile<FavoriteChannels>('config/favorites.json');
+    const streams = loadJsonFile<{ streams: StreamConfig[]; organizations: string[] }>('config/streams.json');
+    const player = loadJsonFile<PlayerSettings & { screens: StreamConfig[] }>('config/player.json');
+    const mpv = loadJsonFile<Config['mpv']>('config/mpv.json');
+    const streamlink = loadJsonFile<Config['streamlink']>('config/streamlink.json');
+    const filters = loadJsonFile<{ filters: string[] }>('config/filters.json');
+
+    // Merge into a single config object
+    const config: Config = {
+      streams: streams.streams || [],
+      organizations: streams.organizations || [],
+      favoriteChannels: favorites,
+      holodex: {
+        apiKey: process.env.HOLODEX_API_KEY || ''
+      },
+      twitch: {
+        clientId: process.env.TWITCH_CLIENT_ID || '',
+        clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
+        streamersFile: 'streamers.json'
+      },
+      player: {
+        ...player,
+        screens: player.screens || []
+      },
+      mpv,
+      streamlink,
+      filters
+    };
+
+    return config;
+  } catch (error) {
+    // If any config file is missing, use default config
+    logger.warn('Failed to load config files, using default config', 'ConfigLoader');
+    logger.debug(
+      error instanceof Error ? error.message : String(error),
+      'ConfigLoader'
+    );
+    
+    return {
+      streams: [],
+      organizations: [],
+      favoriteChannels: {
+        holodex: [],
+        twitch: [],
+        youtube: []
+      },
+      holodex: {
+        apiKey: process.env.HOLODEX_API_KEY || ''
+      },
+      twitch: {
+        clientId: process.env.TWITCH_CLIENT_ID || '',
+        clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
+        streamersFile: 'streamers.json'
+      },
+      player: {
+        preferStreamlink: false,
+        defaultQuality: 'best',
+        defaultVolume: 50,
+        windowMaximized: false,
+        maxStreams: 4,
+        autoStart: true,
+        screens: [
+          {
+            id: 1,
+            screen: 1,
+            enabled: true,
+            width: 1280,
+            height: 720,
+            x: 0,
+            y: 0,
+            volume: 50,
+            quality: 'best',
+            windowMaximized: false,
+            primary: true,
+            sources: []
+          },
+          {
+            id: 2,
+            screen: 2,
+            enabled: true,
+            width: 1280,
+            height: 720,
+            x: 1280,
+            y: 0,
+            volume: 50,
+            quality: 'best',
+            windowMaximized: false,
+            primary: false,
+            sources: []
+          }
+        ]
+      },
+      mpv: {
+        priority: 'normal',
+        'gpu-context': 'auto'
+      },
+      streamlink: {
+        path: '',
+        options: {},
+        http_header: {}
+      },
+      filters: {
+        filters: []
+      }
+    };
+  }
 }
 
 export function saveConfig(config: Config): void {
-  const configPath = path.join(process.cwd(), 'config/config.json');
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  // Save each part of the config to its respective file
+  const configPath = path.join(process.cwd(), 'config');
+
+  // Save favorites
+  fs.writeFileSync(
+    path.join(configPath, 'favorites.json'),
+    JSON.stringify(config.favoriteChannels, null, 2)
+  );
+
+  // Save streams and organizations
+  fs.writeFileSync(
+    path.join(configPath, 'streams.json'),
+    JSON.stringify({
+      streams: config.streams,
+      organizations: config.organizations
+    }, null, 2)
+  );
+
+  // Save player settings
+  fs.writeFileSync(
+    path.join(configPath, 'player.json'),
+    JSON.stringify(config.player, null, 2)
+  );
+
+  // Save MPV settings
+  fs.writeFileSync(
+    path.join(configPath, 'mpv.json'),
+    JSON.stringify(config.mpv, null, 2)
+  );
+
+  // Save streamlink settings
+  fs.writeFileSync(
+    path.join(configPath, 'streamlink.json'),
+    JSON.stringify(config.streamlink, null, 2)
+  );
+
+  // Save filters
+  fs.writeFileSync(
+    path.join(configPath, 'filters.json'),
+    JSON.stringify(config.filters, null, 2)
+  );
 }
 
 export function saveFavorites(favorites: FavoriteChannels): void {

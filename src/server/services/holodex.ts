@@ -1,22 +1,13 @@
 import { 
   HolodexApiClient,
   type VideoStatus,
-  type SortOrder,
   type Video,
   type VideosParam,
-  type VideoType,
-  type VideoRaw
+  type VideoType
 } from 'holodex.js';
-import type { StreamSource, StreamSourceConfig, StreamLimits } from '../../types/stream.js';
+import type { StreamSource, Config } from '../../types/stream.js';
 import { logger } from './logger.js';
-import { env } from '../../config/env.js';
-import type { Config } from '../../config/loader.js';
 import type { StreamService } from '../../types/stream.js';
-
-interface StreamSourceResult {
-  source: StreamSourceConfig;
-  streams: Video[];
-}
 
 interface GetStreamsOptions {
   organization?: string;

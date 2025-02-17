@@ -289,11 +289,13 @@ export class StreamManager extends EventEmitter {
                 limit
               }));
             }
-          } else if (source.type === 'youtube' && source.subtype === 'favorites') {
-            streams.push(...await this.youtubeService.getLiveStreams({
-              channels: this.favoriteChannels.youtube,
-              limit
-            }));
+          } else if (source.type === 'youtube') {
+            if (source.subtype === 'favorites') {
+              streams.push(...await this.youtubeService.getLiveStreams({
+                channels: this.favoriteChannels.youtube,
+                limit
+              }));
+            }
           }
 
           results.push(...streams.map(stream => ({

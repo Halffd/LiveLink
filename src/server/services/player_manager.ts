@@ -1,136 +1,121 @@
-import { Worker } from 'worker_threads';
 import { EventEmitter } from 'events';
-import type { 
-  StreamOptions, 
-  WorkerMessage,
-  WorkerResponse
-} from '../../types/stream.js';
-import type {
-  StreamOutput,
-  StreamError
-} from '../../types/stream_instance.js';
-import type { Config } from '../../config/loader.js';
+import type { StreamInstance } from '../../types/stream_instance.js';
+import type { Config } from '../../types/stream.js';
 import { logger } from './logger.js';
+
+interface WorkerData {
+  screen: number;
+  url: string;
+  config: Config;
+}
+
+interface WorkerMessage {
+  type: string;
+  data?: unknown;
+}
+
+interface WorkerOptions {
+  type?: 'classic' | 'module';
+}
+
+declare class Worker extends EventTarget {
+  constructor(scriptURL: string | URL, options?: WorkerOptions);
+  postMessage(message: WorkerMessage): void;
+  terminate(): void;
+  onmessage: ((this: Worker, ev: MessageEvent<WorkerMessage>) => void) | null;
+  onerror: ((this: Worker, ev: ErrorEvent) => void) | null;
+}
 
 export class PlayerManager extends EventEmitter {
   private workers: Map<number, Worker> = new Map();
+  private streams: Map<number, StreamInstance> = new Map();
+  private config: Config;
 
-  constructor(private config: Config) {
+  constructor(config: Config) {
     super();
+    this.config = config;
     this.initialize();
   }
 
-  private initialize() {
+  private initialize(): void {
     // Create workers for each enabled stream config
     for (const stream of this.config.streams) {
       if (!stream.enabled) continue;
 
-      const worker = new Worker('./dist/server/workers/player_worker.js', {
-        workerData: { streamId: stream.id }
-      });
+      try {
+        const worker = new Worker(new URL('./stream_worker.js', import.meta.url), {
+          type: 'module'
+        });
 
-      worker.on('message', (message: WorkerResponse) => {
-        this.handleWorkerMessage(stream.id, message);
-      });
+        this.workers.set(stream.screen, worker);
 
-      worker.on('error', (error) => {
+        worker.onmessage = (event: MessageEvent<WorkerMessage>) => {
+          const message = event.data;
+          switch (message.type) {
+            case 'streamInfo':
+              this.handleStreamInfo(stream.screen, message.data as StreamInstance);
+              break;
+            case 'error':
+              this.handleStreamError(stream.screen, String(message.data));
+              break;
+          }
+        };
+
+        worker.onerror = (event: ErrorEvent) => {
+          this.handleStreamError(stream.screen, event.message);
+        };
+      } catch (error) {
         logger.error(
-          `Worker ${stream.id} error`,
+          `Failed to initialize worker for screen ${stream.screen}`,
           'PlayerManager',
-          error
+          error instanceof Error ? error : new Error(String(error))
         );
-        this.emit('error', { streamId: stream.id, error });
-      });
-
-      this.workers.set(stream.id, worker);
-    }
-  }
-
-  private handleWorkerMessage(streamId: number, message: WorkerResponse) {
-    switch (message.type) {
-      case 'output':
-        this.emit('streamOutput', { 
-          streamId, 
-          screen: message.data.screen,
-          data: message.data.data,
-          type: message.data.type
-        });
-        break;
-      case 'streamError':
-        this.emit('streamError', { 
-          streamId, 
-          screen: message.data.screen,
-          error: message.data.error,
-          code: message.data.code
-        });
-        break;
-      case 'startResult':
-        this.emit(message.type, { 
-          streamId, 
-          success: !message.data.error,
-          message: message.data.message,
-          error: message.data.error
-        });
-        break;
-      case 'stopResult':
-        this.emit(message.type, { 
-          streamId, 
-          success: message.data 
-        });
-        break;
-      case 'error':
-        this.emit('error', { 
-          streamId, 
-          error: message.error 
-        });
-        break;
-    }
-  }
-
-  async startStream(streamId: number, options: Omit<StreamOptions, 'screen'>) {
-    const worker = this.workers.get(streamId);
-    if (!worker) {
-      throw new Error(`No worker found for stream ${streamId}`);
-    }
-
-    const message: WorkerMessage = {
-      type: 'start',
-      data: {
-        ...options,
-        streamId,
-        screen: streamId
       }
-    };
-
-    worker.postMessage(message);
-    return new Promise((resolve, reject) => {
-      const handler = (result: any) => {
-        if (result.streamId === streamId) {
-          this.off('startResult', handler);
-          this.off('error', errorHandler);
-          resolve(result);
-        }
-      };
-      const errorHandler = (error: any) => {
-        if (error.streamId === streamId) {
-          this.off('startResult', handler);
-          this.off('error', errorHandler);
-          reject(error);
-        }
-      };
-      this.on('startResult', handler);
-      this.on('error', errorHandler);
-    });
+    }
   }
 
-  async stopStream(streamId: number) {
-    const worker = this.workers.get(streamId);
-    if (!worker) {
-      throw new Error(`No worker found for stream ${streamId}`);
-    }
+  async startStream(screen: number, url: string): Promise<void> {
+    try {
+      const worker = this.workers.get(screen);
+      if (!worker) {
+        throw new Error(`No worker found for screen ${screen}`);
+      }
 
-    worker.postMessage({ type: 'stop', data: streamId });
-    // Return promise that resolves when stop is complete
+      const data: WorkerData = {
+        screen,
+        url,
+        config: this.config
+      };
+
+      worker.postMessage({ type: 'start', data });
+    } catch (error) {
+      logger.error(
+        `Failed to start stream on screen ${screen}`,
+        'PlayerManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      throw error;
+    }
+  }
+
+  async stopStream(screen: number): Promise<void> {
+    const worker = this.workers.get(screen);
+    if (worker) {
+      worker.postMessage({ type: 'stop' });
+      worker.terminate();
+      this.workers.delete(screen);
+      this.streams.delete(screen);
+    }
+  }
+
+  private handleStreamInfo(screen: number, data: StreamInstance): void {
+    this.streams.set(screen, data);
+    this.emit('streamUpdate', { screen, data });
+  }
+
+  private handleStreamError(screen: number, error: string): void {
+    logger.error(`Stream error on screen ${screen}: ${error}`, 'PlayerManager');
+    this.emit('streamError', { screen, error });
   }
 
   // Add methods for volume control, quality changes, etc.

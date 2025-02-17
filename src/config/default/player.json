@@ -1,26 +1,38 @@
 {
   "preferStreamlink": false,
   "defaultQuality": "best",
-  "defaultVolume": 0,
-  "windowMaximized": true,
-  "maxStreams": 2,
+  "defaultVolume": 50,
+  "windowMaximized": false,
+  "maxStreams": 4,
   "autoStart": true,
   "screens": [
     {
       "id": 1,
-      "width": 1940,
-      "height": 1100,
-      "x": 1340,
+      "screen": 1,
+      "enabled": true,
+      "width": 1280,
+      "height": 720,
+      "x": 0,
       "y": 0,
-      "primary": true
+      "volume": 50,
+      "quality": "best",
+      "windowMaximized": false,
+      "primary": true,
+      "sources": []
     },
     {
       "id": 2,
-      "width": 1366,
-      "height": 788,
-      "x": 0,
-      "y": 312,
-      "primary": false
+      "screen": 2,
+      "enabled": true,
+      "width": 1280,
+      "height": 720,
+      "x": 1280,
+      "y": 0,
+      "volume": 50,
+      "quality": "best",
+      "windowMaximized": false,
+      "primary": false,
+      "sources": []
     }
   ]
 } 

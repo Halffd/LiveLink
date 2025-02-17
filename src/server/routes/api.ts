@@ -25,6 +25,7 @@ interface UpdateConfigBody {
   favoriteChannels?: {
     holodex: string[];
     twitch: string[];
+    youtube: string[];
   };
 }
 
