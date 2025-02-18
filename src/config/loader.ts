@@ -103,7 +103,13 @@ export function loadAllConfigs(): Config {
             quality: 'best',
             windowMaximized: false,
             primary: true,
-            sources: []
+            sources: [],
+            sorting: {
+              field: 'viewerCount',
+              order: 'desc'
+            },
+            refresh: 300,
+            autoStart: true
           },
           {
             id: 2,
@@ -117,7 +123,13 @@ export function loadAllConfigs(): Config {
             quality: 'best',
             windowMaximized: false,
             primary: false,
-            sources: []
+            sources: [],
+            sorting: {
+              field: 'viewerCount',
+              order: 'desc'
+            },
+            refresh: 300,
+            autoStart: true
           }
         ]
       },

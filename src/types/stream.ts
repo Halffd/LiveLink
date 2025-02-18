@@ -129,6 +129,7 @@ export interface StreamConfig {
   height: number;
   x: number;
   y: number;
+  primary: boolean;
 }
 
 export interface Config {
