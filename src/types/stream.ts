@@ -105,8 +105,23 @@ export interface Stream extends StreamSource {
 
 export interface StreamConfig {
   id: number;
-  screen: number;
   enabled: boolean;
+  screen: number;
+  sources: Array<{
+    type: string;
+    subtype?: string;
+    name?: string;
+    enabled: boolean;
+    limit: number;
+    priority: number;
+    tags?: string[];
+  }>;
+  sorting: {
+    field: string;
+    order: 'asc' | 'desc';
+  };
+  refresh: number;
+  autoStart: boolean;
   quality: string;
   volume: number;
   windowMaximized: boolean;
@@ -114,8 +129,6 @@ export interface StreamConfig {
   height: number;
   x: number;
   y: number;
-  primary: boolean;
-  sources: StreamSourceConfig[];
 }
 
 export interface Config {
