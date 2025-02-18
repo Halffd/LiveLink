@@ -291,8 +291,8 @@ export class PlayerService {
     // Add all mpv.json config settings
     if (this.config.mpv) {
       Object.entries(this.config.mpv).forEach(([key, value]) => {
-        // Skip null values
-        if (value === null) return;
+        // Skip null values and priority (handled by nice)
+        if (value === null || key === 'priority') return;
         // Handle boolean values
         if (typeof value === 'boolean') {
           args.push(value ? `--${key}` : `--no-${key}`);
@@ -444,6 +444,7 @@ export class PlayerService {
       }
 
       logger.debug(`Starting ${command} with args: ${args.join(' ')}`, 'PlayerService');
+      logger.info(command);
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
       if (useStreamlink) {
         logger.info(`Logging Streamlink output to ${streamlinkLogPath}`, 'PlayerService');

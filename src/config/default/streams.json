@@ -42,15 +42,7 @@
 				"order": "desc"
 			},
 			"refresh": 300,
-			"autoStart": true,
-			"quality": "best",
-			"volume": 100,
-			"windowMaximized": true,
-			"primary": true,
-			"width": 1920,
-			"height": 1080,
-			"x": 1366,
-			"y": 0
+			"autoStart": true
 		},
 		{
 			"id": 2,
@@ -77,17 +69,10 @@
 				"order": "desc"
 			},
 			"refresh": 300,
-			"autoStart": true,
-			"quality": "best",
-			"volume": 0,
-			"windowMaximized": true,
-			"primary": false,
-			"width": 1366,
-			"height": 768,
-			"x": 0,
-			"y": 0
+			"autoStart": true
 		}
 	],
+	"organizations": [],
 	"twitch": {
 		"streamersFile": "config/streamers.txt"
 	}

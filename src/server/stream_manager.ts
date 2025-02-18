@@ -244,16 +244,16 @@ export class StreamManager extends EventEmitter {
   async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
     try {
       const results: Array<StreamSource & { screen?: number; sourceName?: string }> = [];
-      const screenConfigs = this.config.player.screens;
+      const streamConfigs = this.config.streams;
 
-      for (const screenConfig of screenConfigs) {
-        const screenNumber = screenConfig.screen;
-        if (!screenConfig.enabled) {
+      for (const streamConfig of streamConfigs) {
+        const screenNumber = streamConfig.screen;
+        if (!streamConfig.enabled) {
           logger.debug('Screen %s is disabled, skipping', String(screenNumber));
           continue;
         }
 
-        const sortedSources = [...screenConfig.sources]
+        const sortedSources = [...streamConfig.sources]
           .filter(source => source.enabled)
           .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
@@ -365,7 +365,7 @@ export class StreamManager extends EventEmitter {
       // First, group streams by their assigned screen
       streams.forEach(stream => {
         if (!stream.screen) return;
-        
+        logger.debug(`Stream ${stream.url} is on screen ${stream.screen}`);
         const screenStreams = streamsByScreen.get(stream.screen) || [];
         screenStreams.push(stream);
         streamsByScreen.set(stream.screen, screenStreams);

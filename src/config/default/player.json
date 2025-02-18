@@ -10,29 +10,27 @@
       "id": 1,
       "screen": 1,
       "enabled": true,
-      "width": 1280,
-      "height": 720,
-      "x": 0,
+      "width": 1920,
+      "height": 1080,
+      "x": 1366,
       "y": 0,
-      "volume": 50,
+      "volume": 100,
       "quality": "best",
-      "windowMaximized": false,
-      "primary": true,
-      "sources": []
+      "windowMaximized": true,
+      "primary": true
     },
     {
       "id": 2,
       "screen": 2,
       "enabled": true,
-      "width": 1280,
-      "height": 720,
-      "x": 1280,
+      "width": 1366,
+      "height": 768,
+      "x": 0,
       "y": 0,
-      "volume": 50,
+      "volume": 0,
       "quality": "best",
-      "windowMaximized": false,
-      "primary": false,
-      "sources": []
+      "windowMaximized": true,
+      "primary": false
     }
   ]
 } 
