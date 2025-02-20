@@ -1,2 +1,7 @@
-import { i18n } from '$lib/i18n';
-export const reroute = i18n.reroute();
+import { locale } from '$lib/i18n/index.js';
+
+export const prerender = true;
+export const trailingSlash = 'always';
+
+// Initialize with default locale
+locale.set('en');

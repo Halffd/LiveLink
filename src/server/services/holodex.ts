@@ -57,7 +57,8 @@ export class HolodexService implements StreamService {
           this.client!.getLiveVideos({
             channel_id: channelId,
             status: 'live' as VideoStatus,
-            type: 'stream' as VideoType
+            type: 'stream' as VideoType,
+            sort: 'live_viewers'
           }).catch(error => {
             logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
             logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');

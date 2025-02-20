@@ -50,6 +50,21 @@
 			"screen": 2,
 			"sources": [
 				{
+					"type": "holodex",
+					"subtype": "favorites",
+					"enabled": true,
+					"limit": 25,
+					"priority": 1
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Hololive",
+					"enabled": true,
+					"limit": 25,
+					"priority": 2
+				},
+				{
 					"type": "twitch",
 					"subtype": "favorites",
 					"enabled": true,

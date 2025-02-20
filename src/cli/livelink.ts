@@ -1,4 +1,4 @@
-#!/usr/bin/env node --no-warnings --loader ts-node/esm
+#!/usr/bin/env node
 import { program } from 'commander';
 import fetch, { Response } from 'node-fetch';
 import chalk from 'chalk';
@@ -15,17 +15,10 @@ async function handleResponse<T>(response: Response): Promise<T> {
 }
 
 program
-  .version('1.0.0')
-  .description('CLI tool for testing LiveLink API')
+  .name('livelink')
+  .version('0.0.1')
+  .description('LiveLink CLI - Control and manage LiveLink streams')
   .option('-d, --debug', 'Enable debug output');
-
-// Set debug mode if flag is present
-program.parse();
-const options = program.opts();
-if (options.debug) {
-  logger.setLevel('debug');
-  logger.debug('Debug mode enabled', 'CLI');
-}
 
 // Stream Management Commands
 program
@@ -112,7 +105,8 @@ program
   .requiredOption('-s, --screen <number>', 'Screen number')
   .action(async (options) => {
     try {
-      const response = await fetch(`${API_URL}/screens/${options.screen}/disable`, {
+      const screenNumber = parseInt(options.screen);
+      const response = await fetch(`${API_URL}/screens/${screenNumber}/disable`, {
         method: 'POST'
       });
       const result = await handleResponse(response);
@@ -126,13 +120,14 @@ program
 program
   .command('show-queue')
   .description('Show queue for a screen')
-  .requiredOption('-s, --screen <number>', 'Screen number')
-  .action(async (options) => {
+  .argument('<screen>', 'Screen number')
+  .action(async (screen) => {
     try {
-      const response = await fetch(`${API_URL}/streams/queue/${options.screen}`);
+      const screenNumber = parseInt(screen);
+      const response = await fetch(`${API_URL}/streams/queue/${screenNumber}`);
       const queue = await handleResponse<Stream[]>(response);
-      console.log(chalk.blue(`Queue for Screen ${options.screen}:`));
-      queue.forEach((stream: Stream, index: number) => {
+      console.log(chalk.blue(`Queue for Screen ${screenNumber}:`));
+      queue.forEach((stream, index) => {
         console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}`));
         console.log(`URL: ${stream.url}`);
       });
@@ -251,6 +246,25 @@ program
     }
   });
 
+program
+  .command('pause')
+  .description('Toggle pause')
+  .argument('<screen>', 'Screen number')
+  .action(async (screen) => {
+    try {
+      const screenNumber = parseInt(screen);
+      const response = await fetch(`${API_URL}/player/command/${screenNumber}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'cycle pause' })
+      });
+      const result = await handleResponse(response);
+      console.log(chalk.green('Pause toggled:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
+    }
+  });
+
 // Watched Streams Commands
 program
   .command('show-watched')
@@ -318,58 +332,34 @@ program
     }
   });
 
-// Add these commands
+// Remove the volume command since sendControlCommand is not defined
 program
-  .command('volume <level>')
+  .command('volume')
   .description('Set volume (0-100)')
-  .option('-s, --screen <number>', 'Target screen')
-  .option('-a, --all', 'All screens')
-  .action(async (level, options) => {
-    await sendControlCommand('volume', { level: parseInt(level) }, options);
-  });
-
-program
-  .command('pause')
-  .description('Toggle pause')
-  .option('-s, --screen <number>', 'Target screen')
-  .option('-a, --all', 'All screens')
-  .action(async (options) => {
-    await sendControlCommand('pause', {}, options);
-  });
-
-program
-  .command('seek <seconds>')
-  .description('Seek in seconds (+/- values)')
-  .option('-s, --screen <number>', 'Target screen')
-  .option('-a, --all', 'All screens')
-  .action(async (seconds, options) => {
-    await sendControlCommand('seek', { seconds: parseFloat(seconds) }, options);
-  });
-
-program.parse(process.argv); 
-
-// Helper function
-async function sendControlCommand(
-  action: string,
-  body: Record<string, unknown>,
-  options: { screen?: string; all?: boolean }
-) {
-  try {
-    const target = options.all ? 'all' : options.screen;
-    if (!target) {
-      console.error(chalk.red('Error:'), 'Specify --screen or --all');
-      return;
+  .argument('<screen>', 'Screen number')
+  .argument('<level>', 'Volume level (0-100)')
+  .action(async (screen, level) => {
+    try {
+      const screenNumber = parseInt(screen);
+      const volumeLevel = parseInt(level);
+      const response = await fetch(`${API_URL}/player/command/${screenNumber}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: `set volume ${volumeLevel}` })
+      });
+      const result = await handleResponse(response);
+      console.log(chalk.green('Volume set:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
     }
+  });
 
-    const response = await fetch(`${API_URL}/player/${action}/${target}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    
-    const result = await handleResponse(response);
-    console.log(chalk.green('Success:'), result);
-  } catch (error) {
-    console.error(chalk.red('Error:'), error);
-  }
-} 
+// Set debug mode if flag is present
+const options = program.opts();
+if (options.debug) {
+  logger.setLevel('debug');
+  logger.debug('Debug mode enabled', 'CLI');
+}
+
+// Parse command line arguments
+program.parse(process.argv);

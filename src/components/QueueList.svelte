@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { StreamSource } from '$types/stream';
+  import type { StreamSource } from '../types/stream.js';
   import { streamQueues } from '$lib/stores';
 
   let { screen, queue } = $props<{
@@ -73,9 +73,10 @@
         <div
           class="bg-gray-700 p-3 rounded-lg cursor-move hover:bg-gray-600 transition-colors"
           draggable="true"
-          on:dragstart={(e) => handleDragStart(e, i)}
-          on:dragover={(e) => handleDragOver(e, i)}
-          on:drop={(e) => handleDrop(e, i)}
+          role="listitem"
+          ondragstart={(e) => handleDragStart(e, i)}
+          ondragover={(e) => handleDragOver(e, i)}
+          ondrop={(e) => handleDrop(e, i)}
         >
           <div class="flex justify-between items-start">
             <div class="space-y-1">
@@ -100,7 +101,8 @@
               {/if}
               <button
                 class="p-1.5 rounded hover:bg-gray-500 transition-colors"
-                on:click={() => {
+                aria-label="Remove from queue"
+                onclick={() => {
                   streamQueues.update(queues => {
                     const currentQueue = [...(queues.get(screen) || [])];
                     currentQueue.splice(i, 1);

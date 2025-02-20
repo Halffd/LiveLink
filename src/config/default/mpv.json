@@ -1,8 +1,8 @@
 {
   "priority": "normal",
   "gpu-context": "auto",
-  "vo": "gpu",
-  "hwdec": "auto",
+  "vo": "x11",
+  "hwdec": "auto-safe",
 
   "cache": true,
   "cache-secs": 120,

@@ -1,20 +1,31 @@
 <script lang="ts">
-	import type { AvailableLanguageTag } from '$lib/paraglide/runtime';
-	import { i18n } from '$lib/i18n';
-	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
-	import * as m from '$lib/paraglide/messages.js';
-
-	function switchToLanguage(newLanguage: AvailableLanguageTag) {
-		const canonicalPath = i18n.route(page.url.pathname);
-		const localisedPath = i18n.resolveRoute(canonicalPath, newLanguage);
-		goto(localisedPath);
-	}
+	import { locale, t } from '$lib/i18n';
 </script>
 
-<h1>{m.hello_world({ name: 'SvelteKit User' })}</h1>
-<div>
-	<button onclick={() => switchToLanguage('en')}>en</button>
-	<button onclick={() => switchToLanguage('pt-br')}>pt-br</button>
-	<button onclick={() => switchToLanguage('ja')}>ja</button>
+<div class="container mx-auto px-4 py-8">
+	<h1 class="text-2xl font-bold mb-4">{$t.welcome}</h1>
+	
+	<div class="space-y-4">
+		<div class="flex space-x-4">
+			<button 
+				class="px-4 py-2 bg-blue-500 text-white rounded"
+				onclick={() => locale.set('en')}
+			>
+				English
+			</button>
+			<button 
+				class="px-4 py-2 bg-blue-500 text-white rounded"
+				onclick={() => locale.set('ja')}
+			>
+				日本語
+			</button>
+		</div>
+
+		<div class="space-y-2">
+			<p>{$t.streams}</p>
+			<p>{$t.settings}</p>
+			<p>{$t.queue}</p>
+			<p>{$t.connectTwitch}</p>
+		</div>
+	</div>
 </div>

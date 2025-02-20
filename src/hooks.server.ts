@@ -1,4 +1,12 @@
 import type { Handle } from '@sveltejs/kit';
-import { i18n } from '$lib/i18n';
-const handleParaglide: Handle = i18n.handle();
-export const handle: Handle = handleParaglide;
+import { locale } from '$lib/i18n/index.js';
+import type { Locale } from '$lib/i18n/index.js';
+
+export const handle: Handle = async ({ event, resolve }) => {
+  // Get locale from URL or default to 'en'
+  const lang = event.url.pathname.split('/')[1];
+  const validLocale = (lang === 'en' || lang === 'ja') ? lang as Locale : 'en';
+  locale.set(validLocale);
+
+  return resolve(event);
+};

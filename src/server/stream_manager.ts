@@ -1,6 +1,6 @@
 import type { 
   StreamSource, 
-  StreamOptions,
+  StreamOptions, 
   PlayerSettings,
   Config,
   StreamConfig,
@@ -135,9 +135,9 @@ export class StreamManager extends EventEmitter {
       const screenConfig = this.config.player.screens.find(s => s.id === screen);
       if (!screenConfig) {
         logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
-        return;
-      }
-
+      return;
+    }
+    
       logger.info(`Attempting to fetch new streams for screen ${screen}`, 'StreamManager');
       // Emit event to trigger stream manager to fetch new streams
       this.errorCallback?.({
@@ -212,8 +212,8 @@ export class StreamManager extends EventEmitter {
   /**
    * Stops a stream on the specified screen
    */
-  async stopStream(screen: number): Promise<boolean> {
-    return this.playerService.stopStream(screen);
+  async stopStream(screen: number, isManualStop: boolean = true): Promise<boolean> {
+    return this.playerService.stopStream(screen, isManualStop);
   }
 
   /**
@@ -245,7 +245,7 @@ export class StreamManager extends EventEmitter {
     try {
       const results: Array<StreamSource & { screen?: number; sourceName?: string }> = [];
       const streamConfigs = this.config.streams;
-
+      
       for (const streamConfig of streamConfigs) {
         const screenNumber = streamConfig.screen;
         if (!streamConfig.enabled) {
@@ -253,58 +253,77 @@ export class StreamManager extends EventEmitter {
           continue;
         }
 
+        // Sort sources by priority first
         const sortedSources = [...streamConfig.sources]
           .filter(source => source.enabled)
           .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
-        const sourceList = sortedSources
-          .map(s => `${s.type}${s.subtype ? `:${s.subtype}` : ''} (priority: ${s.priority})`)
-          .join(', ');
-        logger.debug('Enabled sources for screen %s: %s', String(screenNumber), sourceList);
+        logger.debug(
+          'Sources for screen %s: %s',
+          String(screenNumber),
+          sortedSources.map(s => `${s.type}:${s.subtype || 'other'} (${s.priority || 999})`).join(', ')
+        );
 
         for (const source of sortedSources) {
           const limit = source.limit || 25;
-          const streams: StreamSource[] = [];
+          let streams: StreamSource[] = [];
 
-          if (source.type === 'holodex') {
-            if (source.subtype === 'favorites') {
-              logger.debug('Fetching %s favorite Holodex streams from %s channels', 
-                String(limit), String(this.favoriteChannels.holodex.length));
-              streams.push(...await this.holodexService.getLiveStreams({
-                channels: this.favoriteChannels.holodex,
-                limit: limit * 2
-              }));
-              logger.debug('Fetched %s favorite Holodex streams for screen %s', 
-                String(streams.length), String(screenNumber));
-            } else if (source.subtype === 'organization' && source.name) {
-              streams.push(...await this.holodexService.getLiveStreams({
-                organization: source.name,
-                limit
-              }));
+          try {
+            if (source.type === 'holodex') {
+              if (source.subtype === 'favorites') {
+                streams = await this.holodexService.getLiveStreams({
+                  channels: this.favoriteChannels.holodex,
+                  limit: limit * 2
+                });
+                logger.debug(
+                  'Fetched %s favorite Holodex streams for screen %s',
+                  String(streams.length),
+                  String(screenNumber)
+                );
+              } else if (source.subtype === 'organization' && source.name) {
+                streams = await this.holodexService.getLiveStreams({
+                  organization: source.name,
+                  limit
+                });
+              }
+            } else if (source.type === 'twitch') {
+              if (source.subtype === 'favorites') {
+                streams = await this.twitchService.getStreams({
+                  channels: this.favoriteChannels.twitch,
+                  limit
+                });
+              }
+            } else if (source.type === 'youtube') {
+              if (source.subtype === 'favorites') {
+                streams = await this.youtubeService.getLiveStreams({
+                  channels: this.favoriteChannels.youtube,
+                  limit
+                });
+              }
             }
-          } else if (source.type === 'twitch') {
-            if (source.subtype === 'favorites') {
-              streams.push(...await this.twitchService.getStreams({
-                channels: this.favoriteChannels.twitch,
-                limit
-              }));
-            }
-          } else if (source.type === 'youtube') {
-            if (source.subtype === 'favorites') {
-              streams.push(...await this.youtubeService.getLiveStreams({
-                channels: this.favoriteChannels.youtube,
-                limit
-              }));
-            }
+
+            // Add source metadata to each stream
+            const streamsWithMetadata = streams.map(stream => ({
+              ...stream,
+              screen: screenNumber,
+              sourceName: `${source.type}:${source.subtype || 'other'}`,
+              priority: source.priority || 999
+            }));
+
+            results.push(...streamsWithMetadata);
+          } catch (error) {
+            logger.error(
+              `Failed to fetch streams for ${source.type}:${source.subtype || 'other'}`,
+              'StreamManager',
+              error instanceof Error ? error : new Error(String(error))
+            );
+            continue;
           }
-
-          results.push(...streams.map(stream => ({
-            ...stream,
-            screen: screenNumber,
-            sourceName: `${source.type}:${source.subtype || 'other'}`
-          })));
         }
       }
+
+      // Sort results by priority
+      results.sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
       return results;
     } catch (error) {
@@ -313,13 +332,13 @@ export class StreamManager extends EventEmitter {
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
-
+      
       if (retryCount < 3) {
         logger.info(`Retrying getLiveStreams (attempt ${retryCount + 1})`, 'StreamManager');
         await new Promise(resolve => setTimeout(resolve, this.RETRY_INTERVAL));
         return this.getLiveStreams(retryCount + 1);
       }
-
+      
       return [];
     }
   }
@@ -347,7 +366,7 @@ export class StreamManager extends EventEmitter {
 
   /**
    * Gets streams from user's followed channels
-   */
+   */   
   async getFollowedStreams(userId: string): Promise<StreamSource[]> {
     return this.twitchService.getFollowedStreams(userId);
   }
@@ -365,7 +384,7 @@ export class StreamManager extends EventEmitter {
       // First, group streams by their assigned screen
       streams.forEach(stream => {
         if (!stream.screen) return;
-        logger.debug(`Stream ${stream.url} is on screen ${stream.screen}`);
+        logger.debug(`Stream ${stream.url} is on screen ${stream.screen} with priority ${stream.priority || 999}`);
         const screenStreams = streamsByScreen.get(stream.screen) || [];
         screenStreams.push(stream);
         streamsByScreen.set(stream.screen, screenStreams);
@@ -376,40 +395,8 @@ export class StreamManager extends EventEmitter {
         const screenConfig = this.config.player.screens.find(s => s.id === screen);
         if (!screenConfig || !screenConfig.enabled) continue;
 
-        // Group streams by priority
-        const streamsByPriority = new Map<number, StreamSource[]>();
-        
-        // First, group streams by priority
-        allScreenStreams.forEach(stream => {
-          const priority = stream.priority ?? 999;
-          if (!streamsByPriority.has(priority)) {
-            streamsByPriority.set(priority, []);
-          }
-          streamsByPriority.get(priority)!.push(stream);
-        });
-
-        // Sort each priority group separately
-        const sortedStreams: StreamSource[] = [];
-        
-        // Process priorities in ascending order (lower number = higher priority)
-        Array.from(streamsByPriority.keys())
-          .sort((a, b) => a - b)
-          .forEach(priority => {
-            const streamsInPriority = streamsByPriority.get(priority)!;
-            
-            // Separate streams by source type
-            const favoriteStreams = streamsInPriority.filter(s => s.sourceName?.includes('favorites'));
-            const nonFavoriteStreams = streamsInPriority.filter(s => !s.sourceName?.includes('favorites'));
-            
-            // Sort non-favorites by viewer count (descending)
-            nonFavoriteStreams.sort((a, b) => (b.viewerCount ?? 0) - (a.viewerCount ?? 0));
-            
-            // Add favorites first (in original order), then sorted non-favorites
-            sortedStreams.push(...favoriteStreams, ...nonFavoriteStreams);
-          });
-
-        // Get unwatched streams
-        const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
+        // Get unwatched streams while maintaining priority order
+        const unwatchedStreams = queueService.filterUnwatchedStreams(allScreenStreams);
         
         if (unwatchedStreams.length === 0) {
           logger.info(`No unwatched streams for screen ${screen}`, 'StreamManager');
@@ -419,8 +406,7 @@ export class StreamManager extends EventEmitter {
         // Start first stream
         const [firstStream, ...remainingStreams] = unwatchedStreams;
         if (firstStream) {
-          logger.info(`Starting stream on screen ${screen}: ${firstStream.url} (${firstStream.platform})`);
-          logger.info(`Stream details: Priority ${firstStream.priority}, Source: ${firstStream.sourceName}`, 'StreamManager');
+          logger.info(`Starting stream on screen ${screen}: ${firstStream.url} (${firstStream.platform}) with priority ${firstStream.priority || 999}`);
           
           await this.startStream({
             url: firstStream.url,
@@ -430,12 +416,12 @@ export class StreamManager extends EventEmitter {
             windowMaximized: screenConfig.windowMaximized
           });
 
-          // Queue remaining streams
+          // Queue remaining streams (already sorted by priority)
           if (remainingStreams.length > 0) {
             queueService.setQueue(screen, remainingStreams);
             logger.info(
               `Queued ${remainingStreams.length} streams for screen ${screen}. ` +
-              `First in queue: ${remainingStreams[0].sourceName} (Priority: ${remainingStreams[0].priority})`,
+              `First in queue: ${remainingStreams[0].url} (Priority: ${remainingStreams[0].priority || 999})`,
               'StreamManager'
             );
           }
@@ -458,7 +444,7 @@ export class StreamManager extends EventEmitter {
     }
     
     // Stop any active streams
-    await this.stopStream(screen);
+    await this.stopStream(screen, true);
     
     // Disable the screen in config
     streamConfig.enabled = false;
@@ -483,13 +469,13 @@ export class StreamManager extends EventEmitter {
   async restartStreams(screen?: number): Promise<void> {
     if (screen) {
       // Restart specific screen
-      await this.stopStream(screen);
+      await this.stopStream(screen, false);
       await this.handleEmptyQueue(screen);
     } else {
       // Restart all screens
       const activeScreens = Array.from(this.streams.keys());
       for (const screenId of activeScreens) {
-        await this.stopStream(screenId);
+        await this.stopStream(screenId, false);
         await this.handleEmptyQueue(screenId);
       }
     }

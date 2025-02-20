@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
+import { spawn, type SpawnOptions } from 'child_process';
 import { EventEmitter } from 'events';
 import type { 
   StreamOptions
@@ -59,6 +59,7 @@ export class PlayerService {
   private fifoPaths: Map<number, string> = new Map();
   private disabledScreens: Set<number> = new Set();
   private screenErrors: Map<number, { count: number; lastError: string }> = new Map();
+  private manuallyClosedScreens: Set<number> = new Set();
 
   constructor() {
     this.events = new EventEmitter();
@@ -262,6 +263,17 @@ export class PlayerService {
   }
 
   private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
+    const args = [
+        '--no-terminal',
+        '--script=' + path.join(this.BASE_LOG_DIR, '..', 'scripts', 'livelink.lua'),
+        '--script-opts=screen=' + options.screen,
+        '--input-ipc-server=' + path.join('/tmp', `mpv-ipc-${options.screen}`),
+        '--log-file=' + path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${new Date().toISOString()}.log`),
+        '--force-window=yes',
+        '--keep-open=yes',
+        '--idle=yes'
+    ];
+
     // Get screen config from player config
     const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
     if (!screenConfig) {
@@ -269,24 +281,11 @@ export class PlayerService {
       throw new Error(`Invalid screen configuration for screen ${options.screen}`);
     }
 
-    const ipcPath = `/tmp/mpv-ipc-${options.screen}`;
-    const inputFifoPath = `/tmp/mpv-input-${options.screen}`;
-    this.ipcPaths.set(options.screen, ipcPath);
-    this.fifoPaths.set(options.screen, inputFifoPath);
-
-    const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
-
-    // Base arguments that override mpv.json settings
-    const args = [
-      `--title=LiveLink-${options.screen}`,
-      `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-      `--volume=${this.config.player.defaultVolume}`,
-      `--input-ipc-server=${ipcPath}`,
-      `--log-file=${mpvLogPath}`,
-      `--screen=${options.screen}`, // Add screen ID for the Lua script
-      `--scripts=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`, // Add Lua script
-      this.config.player.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
-    ];
+    // Add geometry and window settings
+    args.push(`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`);
+    if (screenConfig.windowMaximized) {
+        args.push('--window-maximized=yes');
+    }
 
     // Add all mpv.json config settings
     if (this.config.mpv) {
@@ -343,108 +342,80 @@ export class PlayerService {
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
     try {
-      // Clear inactive timer when starting a stream
-      this.clearInactiveTimer(options.screen);
-
-      // Validate screen configuration
+      // Clear the manually closed flag when starting a new stream
+      this.manuallyClosedScreens.delete(options.screen);
+      
+      // Get screen config from player config
       const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
       if (!screenConfig) {
         logger.error(`No screen config found for screen ${options.screen}`, 'PlayerService');
-        return {
-          screen: options.screen,
-          error: `Invalid screen configuration for screen ${options.screen}`
-        };
+        throw new Error(`Invalid screen configuration for screen ${options.screen}`);
       }
 
-      // Get queue for this screen
-      const queue = queueService.getQueue(options.screen);
-      const urls = [options.url, ...queue.map(s => s.url)];
-
-      // If no URLs are provided, get next unwatched stream from queue
-      if (urls.length === 0) {
-        logger.info(`No unwatched streams left for screen ${options.screen}, will retry in 10s`, 'PlayerService');
-        setTimeout(async () => {
-          await this.handleEmptyQueue(options.screen);
-        }, this.RETRY_INTERVAL);
-        return {
-          screen: options.screen,
-          message: 'No unwatched streams available, will retry'
-        };
-      }
-
-      // Stop any existing stream on this screen
+      // Stop existing stream if any
       await this.stopStream(options.screen);
 
-      logger.debug(`Screen config: ${JSON.stringify(screenConfig)}`, 'PlayerService');
+      // Get all URLs from the queue for this screen
+      const queue = queueService.getQueue(options.screen);
+      const allUrls = [options.url, ...queue.map(source => source.url)];
 
-      // Determine if we should use streamlink (only for Twitch now)
-      const isTwitchStream = options.url.includes('twitch.tv');
-      const useStreamlink = isTwitchStream && this.config.player.preferStreamlink;
+      // Create log paths
+      const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
+      const streamlinkLogPath = path.join(this.BASE_LOG_DIR, 'streamlink', `streamlink-screen${options.screen}-${Date.now()}.log`);
 
-      let command = 'mpv';
+      // Determine whether to use streamlink
+      const useStreamlink = this.config.player.preferStreamlink;
+      const command = useStreamlink ? 'streamlink' : 'mpv';
+
       let args: string[] = [];
-
-      // Setup log file paths with absolute paths
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${timestamp}.log`);
-      const streamlinkLogPath = path.join(this.BASE_LOG_DIR, 'streamlink', `streamlink-screen${options.screen}-${timestamp}.log`);
+      const scriptsPath = path.join(this.BASE_LOG_DIR, '..', 'scripts', 'livelink.lua');
 
       if (useStreamlink) {
-        command = 'streamlink';
-        const mpvArgs = this.getMpvArgs(options);
-        // Streamlink base arguments
-        args = [
-          urls[0], // Only first URL for streamlink
-          options.quality || this.config.player.defaultQuality,
-          '--player', 'mpv',
-          '--player-args',
-          [
-            ...mpvArgs,
-            ...this.getStreamlinkArgs()
-          ].join(' ')
-        ];
-
-        // Streamlink-specific options for Twitch
+        // Streamlink configuration
+        args = this.getStreamlinkArgs();
         args.push(
-          '--stream-sorting-excludes', '>1080p,<480p',
-          '--twitch-disable-hosting',
-          '--twitch-disable-ads',
-          '--retry-open', '3',
-          '--retry-streams', '5',
-          '--stream-timeout', '120',
-          '--player-no-close',
-          '--player-continuous-http',
-          '--stream-segment-threads', '2',
-          '--hls-playlist-reload-time', '1',
-          '--hls-live-edge', '3',
-          '--ringbuffer-size', '32M',
-          '--loglevel', 'debug',
-          '--logfile', streamlinkLogPath,
-          '--stream-segment-attempts', '5',
-          '--stream-segment-timeout', '10',
-          '--retry-max', '5',
-          '--http-header', 
-          'User-Agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          '--http-header',
-          'Accept-Language=en-US,en;q=0.9'
+          '--player',
+          'mpv',
+          '--player-args',
+          `--title=LiveLink-${options.screen} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --volume=${screenConfig.volume} --input-ipc-server=/tmp/mpv-ipc-${options.screen} --log-file=${mpvLogPath} --screen=${options.screen} --scripts=${scriptsPath} ${screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'}`
         );
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
 
-        // Add all URLs to playlist
-        args.push(...urls);
+        // Create a temporary m3u8 playlist file
+        const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}-${Date.now()}.m3u8`);
+        await fs.promises.mkdir(path.dirname(playlistPath), { recursive: true });
+        
+        // Write m3u8 playlist file with proper format '#EXTM3U\n' + 
+        const m3u8Content = allUrls.map(url => `${url}`).join('\n');
+        await fs.promises.writeFile(playlistPath, m3u8Content, 'utf8');
 
-        // Add additional MPV-specific arguments
+        // Add player options and playlist file as the first argument
+        args.unshift(playlistPath);
         args.push(
           '--script-opts=ytdl_hook-ytdl_path=yt-dlp',
           '--keep-open=yes',
-          '--force-window=yes'
+          '--force-window=yes',
+          '--idle=yes',
+          '--loop-playlist=inf',
+          '--playlist-start=0'
         );
+
+        // Clean up old playlist files
+        const playlistDir = path.join(this.BASE_LOG_DIR, 'playlists');
+        fs.readdir(playlistDir, (err, files) => {
+          if (err) return;
+          const oldPlaylists = files.filter(f => f.startsWith(`playlist-screen${options.screen}-`));
+          oldPlaylists.forEach(file => {
+            if (file !== path.basename(playlistPath)) {
+              fs.unlink(path.join(playlistDir, file), () => {});
+            }
+          });
+        });
       }
 
-      logger.debug(`Starting ${command} with args: ${args.join(' ')}`, 'PlayerService');
-      logger.info(command);
+      logger.info(`Starting ${command} with playlist of ${allUrls.length} streams`, 'PlayerService');
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
       if (useStreamlink) {
         logger.info(`Logging Streamlink output to ${streamlinkLogPath}`, 'PlayerService');
@@ -454,12 +425,11 @@ export class PlayerService {
         nice: this.getProcessPriority()
       };
 
-      logger.info(`Starting ${command} ${args.join(' ')}`, 'PlayerService');
-      const process = spawn(command, args, spawnOptions) as unknown as ChildProcess;
+      const playerProcess = spawn(command, args, spawnOptions);
 
       // Handle process output
-      if (process.stdout) {
-        process.stdout.on('data', (data: Buffer) => {
+      if (playerProcess.stdout) {
+        playerProcess.stdout.on('data', (data: Buffer) => {
           const output = data.toString().trim();
           if (output) {
             logger.debug(`[${command}-${options.screen}-stdout] ${output}`, 'PlayerService');
@@ -472,8 +442,8 @@ export class PlayerService {
         });
       }
 
-      if (process.stderr) {
-        process.stderr.on('data', (data: Buffer) => {
+      if (playerProcess.stderr) {
+        playerProcess.stderr.on('data', (data: Buffer) => {
           const output = data.toString().trim();
           if (output) {
             logger.debug(`[${command}-${options.screen}-stderr] ${output}`, 'PlayerService');
@@ -485,67 +455,82 @@ export class PlayerService {
         });
       }
 
-      process.on('error', (error: Error) => {
-        logger.error(`[${command}-${options.screen}-error] ${error.message}`, 'PlayerService', error);
-        this.clearStreamRefresh(options.screen);
-        this.errorCallback?.({
-          screen: options.screen,
-          error: error.message
-        });
-      });
-
       // Handle process exit
-      process.on('exit', (code: number | null) => {
-        logger.info(`[${command}-${options.screen}-exit] Process exited with code ${code}`, 'PlayerService');
-        this.clearStreamRefresh(options.screen);
-        this.setupInactiveTimer(options.screen);
+      playerProcess.on('exit', (code: number | null) => {
+        logger.info(`Process for screen ${options.screen} exited with code ${code}`, 'PlayerService');
+        
+        // Only restart if the process crashed (non-zero exit code)
+        if (code !== 0 && code !== null) {
+          logger.error(`Stream process crashed with code ${code}, restarting...`, 'PlayerService');
+          const retryCount = this.streamRetries.get(options.screen) || 0;
+          
+          if (retryCount < this.MAX_RETRIES) {
+            this.streamRetries.set(options.screen, retryCount + 1);
+            setTimeout(() => {
+              this.startStream(options).catch(error => {
+                logger.error(
+                  `Failed to restart stream on screen ${options.screen}`,
+                  'PlayerService',
+                  error instanceof Error ? error : new Error(String(error))
+                );
+              });
+            }, this.RETRY_INTERVAL);
+          } else {
+            logger.error(`Max retries (${this.MAX_RETRIES}) reached for screen ${options.screen}`, 'PlayerService');
+            this.streamRetries.delete(options.screen);
+          }
+        }
+        
         this.streams.delete(options.screen);
       });
 
+      // Store stream information
       const instance: StreamInstance = {
         id: options.screen,
         screen: options.screen,
+        process: playerProcess,
         url: options.url,
         quality: options.quality || 'best',
-        process: process,
         platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
         status: 'playing',
-        volume: this.config.player.defaultVolume,
-        startTime: Date.now(),
-        error: undefined
+        volume: screenConfig.volume || this.config.player.defaultVolume
       };
 
       this.streams.set(options.screen, instance);
-      
+
       // Set up stream refresh timer
       this.setupStreamRefresh(options.screen, options);
-      
-      logger.info(`Stream started on screen ${options.screen}`, 'PlayerService');
-      
+
+      // Set up inactive timer
+      this.setupInactiveTimer(options.screen);
+
+      // Store stream start time
+      this.streamStartTimes.set(options.screen, Date.now());
+
       return {
         screen: options.screen,
         message: `Stream started on screen ${options.screen}`
       };
-
     } catch (error) {
-      this.clearStreamRefresh(options.screen);
-      this.setupInactiveTimer(options.screen);
       logger.error(
-        'Failed to start stream',
+        `Failed to start stream on screen ${options.screen}`,
         'PlayerService',
         error instanceof Error ? error : new Error(String(error))
       );
-      return {
-        screen: options.screen,
-        error: error instanceof Error ? error.message : String(error)
-      };
+      throw error;
     }
   }
 
-  async stopStream(screen: number): Promise<boolean> {
+  async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
     try {
       const stream = this.streams.get(screen);
       if (!stream) return false;
+
+      // If manual stop, mark the screen as manually closed
+      if (isManualStop) {
+        this.manuallyClosedScreens.add(screen);
+        logger.info(`Screen ${screen} marked as manually closed`, 'PlayerService');
+      }
 
       // Clear any pending retries
       this.streamRetries.delete(screen);
@@ -580,7 +565,7 @@ export class PlayerService {
       }, 2000);
 
       this.streams.delete(screen);
-      logger.info(`Stream stopped on screen ${screen}`, 'PlayerService');
+      logger.info(`Stream stopped on screen ${screen}${isManualStop ? ' (manual stop)' : ''}`, 'PlayerService');
       return true;
     } catch (error) {
       logger.error(
@@ -790,6 +775,14 @@ export class PlayerService {
 
   private async handlePlayerShutdown(screen: number): Promise<void> {
     logger.info(`Player shutdown on screen ${screen}`, 'PlayerService');
+    
+    // Check if this was a manual close (e.g., user clicked X button)
+    const wasManualClose = !this.streams.get(screen)?.process?.killed;
+    if (wasManualClose) {
+      this.manuallyClosedScreens.add(screen);
+      logger.info(`Screen ${screen} was manually closed`, 'PlayerService');
+    }
+    
     this.streams.delete(screen);
     
     // Check if all screens are closed

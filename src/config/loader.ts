@@ -41,7 +41,7 @@ export function loadAllConfigs(): Config {
       streams: streams.streams || [],
       organizations: streams.organizations || [],
       favoriteChannels: favorites,
-      holodex: {
+  holodex: {
         apiKey: process.env.HOLODEX_API_KEY || ''
       },
       twitch: {
@@ -78,7 +78,7 @@ export function loadAllConfigs(): Config {
       holodex: {
         apiKey: process.env.HOLODEX_API_KEY || ''
       },
-      twitch: {
+  twitch: {
         clientId: process.env.TWITCH_CLIENT_ID || '',
         clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
         streamersFile: 'streamers.json'
@@ -142,7 +142,7 @@ export function loadAllConfigs(): Config {
         options: {},
         http_header: {}
       },
-      filters: {
+  filters: {
         filters: []
       }
     };

@@ -4,7 +4,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "tsc && vite build",
-		"build:server": "rm -rf dist && mkdir -p dist/config/default && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json --listEmittedFiles && echo '{\"type\":\"module\"}' > dist/package.json && ls -la dist/server",
+		"build:server": "rm -rf dist && mkdir -p dist/{config/default,cli} && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json && echo '{\"type\":\"module\"}' > dist/package.json && chmod +x dist/cli/livelink.js",
 		"preview": "vite preview",
 		"server": "npm run build:server && node dist/server/api.js",
 		"dev:all": "concurrently \"npm run dev\" \"npm run dev:server\"",
@@ -14,7 +14,7 @@
 		"build:all": "npm run build && npm run build:server",
 		"clean": "rm -rf dist",
 		"prebuild:server": "npm run clean",
-		"cli": "ts-node src/cli/test-api.ts",
+		"cli": "node --loader ts-node/esm --experimental-specifier-resolution=node src/cli/livelink.ts",
 		"prepare": "svelte-kit sync || echo ''",
 		"prepack": "svelte-kit sync && svelte-package && publint",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -113,7 +113,11 @@
 		"node-fetch": "^3.3.2",
 		"sqlite": "^5.1.1",
 		"sqlite3": "^5.1.7",
+		"typesafe-i18n": "^5.26.2",
 		"winston": "^3.11.0",
 		"zod": "^3.22.4"
+	},
+	"bin": {
+		"livelink": "./dist/cli/livelink.js"
 	}
 }

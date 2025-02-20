@@ -1,34 +1,36 @@
 {
-  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist",
+    "allowJs": true,
+    "checkJs": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "strict": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ESNext",
-    "sourceMap": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "allowJs": true,
-    "checkJs": true,
-    "strict": true,
+    "outDir": "dist",
     "rootDir": "src",
-    "declaration": true,
-    "noEmit": false
+    "paths": {
+      "$lib/*": ["./src/lib/*"]
+    },
+    "types": ["node"]
   },
   "include": [
-    "src/config/**/*.ts",
-    "src/types/**/*.ts",
     "src/server/**/*.ts",
-    "src/cli/**/*.ts"
+    "src/cli/**/*.ts",
+    "src/types/**/*.ts",
+    "src/config/**/*.ts",
+    "src/lib/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
+    "src/routes",
+    "src/components",
+    ".svelte-kit",
+    "build",
     "dist",
-    "src/routes/**/*",
-    "src/lib/**/*",
-    "src/**/*.test.ts",
-    "src/**/*.stories.ts",
-    "src/**/*.svelte"
+    "node_modules/@types/mdx"
   ]
 } 
