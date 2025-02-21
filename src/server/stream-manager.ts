@@ -37,6 +37,14 @@ export class StreamManager extends EventEmitter {
   // Stream Management
   async startStream(options: { screen: number; url: string; quality?: string }) {
     try {
+      // Check if URL is already playing on any screen
+      const existingStream = Array.from(this.activeStreams.values())
+        .find(stream => stream.url === options.url);
+      
+      if (existingStream) {
+        throw new Error(`URL is already playing on screen ${existingStream.screen}`);
+      }
+
       const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
       if (!screenConfig || !screenConfig.enabled) {
         throw new Error('Screen not available');
@@ -225,5 +233,23 @@ export class StreamManager extends EventEmitter {
       this.emit('error', error);
       throw error;
     }
+  }
+
+  getScreenInfo(screen: number) {
+    const screenConfig = this.config.player.screens.find(s => s.id === screen);
+    if (!screenConfig) {
+      throw new Error(`Screen ${screen} not found`);
+    }
+
+    const activeStream = this.activeStreams.get(screen);
+    const queue = this.queues.get(screen) || [];
+
+    return {
+      config: screenConfig,
+      currentStream: activeStream || null,
+      queue,
+      enabled: screenConfig.enabled,
+      status: activeStream?.status || 'stopped'
+    };
   }
 } 

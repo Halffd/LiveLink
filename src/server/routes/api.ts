@@ -29,6 +29,11 @@ interface UpdateConfigBody {
   };
 }
 
+interface MarkWatchedBody {
+  url: string;
+  screen?: number;
+}
+
 // Static routes first (most specific to least specific)
 router.get('/api/organizations', (ctx: Context) => {
   ctx.body = streamManager.getOrganizations();
@@ -354,6 +359,24 @@ router.get('/api/streams/watched', async (ctx: Context) => {
   }
 });
 
+router.post('/api/streams/watched', async (ctx: Context) => {
+  try {
+    const { url } = ctx.request.body as MarkWatchedBody;
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { error: 'URL is required' };
+      return;
+    }
+    
+    // Mark the stream as watched
+    streamManager.markStreamAsWatched(url);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
 router.delete('/api/streams/watched', async (ctx: Context) => {
   try {
     streamManager.clearWatchedStreams();
@@ -565,6 +588,17 @@ router.put('/api/config', async (ctx: Context) => {
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
+  }
+});
+
+// Screen endpoints
+router.get('/screens/:screen', async (ctx) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    ctx.body = streamManager.getScreenInfo(screen);
+  } catch (error) {
+    ctx.status = 400;
+    ctx.body = { error: error instanceof Error ? error.message : 'Unknown error' };
   }
 });
 

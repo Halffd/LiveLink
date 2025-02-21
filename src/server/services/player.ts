@@ -355,9 +355,10 @@ export class PlayerService {
       // Stop existing stream if any
       await this.stopStream(options.screen);
 
-      // Get all URLs from the queue for this screen
+      // Get unwatched URLs from the queue for this screen
       const queue = queueService.getQueue(options.screen);
-      const allUrls = [options.url, ...queue.map(source => source.url)];
+      const unwatchedStreams = queue.filter(source => !queueService.isStreamWatched(source.url));
+      const allUrls = [options.url, ...unwatchedStreams.map(source => source.url)];
 
       // Create log paths
       const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
@@ -387,7 +388,7 @@ export class PlayerService {
         const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}-${Date.now()}.m3u8`);
         await fs.promises.mkdir(path.dirname(playlistPath), { recursive: true });
         
-        // Write m3u8 playlist file with proper format '#EXTM3U\n' + 
+        // Write m3u8 playlist file with proper format
         const m3u8Content = allUrls.map(url => `${url}`).join('\n');
         await fs.promises.writeFile(playlistPath, m3u8Content, 'utf8');
 
@@ -398,7 +399,7 @@ export class PlayerService {
           '--keep-open=yes',
           '--force-window=yes',
           '--idle=yes',
-          '--loop-playlist=inf',
+          '--loop-playlist=no', // Changed from inf to no to prevent infinite looping
           '--playlist-start=0'
         );
 
@@ -459,8 +460,8 @@ export class PlayerService {
       playerProcess.on('exit', (code: number | null) => {
         logger.info(`Process for screen ${options.screen} exited with code ${code}`, 'PlayerService');
         
-        // Only restart if the process crashed (non-zero exit code)
-        if (code !== 0 && code !== null) {
+        // Only restart if the process crashed (non-zero exit code) and wasn't manually stopped
+        if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(options.screen)) {
           logger.error(`Stream process crashed with code ${code}, restarting...`, 'PlayerService');
           const retryCount = this.streamRetries.get(options.screen) || 0;
           
@@ -582,7 +583,8 @@ export class PlayerService {
       screen,
       url: stream.url,
       quality: stream.quality,
-      platform: stream.platform
+      platform: stream.platform,
+      status: stream.status
     }));
   }
 

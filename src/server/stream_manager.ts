@@ -518,11 +518,16 @@ export class StreamManager extends EventEmitter {
     await this.restartStreams();
   }
 
-  getWatchedStreams(): string[] {
+  public markStreamAsWatched(url: string): void {
+    queueService.markStreamAsWatched(url);
+    logger.info(`Stream marked as watched: ${url}`, 'StreamManager');
+  }
+
+  public getWatchedStreams(): string[] {
     return queueService.getWatchedStreams();
   }
 
-  clearWatchedStreams(): void {
+  public clearWatchedStreams(): void {
     queueService.clearWatchedStreams();
     logger.info('Cleared watched streams history', 'StreamManager');
   }
@@ -674,6 +679,45 @@ export class StreamManager extends EventEmitter {
     this.config.player.screens.forEach(screen => {
       this.queues.set(screen.id, []);
     });
+  }
+
+  /**
+   * Get comprehensive information about a screen, including:
+   * - Current stream
+   * - Queue
+   * - Configuration
+   * - Status
+   */
+  public getScreenInfo(screen: number) {
+    // Get screen configuration
+    const screenConfig = this.config.player.screens.find(s => s.id === screen);
+    if (!screenConfig) {
+      throw new Error(`Screen ${screen} not found`);
+    }
+
+    // Get active stream for this screen
+    const activeStream = this.getActiveStreams().find(s => s.screen === screen);
+
+    // Get queue for this screen
+    const queue = this.getQueueForScreen(screen);
+
+    return {
+      config: screenConfig,
+      currentStream: activeStream || null,
+      queue,
+      enabled: screenConfig.enabled,
+      status: activeStream?.status || 'stopped',
+      // Additional useful information
+      volume: screenConfig.volume,
+      quality: screenConfig.quality,
+      windowMaximized: screenConfig.windowMaximized,
+      dimensions: {
+        width: screenConfig.width,
+        height: screenConfig.height,
+        x: screenConfig.x,
+        y: screenConfig.y
+      }
+    };
   }
 }
 

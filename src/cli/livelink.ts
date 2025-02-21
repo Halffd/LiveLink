@@ -50,6 +50,16 @@ program
   .option('-s, --screen <number>', 'Screen number', '1')
   .action(async (options) => {
     try {
+      // First check if URL is already playing on any screen
+      const activeStreams = await fetch(`${API_URL}/streams/active`)
+        .then(res => handleResponse<Stream[]>(res));
+      
+      const existingStream = activeStreams.find(stream => stream.url === options.url);
+      if (existingStream) {
+        console.error(chalk.red('Error:'), `URL is already playing on screen ${existingStream.screen}`);
+        return;
+      }
+
       const response = await fetch(`${API_URL}/streams/url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -111,6 +121,22 @@ program
       });
       const result = await handleResponse(response);
       console.log(chalk.green('Screen disabled:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
+    }
+  });
+
+program
+  .command('get-screen')
+  .description('Get current screen information')
+  .argument('<screen>', 'Screen number')
+  .action(async (screen) => {
+    try {
+      const screenNumber = parseInt(screen);
+      const response = await fetch(`${API_URL}/screens/${screenNumber}`);
+      const screenInfo = await handleResponse(response);
+      console.log(chalk.blue(`Screen ${screenNumber} Information:`));
+      console.log(JSON.stringify(screenInfo, null, 2));
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }

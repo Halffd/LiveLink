@@ -1,522 +1,419 @@
+-- LiveLink MPV Script
+-- Features:
+-- - Auto queue management
+-- - Stream status tracking
+-- - Watched stream tracking
+-- - Multi-screen support
+-- - Stream info display
+-- - Auto-refresh capability
+
 local utils = require 'mp.utils'
 local msg = require 'mp.msg'
 
-msg.verbose("LiveLink script starting...")
+-- Configuration
+local API_URL = "http://localhost:3001/api"
+local current_screen = nil
+local current_url = nil
+local info_display_time = 10 -- How long to show info overlay (seconds)
 
--- Simple Unix Domain Socket implementation
-local UnixSocket = {}
-UnixSocket.__index = UnixSocket
+-- Track already marked streams
+local marked_streams = {}
 
-function UnixSocket.new()
-    msg.debug("Creating new UnixSocket instance")
-    local self = setmetatable({}, UnixSocket)
-    self.path = nil
-    self.file = nil
-    return self
-end
-
-function UnixSocket:connect(path)
-    msg.debug("Attempting to connect to socket at: " .. path)
-    self.path = path
+-- Helper function to make HTTP requests with better error handling
+function http_request(url, method, headers, data)
+    msg.debug(string.format("Making HTTP request to: %s [%s]", url, method or "GET"))
     
-    -- Check if socket file exists
-    local stat = utils.file_info(path)
-    if not stat then
-        msg.error("Socket file does not exist: " .. path)
-        return false, "Socket file does not exist"
-    end
-    
-    msg.debug("Socket file exists, attempting to open")
-    -- Open the file for read/write
-    local file, err = io.open(path, "r+b")
-    if not file then
-        msg.error("Failed to open socket: " .. tostring(err))
-        return false, err
-    end
-    
-    self.file = file
-    msg.debug("Successfully opened socket file")
-    return true
-end
-
-function UnixSocket:send(data)
-    if not self.file then
-        msg.warn("Attempted to send data but socket not connected")
-        return false, "Socket not connected"
-    end
-    
-    msg.debug("Sending data to socket: " .. data)
-    local success, err = pcall(function()
-        self.file:write(data)
-        self.file:flush()
-    end)
-    
-    if not success then
-        msg.error("Failed to write to socket: " .. tostring(err))
-        return false, err
-    end
-    
-    msg.debug("Successfully sent data to socket")
-    return true
-end
-
-function UnixSocket:close()
-    msg.debug("Closing socket connection")
-    if self.file then
-        self.file:close()
-        self.file = nil
-    end
-end
-
--- State management
-local state = {
-    screen_id = nil,
-    watched_streams = {},
-    current_playlist = {},
-    stream_info = {
-        path = nil,
-        title = "Unknown Title",
-        duration = 0,
-        position = 0,
-        remaining = 0,
-        playlist_pos = 0,
-        playlist_count = 0,
-        error_count = 0,
-        last_error = nil
-    },
-    ipc_socket = nil,
-    last_update = 0,
-    update_interval = 5, -- seconds
-    last_error = nil,
-    error_count = 0,
-    max_errors = 3,
-    reconnect_attempts = 0,
-    max_reconnect_attempts = 5,
-    reconnect_delay = 5, -- seconds
-    autostart_attempted = false
-}
-
--- Helper functions
-function send_ipc_message(message)
-    msg.debug("Preparing to send IPC message: " .. utils.format_json(message))
-    if not state.ipc_socket then 
-        msg.warn("No IPC socket available, attempting reconnect")
-        attempt_reconnect()
-        return 
-    end
-    
-    local success, err = state.ipc_socket:send(utils.format_json(message) .. '\n')
-    if not success then
-        msg.error("Failed to send IPC message: " .. tostring(err))
-        attempt_reconnect()
-    else
-        msg.debug("Successfully sent IPC message")
-    end
-end
-
-function attempt_reconnect()
-    msg.info("Attempting reconnection, attempt " .. state.reconnect_attempts + 1 .. " of " .. state.max_reconnect_attempts)
-    if state.reconnect_attempts >= state.max_reconnect_attempts then
-        msg.error("Max reconnection attempts reached. Disabling screen.")
-        send_error_to_manager("Max reconnection attempts reached")
-        return
-    end
-
-    state.reconnect_attempts = state.reconnect_attempts + 1
-    msg.info("Scheduling reconnect attempt in " .. state.reconnect_delay .. " seconds")
-    
-    mp.add_timeout(state.reconnect_delay, function()
-        connect_to_ipc()
-    end)
-end
-
-function connect_to_ipc()
-    if not state.screen_id then
-        msg.error("No screen ID set")
-        return false
-    end
-
-    local socket_path = string.format("/tmp/mpv-ipc-%d", state.screen_id)
-    state.ipc_socket = UnixSocket.new()
-    local success, err = state.ipc_socket:connect(socket_path)
-    
-    if not success then
-        msg.error("Failed to connect to IPC socket: " .. tostring(err))
-        attempt_reconnect()
-        return false
-    end
-    
-    state.reconnect_attempts = 0
-    msg.info("Successfully connected to IPC socket")
-    return true
-end
-
-function send_error_to_manager(error_msg)
-    state.last_error = error_msg
-    state.error_count = state.error_count + 1
-    
-    send_ipc_message({
-        type = "error",
-        screen = state.screen_id,
-        error = error_msg,
-        count = state.error_count
-    })
-    
-    if state.error_count >= state.max_errors then
-        send_ipc_message({
-            type = "disable_screen",
-            screen = state.screen_id,
-            reason = "Too many errors"
-        })
-    end
-end
-
-function update_stream_info()
-    local path = mp.get_property("path")
-    if not path then return end
-
-    local title = mp.get_property("media-title") or "Unknown Title"
-    local duration = mp.get_property_number("duration") or 0
-    local position = mp.get_property_number("time-pos") or 0
-    local remaining = duration - position
-    local playlist_pos = mp.get_property_number("playlist-pos") or 0
-    local playlist_count = mp.get_property_number("playlist-count") or 0
-
-    -- Update playlist info whenever we update stream info
-    local playlist = mp.get_property_native("playlist") or {}
-    if playlist and #playlist > 0 then
-        state.current_playlist = playlist
-        send_ipc_message({
-            type = "playlist_update",
-            screen = state.screen_id,
-            playlist = playlist
-        })
-    end
-
-    state.stream_info = {
-        path = path,
-        title = title,
-        duration = duration,
-        position = position,
-        remaining = remaining,
-        playlist_pos = playlist_pos,
-        playlist_count = playlist_count,
-        error_count = state.error_count,
-        last_error = state.last_error
-    }
-
-    send_ipc_message({
-        type = "stream_info",
-        screen = state.screen_id,
-        data = state.stream_info
-    })
-end
-
-function mark_current_watched()
-    local path = mp.get_property("path")
-    if not path then return end
-
-    -- Only mark as watched if we've watched at least 30 seconds or 20% of the video
-    local duration = mp.get_property_number("duration") or 0
-    local position = mp.get_property_number("time-pos") or 0
-    local threshold = math.min(30, duration * 0.2)
-    
-    if position >= threshold then
-        state.watched_streams[path] = true
-        
-        send_ipc_message({
-            type = "watched",
-            screen = state.screen_id,
-            url = path
-        })
-
-        -- Check if we should move to next stream
-        local playlist_count = mp.get_property_number("playlist-count") or 0
-        local playlist_pos = mp.get_property_number("playlist-pos") or 0
-        
-        if playlist_count > 0 and playlist_pos < playlist_count - 1 then
-            mp.commandv("playlist-next")
-        else
-            remove_watched_from_playlist()
-        end
-    end
-end
-
-function remove_watched_from_playlist()
-    local playlist = mp.get_property_native("playlist") or {}
-    if not playlist or #playlist == 0 then return end
-
-    local new_playlist = {}
-    local removed = false
-    local current_pos = mp.get_property_number("playlist-pos") or 0
-
-    for i, item in ipairs(playlist) do
-        if not state.watched_streams[item.filename] then
-            table.insert(new_playlist, item)
-        else
-            removed = true
-            if i <= current_pos then
-                current_pos = current_pos - 1
-            end
-        end
-    end
-
-    if removed then
-        if #new_playlist == 0 then
-            -- If all streams are watched, request new ones
-            send_ipc_message({
-                type = "all_watched",
-                screen = state.screen_id
-            })
-            return
-        end
-
-        mp.set_property_native("playlist", new_playlist)
-        if current_pos >= 0 and current_pos < #new_playlist then
-            mp.set_property_number("playlist-pos", current_pos)
-        end
-        state.current_playlist = new_playlist
-        
-        send_ipc_message({
-            type = "playlist_update",
-            screen = state.screen_id,
-            playlist = new_playlist
-        })
-    end
-end
-
-function show_stream_info()
-    local text = string.format(
-        "Screen: %s\nTitle: %s\nProgress: %.1f/%.1f\nPlaylist: %d/%d\nWatched: %d streams\nErrors: %d",
-        state.screen_id or "Unknown",
-        state.stream_info.title or "Unknown",
-        state.stream_info.position or 0,
-        state.stream_info.duration or 0,
-        (state.stream_info.playlist_pos or 0) + 1,
-        state.stream_info.playlist_count or 0,
-        #state.watched_streams,
-        state.error_count
+    local curl_cmd = string.format(
+        'curl -s -X %s %s -H "Content-Type: application/json" %s %s',
+        method or "GET",
+        url,
+        headers or "",
+        data and ("-d '" .. data .. "'") or ""
     )
     
-    if state.last_error then
-        text = text .. "\nLast Error: " .. state.last_error
+    local curl = io.popen(curl_cmd)
+    local response = curl:read('*all')
+    local success, exit_code = curl:close()
+    
+    if not success then
+        msg.error(string.format("HTTP request failed with exit code: %s", exit_code))
+        return nil
     end
     
-    mp.osd_message(text, 5)
-end
-
-function request_stream_update()
-    send_ipc_message({
-        type = "request_update",
-        screen = state.screen_id
-    })
-    mp.osd_message("Requesting stream update...", 2)
-end
-
-function clear_watched_and_update()
-    state.watched_streams = {}
-    send_ipc_message({
-        type = "clear_watched",
-        screen = state.screen_id
-    })
-    request_stream_update()
-    mp.osd_message("Cleared watched streams and requesting update...", 2)
-end
-
-function toggle_screen()
-    send_ipc_message({
-        type = "toggle_screen",
-        screen = state.screen_id
-    })
-end
-
-function handle_end_of_playlist()
-    send_ipc_message({
-        type = "request_update",
-        screen = state.screen_id
-    })
-end
-
-function is_stream_watched(path)
-    msg.debug("Checking if stream is watched: " .. path)
-    local is_watched = state.watched_streams[path] == true
-    msg.debug("Stream watched status: " .. tostring(is_watched))
-    return is_watched
-end
-
-function find_first_unwatched_stream()
-    msg.debug("Searching for first unwatched stream in playlist")
-    local playlist = mp.get_property_native("playlist")
-    if not playlist then 
-        msg.debug("No playlist available")
-        return nil 
-    end
-    
-    msg.debug("Playlist size: " .. #playlist)
-    for i, item in ipairs(playlist) do
-        msg.debug("Checking playlist item " .. i .. ": " .. (item.filename or "unknown"))
-        if item.filename and not is_stream_watched(item.filename) then
-            msg.debug("Found unwatched stream at position " .. (i-1))
-            return i - 1  -- MPV uses 0-based indices
+    if response and response ~= "" then
+        local parsed = utils.parse_json(response)
+        if not parsed then
+            msg.error("Failed to parse JSON response")
+            msg.debug("Raw response: " .. response)
+            return nil
         end
+        return parsed
     end
-    msg.debug("No unwatched streams found in playlist")
+    
     return nil
 end
 
-function attempt_autostart()
-    msg.debug("Attempting autostart")
-    if state.autostart_attempted then 
-        msg.debug("Autostart already attempted, skipping")
+-- Get current screen number from socket path
+function get_current_screen()
+    if current_screen then return current_screen end
+    
+    local socket_path = mp.get_property("input-ipc-server")
+    if socket_path then
+        msg.debug("Socket path: " .. socket_path)
+        local screen = string.match(socket_path, "mpv%-ipc%-(%d+)")
+        if screen then
+            current_screen = tonumber(screen)
+            msg.info("Detected screen number: " .. current_screen)
+            return current_screen
+        end
+    end
+    
+    msg.error("Could not determine screen number")
+    return nil
+end
+
+-- Helper function to check if a value exists in a table
+function has_value(tab, val)
+    if not tab then return false end
+    for _, value in ipairs(tab) do
+        if value == val then
+            return true
+        end
+    end
+    return false
+end
+
+-- Get next unwatched URL from queue
+function get_next_unwatched()
+    local screen = get_current_screen()
+    if not screen then 
+        msg.error("Cannot get next stream: screen number unknown")
+        return nil 
+    end
+
+    msg.info("Fetching next unwatched stream for screen " .. screen)
+    
+    local response = http_request(API_URL .. "/streams/queue/" .. screen)
+    if response then
+        -- Get watched streams
+        local watched = http_request(API_URL .. "/streams/watched")
+        local watched_urls = watched or {}
+        
+        msg.debug(string.format("Found %d streams in queue", #response))
+        msg.debug(string.format("Found %d watched streams", #watched_urls))
+
+        -- Find first unwatched stream
+        for _, stream in ipairs(response) do
+            if not has_value(watched_urls, stream.url) then
+                msg.info("Found next unwatched stream: " .. stream.url)
+                return stream.url
+            end
+        end
+        
+        msg.info("No unwatched streams found in queue")
+    else
+        msg.error("Failed to fetch queue")
+    end
+    
+    return nil
+end
+
+-- Check if URL is already playing on another screen
+function check_url_duplicate(url)
+    -- Skip checking playlist files
+    if string.match(url, "playlist%-screen%d+") then
+        msg.debug("Skipping duplicate check for playlist file")
+        return false, nil
+    end
+
+    msg.debug("Checking for duplicate stream: " .. url)
+    
+    local response = http_request(API_URL .. "/streams/active")
+    if response then
+        for _, stream in ipairs(response) do
+            if stream.url == url and stream.screen ~= get_current_screen() then
+                msg.warn(string.format("URL already playing on screen %d", stream.screen))
+                return true, stream.screen
+            end
+        end
+    end
+    
+    msg.debug("No duplicates found")
+    return false, nil
+end
+
+-- Update screen info
+function update_screen_info()
+    local screen = get_current_screen()
+    if not screen then return end
+    
+    local url = mp.get_property("path")
+    if not url then 
+        msg.debug("No URL available for update")
         return 
     end
     
-    state.autostart_attempted = true
-    msg.debug("Looking for first unwatched stream")
+    -- Skip playlist files
+    if string.match(url, "playlist%-screen%d+") then
+        msg.debug("Skipping playlist file update")
+        return
+    end
     
-    local pos = find_first_unwatched_stream()
-    if pos then
-        msg.info("Starting playback of unwatched stream at position " .. pos)
-        mp.set_property("playlist-pos", pos)
-        mp.command("playlist-play-index " .. pos)
-    else
-        msg.debug("No unwatched streams to autostart")
+    -- Only update if URL has changed
+    if url ~= current_url then
+        msg.info("URL changed, updating stream info")
+        
+        local is_duplicate, other_screen = check_url_duplicate(url)
+        if is_duplicate then
+            msg.warn(string.format("URL already playing on screen %d, stopping", other_screen))
+            mp.command("quit")
+            return
+        end
+        
+        current_url = url
+        
+        -- Update screen info via API
+        local data = utils.format_json({
+            url = url,
+            screen = screen,
+            quality = mp.get_property("options/quality") or "best"
+        })
+        
+        msg.debug("Sending update to API: " .. data)
+        
+        -- Only send update, don't process response
+        http_request(
+            API_URL .. "/streams/url",
+            "POST",
+            nil,
+            data
+        )
+        
+        msg.info("Stream info update sent")
     end
 end
 
-function init()
-    msg.info("Initializing LiveLink")
-    -- Get screen ID from script-opts
-    local opts = mp.get_property_native("script-opts")
-    msg.debug("Script options: " .. utils.format_json(opts))
-    state.screen_id = tonumber(opts.screen)
+-- Show stream info overlay
+function show_stream_info()
+    local screen = get_current_screen()
+    if not screen then return end
+
+    msg.info("Gathering stream information for display")
+
+    -- Get all relevant information
+    local active = http_request(API_URL .. "/streams/active")
+    local queue = http_request(API_URL .. "/streams/queue/" .. screen)
+    local config = http_request(API_URL .. "/screens/" .. screen)
+    local watched = http_request(API_URL .. "/streams/watched")
+
+    -- Format info text
+    local info = string.format("Screen %d Info:\n", screen)
     
-    if not state.screen_id then
-        msg.error("No screen ID provided in script-opts")
-        return
-    end
-
-    msg.info("Initializing LiveLink for screen " .. state.screen_id)
-
-    -- Initialize IPC connection
-    if not connect_to_ipc() then
-        msg.error("Failed to initialize IPC connection")
-        return
-    end
-
-    msg.debug("Setting up key bindings")
-    -- Set up key bindings
-    mp.add_key_binding("F2", "mark_watched", mark_current_watched)
-    mp.add_key_binding("F5", "update_streams", request_stream_update)
-    mp.add_key_binding("i", "show_stream_info", show_stream_info)
-    mp.add_key_binding("t", "toggle_screen", toggle_screen)
-
-    msg.debug("Checking initial playlist")
-    -- Initial playlist check and autostart
-    local playlist = mp.get_property_native("playlist") or {}
-    if playlist and #playlist > 0 then
-        msg.debug("Initial playlist has " .. #playlist .. " items")
-        state.current_playlist = playlist
-        send_ipc_message({
-            type = "playlist_update",
-            screen = state.screen_id,
-            playlist = playlist
-        })
-        attempt_autostart()
-    else
-        msg.debug("No initial playlist")
-    end
-
-    msg.debug("Setting up event observers")
-    -- Set up event handlers
-    mp.observe_property("playlist-count", "number", function(_, count)
-        msg.debug("Playlist count changed to: " .. (count or "nil"))
-        if count and count > 0 then
-            -- Send playlist info when count changes
-            local playlist = mp.get_property_native("playlist") or {}
-            msg.debug("Updated playlist has " .. #playlist .. " items")
-            state.current_playlist = playlist
-            send_ipc_message({
-                type = "playlist_update",
-                screen = state.screen_id,
-                playlist = playlist
-            })
-            attempt_autostart()
-        elseif count == 0 then
-            msg.debug("Playlist is empty, handling end of playlist")
-            handle_end_of_playlist()
-        end
-    end)
-
-    -- Also observe playlist directly for any changes
-    mp.observe_property("playlist", "native", function(_, playlist)
-        if playlist and #playlist > 0 then
-            msg.debug("Playlist content changed, now has " .. #playlist .. " items")
-            state.current_playlist = playlist
-            send_ipc_message({
-                type = "playlist_update",
-                screen = state.screen_id,
-                playlist = playlist
-            })
-        end
-    end)
-
-    mp.observe_property("path", "string", function(_, path)
-        if path then
-            msg.debug("Path changed to: " .. path)
-            update_stream_info()
-        end
-    end)
-
-    mp.observe_property("time-pos", "number", function(_, time)
-        if time and time > 0 then
-            local now = os.time()
-            if now - state.last_update >= state.update_interval then
-                msg.debug("Updating stream info at position: " .. time)
-                update_stream_info()
-                state.last_update = now
+    -- Active streams section
+    info = info .. "\nActive Streams:\n"
+    if active and #active > 0 then
+        for _, stream in ipairs(active) do
+            info = info .. string.format("  Screen %d: %s\n", stream.screen, stream.url)
+            if stream.title then
+                info = info .. string.format("    Title: %s\n", stream.title)
             end
         end
-    end)
+    else
+        info = info .. "  No active streams\n"
+    end
 
-    mp.register_event("end-file", function(event)
-        msg.debug("File ended with reason: " .. event.reason)
-        if event.reason == "eof" then
-            msg.debug("End of file reached, marking as watched")
-            mark_current_watched()
-        elseif event.reason == "stop" then
-            msg.debug("Playback stopped manually")
-            -- Manual stop - don't automatically proceed
-            send_ipc_message({
-                type = "player_shutdown",
-                screen = state.screen_id,
-                manual = true
-            })
+    -- Queue section
+    info = info .. "\nQueue:\n"
+    if queue and #queue > 0 then
+        for i, stream in ipairs(queue) do
+            local watched_mark = has_value(watched or {}, stream.url) and " (watched)" or ""
+            info = info .. string.format("  %d: %s%s\n", i, stream.url, watched_mark)
+            if stream.title then
+                info = info .. string.format("    Title: %s\n", stream.title)
+            end
         end
-    end)
+    else
+        info = info .. "  Queue is empty\n"
+    end
 
-    msg.debug("Performing initial stream info update")
-    -- Initial update
-    update_stream_info()
-    msg.info("LiveLink initialization complete")
+    -- Configuration section
+    if config then
+        info = info .. "\nScreen Configuration:\n"
+        info = info .. string.format("  Enabled: %s\n", config.enabled and "yes" or "no")
+        info = info .. string.format("  Quality: %s\n", config.quality or "best")
+        info = info .. string.format("  Volume: %d\n", config.volume or 100)
+        
+        -- Current playback info
+        local pos = mp.get_property_number("percent-pos") or 0
+        info = info .. string.format("\nPlayback Progress: %.1f%%\n", pos)
+    end
+
+    msg.debug("Displaying info overlay:\n" .. info)
+    mp.osd_message(info, info_display_time)
 end
 
-mp.register_event("file-loaded", function()
-    msg.debug("File loaded event triggered")
-    -- Check playlist when a file is loaded
-    local playlist = mp.get_property_native("playlist") or {}
-    if playlist and #playlist > 0 then
-        msg.debug("Playlist available with " .. #playlist .. " items")
-        state.current_playlist = playlist
-        send_ipc_message({
-            type = "playlist_update",
-            screen = state.screen_id,
-            playlist = playlist
+-- Mark current stream as watched
+function mark_watched()
+    local url = mp.get_property("path")
+    local screen = get_current_screen()
+    if url and screen then
+        -- Skip if already marked
+        if marked_streams[url] then
+            msg.debug("Stream already marked as watched: " .. url)
+            return
+        end
+        
+        msg.info("Marking as watched: " .. url)
+        
+        -- Skip marking playlist files as watched
+        if string.match(url, "playlist%-screen%d+") then
+            msg.debug("Skipping playlist file")
+            return
+        end
+        
+        -- Add stream to watched list via API
+        local data = utils.format_json({
+            url = url,
+            screen = screen
         })
+        
+        local response = http_request(
+            API_URL .. "/streams/watched",
+            "POST",
+            nil,
+            data
+        )
+        
+        if response then
+            msg.info("Stream marked as watched")
+            marked_streams[url] = true
+        else
+            msg.error("Failed to mark stream as watched")
+        end
     end
-    update_stream_info()
+end
+
+-- Clear watched streams
+function clear_watched()
+    msg.info("Clearing watched streams history")
+    
+    local response = http_request(API_URL .. "/streams/watched", "DELETE")
+    if response then
+        msg.info("Watched streams history cleared")
+        mp.osd_message("Cleared watched streams history", 3)
+        -- Clear local marked streams cache
+        marked_streams = {}
+    else
+        msg.error("Failed to clear watched streams history")
+        mp.osd_message("Failed to clear watched streams history", 3)
+    end
+end
+
+-- Refresh current stream
+function refresh_stream()
+    local url = current_url
+    if url then
+        msg.info("Refreshing current stream: " .. url)
+        mp.commandv("loadfile", url)
+    else
+        msg.warn("No current stream to refresh")
+    end
+end
+
+-- Play next stream from queue
+function play_next_stream()
+    local screen = get_current_screen()
+    if not screen then return end
+
+    msg.info("Attempting to play next stream")
+    
+    -- Get playlist info
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    
+    msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
+    
+    -- If we have more items in playlist, let MPV handle it
+    if playlist_pos + 1 < playlist_count then
+        msg.info("Using MPV playlist to play next stream")
+        mp.commandv("playlist-next")
+    else
+        msg.info("Playlist ended, no more streams available")
+        mp.osd_message("No more streams in playlist", 3)
+    end
+end
+
+-- Register event handlers
+mp.register_event("file-loaded", function()
+    msg.info("File loaded event triggered")
+    local url = mp.get_property("path")
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    
+    msg.debug(string.format("File loaded: %s (playlist pos: %d/%d)", 
+        url or "nil",
+        playlist_pos + 1,
+        playlist_count))
+    
+    -- Skip playlist files
+    if not string.match(url, "playlist%-screen%d+") then
+        msg.debug(string.format("Processing URL: %s", url))
+        update_screen_info()
+        -- Mark as watched on startup
+        mark_watched()
+    else
+        msg.debug("Skipping playlist file processing")
+    end
 end)
 
-msg.info("LiveLink script loaded, waiting for start-file event")
--- Initialize when mpv is ready
-mp.register_event("start-file", init) 
+mp.register_event("end-file", function(event)
+    msg.info(string.format("File ended event triggered: %s (playlist-pos: %s/%s)", 
+        event.reason or "unknown reason",
+        mp.get_property("playlist-pos"),
+        mp.get_property("playlist-count")))
+    
+    -- Only proceed if the file ended naturally and it's not a playlist file
+    local url = mp.get_property("path")
+    if event.reason == "eof" and not string.match(url, "playlist%-screen%d+") then
+        current_url = nil
+        -- Let MPV handle playlist progression
+        play_next_stream()
+    end
+end)
+
+-- Initialize
+mp.add_hook("on_load", 50, function()
+    local url = mp.get_property("path")
+    if url then
+        msg.debug(string.format("Checking URL on load: %s (playlist-pos: %s/%s)", 
+            url,
+            mp.get_property("playlist-pos"),
+            mp.get_property("playlist-count")))
+            
+        -- Skip duplicate check for playlist files
+        if string.match(url, "playlist%-screen%d+") then
+            msg.debug("Skipping duplicate check for playlist file")
+            return true
+        end
+            
+        local is_duplicate, other_screen = check_url_duplicate(url)
+        if is_duplicate then
+            msg.warn(string.format("URL already playing on screen %d", other_screen))
+            return false
+        end
+    end
+    return true
+end)
+
+-- Register key bindings
+mp.add_key_binding("F2", "show-stream-info", show_stream_info)
+mp.add_key_binding("F5", "refresh-stream", refresh_stream)
+mp.add_key_binding("Ctrl+F5", "clear-watched", clear_watched)
+
+-- Log initialization
+msg.info("LiveLink MPV script initialized")
+if get_current_screen() then
+    msg.info(string.format("Running on screen %d", get_current_screen()))
+else
+    msg.warn("Could not determine screen number")
+end
