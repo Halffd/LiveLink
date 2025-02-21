@@ -110,17 +110,43 @@ export class StreamManager extends EventEmitter {
     });
   }
 
-  private async handleStreamEnd(screen: number) {
+  private async handleStreamEnd(screen: number): Promise<void> {
     logger.info(`Stream on screen ${screen} ended, finding next stream...`);
+    
+    // Add a small delay to prevent rapid restarts
+    await new Promise(resolve => setTimeout(resolve, 2000));
     
     // Try to get next stream from current queue
     const nextStream = queueService.getNextStream(screen);
     if (nextStream) {
+      const screenConfig = this.config.player.screens.find(s => s.id === screen);
+      if (!screenConfig) {
+        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        return;
+      }
+
+      // Check if this stream is already playing on a higher priority screen
+      const activeStreams = this.getActiveStreams();
+      const isStreamActive = activeStreams.some(s => 
+        s.url === nextStream.url && s.screen < screen
+      );
+
+      if (isStreamActive) {
+        logger.info(
+          `Stream ${nextStream.url} is already playing on a higher priority screen, skipping`,
+          'StreamManager'
+        );
+        // Remove this stream from the queue and try the next one
+        queueService.removeFromQueue(screen, 0);
+        return this.handleStreamEnd(screen);
+      }
+
       await this.startStream({
         url: nextStream.url,
         screen: screen,
-        quality: this.config.player.defaultQuality,
-        windowMaximized: this.config.player.windowMaximized
+        quality: screenConfig.quality || this.config.player.defaultQuality,
+        windowMaximized: screenConfig.windowMaximized,
+        volume: screenConfig.volume
       });
       return;
     }
@@ -135,16 +161,61 @@ export class StreamManager extends EventEmitter {
       const screenConfig = this.config.player.screens.find(s => s.id === screen);
       if (!screenConfig) {
         logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
-      return;
-    }
+        return;
+      }
+
+      // Add a small delay to prevent rapid fetching
+      await new Promise(resolve => setTimeout(resolve, 5000));
     
       logger.info(`Attempting to fetch new streams for screen ${screen}`, 'StreamManager');
-      // Emit event to trigger stream manager to fetch new streams
-      this.errorCallback?.({
-        screen,
-        error: 'Fetching new streams',
-        code: -1
+      
+      // Get new streams
+      const streams = await this.getLiveStreams();
+      const availableStreams = streams.filter(stream => {
+        // Filter streams for this screen
+        if (stream.screen !== screen) return false;
+        
+        // Check if stream is already playing on another screen
+        const activeStreams = this.getActiveStreams();
+        return !activeStreams.some(s => 
+          s.url === stream.url && s.screen < screen
+        );
       });
+
+      if (availableStreams.length > 0) {
+        // Sort by priority
+        availableStreams.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+        
+        // Filter unwatched streams
+        const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
+        
+        if (unwatchedStreams.length > 0) {
+          const [firstStream, ...remainingStreams] = unwatchedStreams;
+          
+          // Start first stream
+          await this.startStream({
+            url: firstStream.url,
+            screen: screen,
+            quality: screenConfig.quality || this.config.player.defaultQuality,
+            windowMaximized: screenConfig.windowMaximized,
+            volume: screenConfig.volume
+          });
+
+          // Queue remaining streams
+          if (remainingStreams.length > 0) {
+            queueService.setQueue(screen, remainingStreams);
+            logger.info(
+              `Queued ${remainingStreams.length} streams for screen ${screen}. ` +
+              `First in queue: ${remainingStreams[0].url} (Priority: ${remainingStreams[0].priority || 999})`,
+              'StreamManager'
+            );
+          }
+        } else {
+          logger.info(`No unwatched streams available for screen ${screen}`, 'StreamManager');
+        }
+      } else {
+        logger.info(`No available streams for screen ${screen}`, 'StreamManager');
+      }
     } catch (error) {
       logger.error(
         'Failed to handle empty queue', 
@@ -380,6 +451,7 @@ export class StreamManager extends EventEmitter {
       
       // Group streams by screen
       const streamsByScreen = new Map<number, StreamSource[]>();
+      const usedUrls = new Set<string>();
       
       // First, group streams by their assigned screen
       streams.forEach(stream => {
@@ -390,23 +462,45 @@ export class StreamManager extends EventEmitter {
         streamsByScreen.set(stream.screen, screenStreams);
       });
 
-      // Process each screen's streams
-      for (const [screen, allScreenStreams] of streamsByScreen) {
+      // Process screens in order (lower screen numbers first)
+      const orderedScreens = Array.from(streamsByScreen.keys()).sort((a, b) => a - b);
+      
+      for (const screen of orderedScreens) {
         const screenConfig = this.config.player.screens.find(s => s.id === screen);
         if (!screenConfig || !screenConfig.enabled) continue;
 
+        const allScreenStreams = streamsByScreen.get(screen) || [];
+        
+        // Filter out streams that are already playing on higher priority screens
+        const availableStreams = allScreenStreams.filter(stream => {
+          if (usedUrls.has(stream.url)) {
+            logger.debug(
+              `Stream ${stream.url} already playing on a higher priority screen, skipping for screen ${screen}`,
+              'StreamManager'
+            );
+            return false;
+          }
+          return true;
+        });
+
         // Get unwatched streams while maintaining priority order
-        const unwatchedStreams = queueService.filterUnwatchedStreams(allScreenStreams);
+        const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
         
         if (unwatchedStreams.length === 0) {
           logger.info(`No unwatched streams for screen ${screen}`, 'StreamManager');
           continue;
         }
 
-        // Start first stream
+        // Start first unwatched and non-duplicate stream
         const [firstStream, ...remainingStreams] = unwatchedStreams;
         if (firstStream) {
-          logger.info(`Starting stream on screen ${screen}: ${firstStream.url} (${firstStream.platform}) with priority ${firstStream.priority || 999}`);
+          logger.info(
+            `Starting stream on screen ${screen}: ${firstStream.url} ` +
+            `(${firstStream.platform}) with priority ${firstStream.priority || 999}`
+          );
+          
+          // Mark this URL as used
+          usedUrls.add(firstStream.url);
           
           await this.startStream({
             url: firstStream.url,
@@ -416,14 +510,19 @@ export class StreamManager extends EventEmitter {
             windowMaximized: screenConfig.windowMaximized
           });
 
-          // Queue remaining streams (already sorted by priority)
-          if (remainingStreams.length > 0) {
-            queueService.setQueue(screen, remainingStreams);
+          // Queue remaining non-duplicate streams
+          const uniqueRemainingStreams = remainingStreams.filter(stream => !usedUrls.has(stream.url));
+          
+          if (uniqueRemainingStreams.length > 0) {
+            queueService.setQueue(screen, uniqueRemainingStreams);
             logger.info(
-              `Queued ${remainingStreams.length} streams for screen ${screen}. ` +
-              `First in queue: ${remainingStreams[0].url} (Priority: ${remainingStreams[0].priority || 999})`,
+              `Queued ${uniqueRemainingStreams.length} unique streams for screen ${screen}. ` +
+              `First in queue: ${uniqueRemainingStreams[0].url} (Priority: ${uniqueRemainingStreams[0].priority || 999})`,
               'StreamManager'
             );
+            
+            // Mark queued streams as used to prevent duplicates on lower priority screens
+            uniqueRemainingStreams.forEach(stream => usedUrls.add(stream.url));
           }
         }
       }

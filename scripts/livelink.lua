@@ -126,13 +126,26 @@ function check_url_duplicate(url)
         return false, nil
     end
 
+    -- Skip checking if this is a local file
+    if string.match(url, "^/") then
+        msg.debug("Skipping duplicate check for local file")
+        return false, nil
+    end
+
     msg.debug("Checking for duplicate stream: " .. url)
     
     local response = http_request(API_URL .. "/streams/active")
     if response then
+        local current_screen = get_current_screen()
         for _, stream in ipairs(response) do
-            if stream.url == url and stream.screen ~= get_current_screen() then
-                msg.warn(string.format("URL already playing on screen %d", stream.screen))
+            -- Only consider it a duplicate if:
+            -- 1. Same URL
+            -- 2. Different screen
+            -- 3. The other screen has a lower number (higher priority)
+            if stream.url == url and 
+               stream.screen ~= current_screen and 
+               stream.screen < current_screen then
+                msg.warn(string.format("URL already playing on higher priority screen %d", stream.screen))
                 return true, stream.screen
             end
         end
@@ -140,6 +153,82 @@ function check_url_duplicate(url)
     
     msg.debug("No duplicates found")
     return false, nil
+end
+
+-- Handle end of playlist
+function handle_end_of_playlist()
+    local screen = get_current_screen()
+    if not screen then return end
+
+    msg.info("Playlist ended, requesting new streams")
+    
+    -- Request new streams from manager
+    local data = utils.format_json({
+        screen = screen,
+        type = "request_update"
+    })
+    
+    http_request(
+        API_URL .. "/streams/queue/" .. screen,
+        "POST",
+        nil,
+        data
+    )
+end
+
+-- Mark current stream as watched
+function mark_current_watched()
+    local path = mp.get_property("path")
+    if not path then return end
+
+    -- Skip marking playlist files
+    if string.match(path, "playlist%-screen%d+") then
+        msg.debug("Skipping playlist file")
+        return
+    end
+
+    -- Only mark as watched if we've watched at least 30 seconds or 20% of the video
+    local duration = mp.get_property_number("duration") or 0
+    local position = mp.get_property_number("time-pos") or 0
+    local threshold = math.min(30, duration * 0.2)
+    
+    if position >= threshold then
+        -- Skip if already marked
+        if marked_streams[path] then
+            msg.debug("Stream already marked as watched: " .. path)
+            return
+        end
+
+        msg.info("Marking as watched: " .. path)
+        marked_streams[path] = true
+        
+        local data = utils.format_json({
+            url = path,
+            screen = get_current_screen()
+        })
+        
+        local response = http_request(
+            API_URL .. "/streams/watched",
+            "POST",
+            nil,
+            data
+        )
+        
+        if response then
+            msg.info("Stream marked as watched")
+            -- Check if we should move to next stream
+            local playlist_count = mp.get_property_number("playlist-count") or 0
+            local playlist_pos = mp.get_property_number("playlist-pos") or 0
+            
+            if playlist_count > 0 and playlist_pos < playlist_count - 1 then
+                mp.commandv("playlist-next")
+            else
+                handle_end_of_playlist()
+            end
+        else
+            msg.error("Failed to mark stream as watched")
+        end
+    end
 end
 
 -- Update screen info
@@ -165,8 +254,9 @@ function update_screen_info()
         
         local is_duplicate, other_screen = check_url_duplicate(url)
         if is_duplicate then
-            msg.warn(string.format("URL already playing on screen %d, stopping", other_screen))
-            mp.command("quit")
+            msg.warn(string.format("URL already playing on screen %d, moving to next stream", other_screen))
+            -- Instead of stopping, try to play next stream
+            play_next_stream()
             return
         end
         
@@ -181,15 +271,26 @@ function update_screen_info()
         
         msg.debug("Sending update to API: " .. data)
         
-        -- Only send update, don't process response
-        http_request(
+        local response = http_request(
             API_URL .. "/streams/url",
             "POST",
             nil,
             data
         )
         
-        msg.info("Stream info update sent")
+        if response then
+            if response.message then
+                msg.info("API response: " .. response.message)
+                if response.message:match("already playing") then
+                    -- If stream is already playing somewhere, move to next
+                    play_next_stream()
+                    return
+                end
+            end
+            msg.info("Stream info update sent")
+        else
+            msg.error("Failed to update stream info")
+        end
     end
 end
 
@@ -252,47 +353,6 @@ function show_stream_info()
     mp.osd_message(info, info_display_time)
 end
 
--- Mark current stream as watched
-function mark_watched()
-    local url = mp.get_property("path")
-    local screen = get_current_screen()
-    if url and screen then
-        -- Skip if already marked
-        if marked_streams[url] then
-            msg.debug("Stream already marked as watched: " .. url)
-            return
-        end
-        
-        msg.info("Marking as watched: " .. url)
-        
-        -- Skip marking playlist files as watched
-        if string.match(url, "playlist%-screen%d+") then
-            msg.debug("Skipping playlist file")
-            return
-        end
-        
-        -- Add stream to watched list via API
-        local data = utils.format_json({
-            url = url,
-            screen = screen
-        })
-        
-        local response = http_request(
-            API_URL .. "/streams/watched",
-            "POST",
-            nil,
-            data
-        )
-        
-        if response then
-            msg.info("Stream marked as watched")
-            marked_streams[url] = true
-        else
-            msg.error("Failed to mark stream as watched")
-        end
-    end
-end
-
 -- Clear watched streams
 function clear_watched()
     msg.info("Clearing watched streams history")
@@ -338,8 +398,8 @@ function play_next_stream()
         msg.info("Using MPV playlist to play next stream")
         mp.commandv("playlist-next")
     else
-        msg.info("Playlist ended, no more streams available")
-        mp.osd_message("No more streams in playlist", 3)
+        msg.info("Requesting new streams")
+        handle_end_of_playlist()
     end
 end
 
@@ -360,7 +420,7 @@ mp.register_event("file-loaded", function()
         msg.debug(string.format("Processing URL: %s", url))
         update_screen_info()
         -- Mark as watched on startup
-        mark_watched()
+        mark_current_watched()
     else
         msg.debug("Skipping playlist file processing")
     end

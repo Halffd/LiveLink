@@ -8,117 +8,87 @@ export interface QueueEvents {
   'all:watched': (screen: number) => void;
 }
 
-export class QueueService {
+class QueueService extends EventEmitter {
   private queues: Map<number, StreamSource[]> = new Map();
   private watchedStreams: Set<string> = new Set();
-  private events: EventEmitter;
 
   constructor() {
-    this.events = new EventEmitter();
+    super();
   }
 
   // Queue Management
-  setQueue(screen: number, streams: StreamSource[]) {
-    if (!streams || !Array.isArray(streams)) {
-      logger.warn(`Invalid streams array provided for screen ${screen}`, 'QueueService');
+  public setQueue(screen: number, queue: StreamSource[]): void {
+    if (!queue || !Array.isArray(queue)) {
+      logger.warn(`Invalid queue array provided for screen ${screen}`, 'QueueService');
       return;
     }
 
-    // Filter out invalid and watched streams
-    const validStreams = streams
-      .filter(s => s && s.url)
-      .filter(s => !this.watchedStreams.has(s.url));
-
-    // Check if these streams are already queued in other monitors
-    const otherQueues = Array.from(this.queues.entries())
-      .filter(([qScreen]) => qScreen !== screen)
-      .map(([, queue]) => queue)
-      .flat();
-
-    // Filter out streams that are queued in other monitors
-    const uniqueStreams = validStreams.filter(stream => 
-      !otherQueues.some(queuedStream => queuedStream.url === stream.url)
-    );
-
-    this.queues.set(screen, uniqueStreams);
+    this.queues.set(screen, queue);
     
-    logger.debug(`Set queue for screen ${screen}. Queue size: ${uniqueStreams.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(uniqueStreams)}`, 'QueueService');
+    logger.debug(`Set queue for screen ${screen}. Queue size: ${queue.length}`, 'QueueService');
+    logger.debug(`Queue contents: ${JSON.stringify(queue)}`, 'QueueService');
     
-    if (uniqueStreams.length === 0) {
-      this.events.emit('all:watched', screen);
+    if (queue.length === 0) {
+      this.emit('all:watched', screen);
     } else {
-      this.events.emit('queue:updated', screen, uniqueStreams);
+      this.emit('queue:updated', screen, queue);
     }
   }
 
-  getQueue(screen: number): StreamSource[] {
+  public getQueue(screen: number): StreamSource[] {
     return this.queues.get(screen) || [];
   }
 
-  clearQueue(screen: number) {
+  public clearQueue(screen: number): void {
     this.queues.set(screen, []);
     logger.info(`Cleared queue for screen ${screen}`, 'QueueService');
-    this.events.emit('queue:updated', screen, []);
+    this.emit('queue:updated', screen, []);
   }
 
-  clearAllQueues() {
+  public clearAllQueues(): void {
     this.queues.clear();
     logger.info('Cleared all queues', 'QueueService');
   }
 
   // Stream Management
-  getNextStream(screen: number): StreamSource | null {
-    const queue = this.queues.get(screen);
-    
-    if (!queue || queue.length === 0) {
-      logger.debug(`No queue or empty queue for screen ${screen}`, 'QueueService');
-      this.events.emit('queue:empty', screen);
-      return null;
-    }
-    
-    while (queue.length > 0) {
-      const nextStream = queue[0];
-      if (!this.watchedStreams.has(nextStream.url)) {
-        queue.shift(); // Remove the stream we're about to use
-        this.watchedStreams.add(nextStream.url);
-        logger.debug(`Found unwatched stream for screen ${screen}: ${nextStream.url}`, 'QueueService');
-        return nextStream;
-      }
-      queue.shift(); // Remove watched stream
-      logger.debug(`Skipping watched stream: ${nextStream.url}`, 'QueueService');
-    }
-    
-    this.events.emit('queue:empty', screen);
-    logger.debug(`No unwatched streams left in queue for screen ${screen}`, 'QueueService');
-    return null;
+  public getNextStream(screen: number): StreamSource | undefined {
+    const queue = this.queues.get(screen) || [];
+    return queue[0];
+  }
+
+  public removeFromQueue(screen: number, index: number): void {
+    const queue = this.queues.get(screen) || [];
+    queue.splice(index, 1);
+    this.queues.set(screen, queue);
   }
 
   // Watched Streams Management
-  markStreamAsWatched(url: string) {
+  public markStreamAsWatched(url: string): void {
     this.watchedStreams.add(url);
   }
 
-  isStreamWatched(url: string): boolean {
+  public isStreamWatched(url: string): boolean {
     return this.watchedStreams.has(url);
   }
 
-  getWatchedStreams(): string[] {
+  public getWatchedStreams(): string[] {
     return Array.from(this.watchedStreams);
   }
 
-  clearWatchedStreams() {
+  public clearWatchedStreams(): void {
     this.watchedStreams.clear();
     logger.info('Cleared watched streams history', 'QueueService');
   }
 
   // Event Handling
-  on<K extends keyof QueueEvents>(event: K, listener: QueueEvents[K]) {
-    this.events.on(event, listener);
+  override on<K extends keyof QueueEvents>(event: K, listener: QueueEvents[K]): this {
+    super.on(event, listener);
+    return this;
   }
 
-  off<K extends keyof QueueEvents>(event: K, listener: QueueEvents[K]) {
-    this.events.off(event, listener);
+  override off<K extends keyof QueueEvents>(event: K, listener: QueueEvents[K]): this {
+    super.off(event, listener);
+    return this;
   }
 
   // Add method to check if any streams are unwatched
@@ -127,8 +97,8 @@ export class QueueService {
   }
 
   // Add method to filter unwatched streams
-  filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
-    return streams.filter(stream => !this.watchedStreams.has(stream.url));
+  public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
+    return streams.filter(stream => !this.isStreamWatched(stream.url));
   }
 }
 

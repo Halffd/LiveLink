@@ -342,6 +342,11 @@ export class PlayerService {
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
     try {
+      try { 
+        console.error(new Error().stack);
+      } catch (error) {
+        console.error(error);
+      }
       // Clear the manually closed flag when starting a new stream
       this.manuallyClosedScreens.delete(options.screen);
       
@@ -399,8 +404,10 @@ export class PlayerService {
           '--keep-open=yes',
           '--force-window=yes',
           '--idle=yes',
-          '--loop-playlist=no', // Changed from inf to no to prevent infinite looping
-          '--playlist-start=0'
+          '--loop-playlist=no',
+          '--playlist-start=0',
+          '--no-resume-playback',  // Don't resume from last position
+          '--no-save-position-on-quit'  // Don't save position on quit
         );
 
         // Clean up old playlist files
@@ -423,7 +430,12 @@ export class PlayerService {
       }
 
       const spawnOptions: SpawnOptions & { nice?: number } = {
-        nice: this.getProcessPriority()
+        nice: this.getProcessPriority(),
+        env: {
+          ...process.env,
+          MPV_HOME: path.join(process.cwd(), 'config', 'mpv'),
+          XDG_CONFIG_HOME: path.join(process.cwd(), 'config')
+        }
       };
 
       const playerProcess = spawn(command, args, spawnOptions);
@@ -460,9 +472,12 @@ export class PlayerService {
       playerProcess.on('exit', (code: number | null) => {
         logger.info(`Process for screen ${options.screen} exited with code ${code}`, 'PlayerService');
         
-        // Only restart if the process crashed (non-zero exit code) and wasn't manually stopped
+        // Only restart if:
+        // 1. Process crashed (non-zero exit code)
+        // 2. Not manually stopped
+        // 3. Not at max retries
         if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(options.screen)) {
-          logger.error(`Stream process crashed with code ${code}, restarting...`, 'PlayerService');
+          logger.error(`Stream process crashed with code ${code}, attempting recovery...`, 'PlayerService');
           const retryCount = this.streamRetries.get(options.screen) || 0;
           
           if (retryCount < this.MAX_RETRIES) {
@@ -479,10 +494,17 @@ export class PlayerService {
           } else {
             logger.error(`Max retries (${this.MAX_RETRIES}) reached for screen ${options.screen}`, 'PlayerService');
             this.streamRetries.delete(options.screen);
+            // Try to get next stream from queue
+            this.handleEmptyQueue(options.screen);
+          }
+        } else {
+          // Clean exit or manual stop
+          this.streams.delete(options.screen);
+          if (code === 0) {
+            // Normal exit, try next stream
+            this.handleEmptyQueue(options.screen);
           }
         }
-        
-        this.streams.delete(options.screen);
       });
 
       // Store stream information

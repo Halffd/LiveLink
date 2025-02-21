@@ -192,6 +192,24 @@ router.post('/api/streams/url', async (ctx: Context) => {
       ctx.body = { error: 'URL is required' };
       return;
     }
+
+    // Check if stream is already playing on this screen
+    const activeStreams = streamManager.getActiveStreams();
+    const existingStream = activeStreams.find(s => s.screen === screen);
+    if (existingStream && existingStream.url === url) {
+      ctx.body = { message: 'Stream already playing on this screen' };
+      return;
+    }
+
+    // Check if stream is playing on a higher priority screen
+    const isStreamActive = activeStreams.some(s => 
+      s.url === url && s.screen < (screen || 1)
+    );
+    if (isStreamActive) {
+      ctx.body = { message: 'Stream already playing on higher priority screen' };
+      return;
+    }
+
     const result = await streamManager.startStream({ 
       url, 
       screen: screen || 1, 
