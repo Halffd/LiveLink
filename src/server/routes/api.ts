@@ -186,7 +186,13 @@ router.post('/api/screens/:screen/enable', async (ctx: Context) => {
 // Stream Control
 router.post('/api/streams/url', async (ctx: Context) => {
   try {
-    const { url, screen, quality } = ctx.request.body as { url: string; screen?: number; quality?: string };
+    const { url, screen, quality, notify_only } = ctx.request.body as { 
+      url: string; 
+      screen?: number; 
+      quality?: string;
+      notify_only?: boolean;
+    };
+    
     if (!url) {
       ctx.status = 400;
       ctx.body = { error: 'URL is required' };
@@ -207,6 +213,12 @@ router.post('/api/streams/url', async (ctx: Context) => {
     );
     if (isStreamActive) {
       ctx.body = { message: 'Stream already playing on higher priority screen' };
+      return;
+    }
+
+    // If this is just a notification, don't start the stream
+    if (notify_only) {
+      ctx.body = { message: 'Stream info updated' };
       return;
     }
 

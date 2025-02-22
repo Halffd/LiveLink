@@ -248,6 +248,13 @@ function update_screen_info()
         return
     end
     
+    -- Normalize URL if needed
+    if url:match("twitch.tv/") and not url:match("^https://") then
+        url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
+    elseif url:match("youtube.com/") and not url:match("^https://") then
+        url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
+    end
+    
     -- Only update if URL has changed
     if url ~= current_url then
         msg.info("URL changed, updating stream info")
@@ -266,7 +273,8 @@ function update_screen_info()
         local data = utils.format_json({
             url = url,
             screen = screen,
-            quality = mp.get_property("options/quality") or "best"
+            quality = mp.get_property("options/quality") or "best",
+            notify_only = true  -- Add flag to indicate this is just a notification
         })
         
         msg.debug("Sending update to API: " .. data)
@@ -396,7 +404,7 @@ function play_next_stream()
     -- If we have more items in playlist, let MPV handle it
     if playlist_pos + 1 < playlist_count then
         msg.info("Using MPV playlist to play next stream")
-        mp.commandv("playlist-next")
+        mp.commandv("playlist-next", "force")  -- Force next even if at end
     else
         msg.info("Requesting new streams")
         handle_end_of_playlist()
@@ -419,8 +427,8 @@ mp.register_event("file-loaded", function()
     if not string.match(url, "playlist%-screen%d+") then
         msg.debug(string.format("Processing URL: %s", url))
         update_screen_info()
-        -- Mark as watched on startup
-        mark_current_watched()
+        -- Mark as watched after a short delay to ensure stream is actually playing
+        mp.add_timeout(2, mark_current_watched)
     else
         msg.debug("Skipping playlist file processing")
     end

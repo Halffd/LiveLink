@@ -265,7 +265,7 @@ export class PlayerService {
   private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
     const args = [
         '--no-terminal',
-        '--script=' + path.join(this.BASE_LOG_DIR, '..', 'scripts', 'livelink.lua'),
+        '--script=' + path.join(process.cwd(), 'scripts', 'livelink.lua'),
         '--script-opts=screen=' + options.screen,
         '--input-ipc-server=' + path.join('/tmp', `mpv-ipc-${options.screen}`),
         '--log-file=' + path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${new Date().toISOString()}.log`),
@@ -342,11 +342,6 @@ export class PlayerService {
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
     try {
-      try { 
-        console.error(new Error().stack);
-      } catch (error) {
-        console.error(error);
-      }
       // Clear the manually closed flag when starting a new stream
       this.manuallyClosedScreens.delete(options.screen);
       
@@ -363,7 +358,19 @@ export class PlayerService {
       // Get unwatched URLs from the queue for this screen
       const queue = queueService.getQueue(options.screen);
       const unwatchedStreams = queue.filter(source => !queueService.isStreamWatched(source.url));
-      const allUrls = [options.url, ...unwatchedStreams.map(source => source.url)];
+      
+      // Normalize URLs (ensure proper URL format for each platform)
+      const normalizedUrls = [options.url, ...unwatchedStreams.map(source => source.url)].map(url => {
+        // Handle Twitch URLs
+        if (url.includes('twitch.tv/') && !url.startsWith('https://')) {
+          return `https://twitch.tv/${url.split('twitch.tv/')[1]}`;
+        }
+        // Handle YouTube URLs
+        if (url.includes('youtube.com/') && !url.startsWith('https://')) {
+          return `https://youtube.com/${url.split('youtube.com/')[1]}`;
+        }
+        return url;
+      });
 
       // Create log paths
       const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
@@ -374,7 +381,7 @@ export class PlayerService {
       const command = useStreamlink ? 'streamlink' : 'mpv';
 
       let args: string[] = [];
-      const scriptsPath = path.join(this.BASE_LOG_DIR, '..', 'scripts', 'livelink.lua');
+      const scriptsPath = path.join(process.cwd(), 'scripts', 'livelink.lua');
 
       if (useStreamlink) {
         // Streamlink configuration
@@ -383,18 +390,21 @@ export class PlayerService {
           '--player',
           'mpv',
           '--player-args',
-          `--title=LiveLink-${options.screen} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --volume=${screenConfig.volume} --input-ipc-server=/tmp/mpv-ipc-${options.screen} --log-file=${mpvLogPath} --screen=${options.screen} --scripts=${scriptsPath} ${screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'}`
+          `--title=LiveLink-${options.screen} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --volume=${screenConfig.volume} --input-ipc-server=/tmp/mpv-ipc-${options.screen} --log-file=${mpvLogPath} --script=${scriptsPath} --script-opts=screen=${options.screen} ${screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'}`
         );
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
 
         // Create a temporary m3u8 playlist file
-        const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}-${Date.now()}.m3u8`);
+        const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}.m3u8`);
         await fs.promises.mkdir(path.dirname(playlistPath), { recursive: true });
         
         // Write m3u8 playlist file with proper format
-        const m3u8Content = allUrls.map(url => `${url}`).join('\n');
+        const m3u8Content = '#EXTM3U\n' + normalizedUrls.map(url => {
+          return `#EXTINF:-1,${url}\n${url}`;
+        }).join('\n');
+        
         await fs.promises.writeFile(playlistPath, m3u8Content, 'utf8');
 
         // Add player options and playlist file as the first argument
@@ -406,24 +416,25 @@ export class PlayerService {
           '--idle=yes',
           '--loop-playlist=no',
           '--playlist-start=0',
-          '--no-resume-playback',  // Don't resume from last position
-          '--no-save-position-on-quit'  // Don't save position on quit
+          '--no-resume-playback',
+          '--no-save-position-on-quit',
+          '--playlist-pos=0'  // Always start from the first item
         );
 
-        // Clean up old playlist files
+        // Clean up old playlist files except current one
         const playlistDir = path.join(this.BASE_LOG_DIR, 'playlists');
         fs.readdir(playlistDir, (err, files) => {
           if (err) return;
-          const oldPlaylists = files.filter(f => f.startsWith(`playlist-screen${options.screen}-`));
-          oldPlaylists.forEach(file => {
-            if (file !== path.basename(playlistPath)) {
-              fs.unlink(path.join(playlistDir, file), () => {});
+          files.forEach(file => {
+            const filePath = path.join(playlistDir, file);
+            if (filePath !== playlistPath && file.startsWith(`playlist-screen${options.screen}`)) {
+              fs.unlink(filePath, () => {});
             }
           });
         });
       }
 
-      logger.info(`Starting ${command} with playlist of ${allUrls.length} streams`, 'PlayerService');
+      logger.info(`Starting ${command} with playlist of ${normalizedUrls.length} streams`, 'PlayerService');
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
       if (useStreamlink) {
         logger.info(`Logging Streamlink output to ${streamlinkLogPath}`, 'PlayerService');
@@ -433,8 +444,8 @@ export class PlayerService {
         nice: this.getProcessPriority(),
         env: {
           ...process.env,
-          MPV_HOME: path.join(process.cwd(), 'config', 'mpv'),
-          XDG_CONFIG_HOME: path.join(process.cwd(), 'config')
+          MPV_HOME: undefined,
+          XDG_CONFIG_HOME: undefined
         }
       };
 
