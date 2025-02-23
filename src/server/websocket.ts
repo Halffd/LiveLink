@@ -1,7 +1,7 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { Server } from 'http';
 import type { Stream, StreamSource } from '../types/stream.js';
-import { StreamManager } from './stream-manager.js';
+import { streamManager, type StreamManager } from './stream_manager.js';
 
 export class WebSocketService {
   private wss: WebSocketServer;

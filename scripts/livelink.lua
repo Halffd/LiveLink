@@ -19,6 +19,10 @@ local info_display_time = 10 -- How long to show info overlay (seconds)
 -- Track already marked streams
 local marked_streams = {}
 
+-- Track playlist state
+local playlist_initialized = false
+local manual_navigation = false
+
 -- Helper function to make HTTP requests with better error handling
 function http_request(url, method, headers, data)
     msg.debug(string.format("Making HTTP request to: %s [%s]", url, method or "GET"))
@@ -427,83 +431,102 @@ function refresh_stream()
     end
 end
 
--- Play next stream from queue
-function play_next_stream()
+-- Add this new function for playlist initialization
+function initialize_playlist()
+    if playlist_initialized then return end
+    
     local screen = get_current_screen()
     if not screen then return end
-
-    msg.info("Attempting to play next stream")
     
-    -- Get playlist info
-    local playlist_pos = mp.get_property_number("playlist-pos") or 0
-    local playlist_count = mp.get_property_number("playlist-count") or 0
+    msg.info("Initializing playlist for screen " .. screen)
     
-    msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
+    -- Check for remaining streams file
+    local remaining_path = string.format("/home/all/repos/LiveLink/logs/playlists/remaining-screen%d.json", screen)
+    local remaining_file = io.open(remaining_path, "r")
     
-    -- If we have more items in playlist, let MPV handle it
-    if playlist_pos + 1 < playlist_count then
-        msg.info("Using MPV playlist to play next stream")
-        mp.commandv("playlist-next", "force")  -- Force next even if at end
-    else
-        -- Check for remaining streams
-        local remaining_path = string.format("/home/all/repos/LiveLink/logs/playlists/remaining-screen%d.json", screen)
-        local remaining_file = io.open(remaining_path, "r")
+    if remaining_file then
+        local content = remaining_file:read("*all")
+        remaining_file:close()
         
-        if remaining_file then
-            local content = remaining_file:read("*all")
-            remaining_file:close()
-            
-            if content and content ~= "" then
-                local remaining = utils.parse_json(content)
-                if remaining and #remaining > 0 then
-                    msg.info(string.format("Loading next chunk of %d streams", math.min(10, #remaining)))
-                    
-                    -- Take next 10 streams
-                    local next_chunk = {}
-                    local remaining_streams = {}
-                    
-                    for i, url in ipairs(remaining) do
-                        if i <= 10 then
-                            table.insert(next_chunk, url)
-                        else
-                            table.insert(remaining_streams, url)
-                        end
-                    end
-                    
-                    -- Add next chunk to playlist
-                    for _, url in ipairs(next_chunk) do
-                        mp.commandv("loadfile", url, "append")
-                    end
-                    
-                    -- Save remaining streams
-                    if #remaining_streams > 0 then
-                        local f = io.open(remaining_path, "w")
-                        if f then
-                            f:write(utils.format_json(remaining_streams))
-                            f:close()
-                        end
-                    else
-                        -- No more streams, remove the file
-                        os.remove(remaining_path)
-                    end
-                    
-                    -- Start playing first stream in chunk
-                    mp.commandv("playlist-next", "force")
-                    return
-                else
-                    -- No more streams in remaining file, remove it
-                    os.remove(remaining_path)
+        if content and content ~= "" then
+            local remaining = utils.parse_json(content)
+            if remaining and #remaining > 0 then
+                msg.info(string.format("Found %d streams to load", #remaining))
+                
+                -- Load all streams into playlist
+                for _, url in ipairs(remaining) do
+                    mp.commandv("loadfile", url, "append")
                 end
+                
+                -- Remove the remaining streams file since we've loaded everything
+                os.remove(remaining_path)
+                
+                playlist_initialized = true
+                return true
             end
         end
-        
-        msg.info("End of playlist reached")
-        -- Don't request new streams, just stop playback
-        mp.commandv("stop")
     end
+    
+    return false
 end
 
--- Register event handlers
+-- Update the playlist position observer
+mp.observe_property("playlist-pos", "number", function(name, value)
+    if value == nil then return end
+    
+    local url = mp.get_property("path")
+    if not url then return end
+    
+    -- Skip playlist files
+    if string.match(url, "playlist%-screen%d+") then
+        msg.debug("Skipping playlist file processing")
+        return
+    end
+    
+    msg.info(string.format("Playlist position changed to %d: %s", value, url))
+    
+    -- Initialize playlist if needed
+    if not playlist_initialized then
+        initialize_playlist()
+    end
+    
+    -- Check if this URL is already playing on another screen
+    local is_duplicate, other_screen = check_url_duplicate(url)
+    if is_duplicate then
+        msg.warn(string.format("URL already playing on screen %d, skipping", other_screen))
+        if not manual_navigation then
+            -- Only auto-skip if not manually navigating
+            mp.commandv("playlist-next", "force")
+        end
+        return
+    end
+    
+    -- Update stream info for the new position
+    update_screen_info()
+    
+    -- Mark as watched after a short delay to ensure stream is actually playing
+    mp.add_timeout(2, mark_current_watched)
+end)
+
+-- Add handlers for manual navigation
+mp.add_key_binding("ENTER", "playlist-play-selected", function()
+    manual_navigation = true
+    local pos = mp.get_property_number("playlist-pos") or 0
+    local url = mp.get_property(string.format("playlist/%d/filename", pos))
+    
+    if url then
+        msg.info("Manual selection of playlist item: " .. url)
+        -- Force load the selected URL
+        mp.commandv("loadfile", url, "replace")
+    end
+    
+    -- Reset manual navigation flag after a short delay
+    mp.add_timeout(1, function()
+        manual_navigation = false
+    end)
+end)
+
+-- Update the file-loaded event handler
 mp.register_event("file-loaded", function()
     msg.info("File loaded event triggered")
     local url = mp.get_property("path")
@@ -514,6 +537,11 @@ mp.register_event("file-loaded", function()
         url or "nil",
         playlist_pos + 1,
         playlist_count))
+    
+    -- Initialize playlist if needed
+    if not playlist_initialized then
+        initialize_playlist()
+    end
     
     -- Skip playlist files
     if not string.match(url, "playlist%-screen%d+") then
@@ -526,6 +554,40 @@ mp.register_event("file-loaded", function()
     end
 end)
 
+-- Update play_next_stream function
+function play_next_stream()
+    local screen = get_current_screen()
+    if not screen then return end
+
+    msg.info("Attempting to play next stream")
+    
+    -- Initialize playlist if needed
+    if not playlist_initialized and initialize_playlist() then
+        -- If we just initialized the playlist, start playing
+        mp.commandv("playlist-play-index", "0")
+        return
+    end
+    
+    -- Get playlist info
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    
+    msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
+    
+    -- If we have more items in playlist, let MPV handle it
+    if playlist_pos + 1 < playlist_count then
+        msg.info("Using MPV playlist to play next stream")
+        mp.commandv("playlist-next", "force")
+        return
+    end
+    
+    -- If we reach here, we've reached the end of the playlist
+    msg.info("End of playlist reached")
+    -- Request new streams from the server
+    handle_end_of_playlist()
+end
+
+-- Register event handlers
 mp.register_event("end-file", function(event)
     msg.info(string.format("File ended event triggered: %s (playlist-pos: %s/%s)", 
         event.reason or "unknown reason",
