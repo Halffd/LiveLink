@@ -118,7 +118,15 @@ export class StreamManager extends EventEmitter {
       process.kill();
       this.processes.delete(screen);
       this.activeStreams.delete(screen);
-      this.emit('streamUpdate', { screen, status: 'stopped' } as Stream);
+      this.emit('streamUpdate', {
+        screen,
+        url: '',
+        quality: '',
+        platform: 'twitch',  // Default platform
+        playerStatus: 'stopped',
+        volume: 0,
+        process: null
+      } as Stream);
     }
   }
 

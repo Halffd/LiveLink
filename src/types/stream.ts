@@ -1,6 +1,7 @@
 import type { HelixStream } from '@twurple/api';
 import type { Video, Channel } from 'holodex.js';
 import type { StreamOutput, StreamError } from './stream_instance.js';
+import type { ChildProcess } from 'child_process';
 
 export interface StreamOptions {
   url: string;
@@ -28,24 +29,31 @@ export type WorkerResponse =
   | { type: 'streamError'; data: StreamError };
 
 export interface Stream {
-  process: NodeJS.Process;
+  process: ChildProcess | null;
   url: string;
   quality: string;
   screen: number;
   title?: string;
   platform: 'youtube' | 'twitch';
+  playerStatus: PlayerStatus;
+  volume: number;
+  error?: string;
+  duration?: number;
 }
+
+export type StreamSourceStatus = 'live' | 'upcoming' | 'ended';
+export type PlayerStatus = 'playing' | 'paused' | 'stopped' | 'error';
 
 export interface StreamSource {
   url: string;
   title?: string;
   platform?: string;
   viewerCount?: number;
-  thumbnailUrl?: string;
-  screen?: number;
+  startTime?: number | string;
+  sourceStatus?: StreamSourceStatus;
   priority?: number;
+  screen?: number;
   sourceName?: string;
-  source?: string;
 }
 
 export interface StreamResponse {
@@ -91,16 +99,6 @@ export interface StreamSourceConfig {
   tags?: string[];
   language?: string;
   channels?: string[]; // For favorite channels
-}
-
-export interface Stream extends StreamSource {
-  screen: number;
-  status: 'playing' | 'paused' | 'stopped' | 'error';
-  quality: string;
-  volume: number;
-  error?: string;
-  startTime?: number;
-  duration?: number;
 }
 
 export interface StreamConfig {
@@ -221,4 +219,12 @@ export type WebSocketMessage =
   | QueueUpdate 
   | ScreenUpdate 
   | SettingsUpdate 
-  | ErrorUpdate; 
+  | ErrorUpdate;
+
+export interface GetStreamsOptions {
+  channels?: string[];
+  organization?: string;
+  limit?: number;
+  sort?: 'viewers' | 'start_scheduled';
+  tags?: string[];
+} 

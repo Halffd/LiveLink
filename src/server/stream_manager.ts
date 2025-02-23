@@ -4,7 +4,8 @@ import type {
   PlayerSettings,
   Config,
   StreamConfig,
-  FavoriteChannels
+  FavoriteChannels,
+  Stream
 } from '../types/stream.js';
 import type { 
   StreamOutput, 
@@ -45,6 +46,12 @@ export class StreamManager extends EventEmitter {
   private queues: Map<number, StreamSource[]> = new Map();
   private readonly RETRY_INTERVAL = 5000; // 5 seconds
   private errorCallback?: (data: StreamError) => void;
+  private manuallyClosedScreens: Set<number> = new Set();
+  private streamRetries: Map<number, number> = new Map();
+  private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
+  private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
+  private fifoPaths: Map<number, string> = new Map();
+  private ipcPaths: Map<number, string> = new Map();
 
   /**
    * Creates a new StreamManager instance
@@ -283,8 +290,80 @@ export class StreamManager extends EventEmitter {
   /**
    * Stops a stream on the specified screen
    */
-  async stopStream(screen: number, isManualStop: boolean = true): Promise<boolean> {
-    return this.playerService.stopStream(screen, isManualStop);
+  async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
+    try {
+      const stream = this.streams.get(screen);
+      if (!stream) {
+        // If no active stream, emit a basic stopped state
+        this.emit('streamUpdate', {
+          screen,
+          url: '',
+          quality: '',
+          platform: 'twitch',  // Default platform
+          playerStatus: 'stopped',
+          volume: 0,
+          process: null
+        } as Stream);
+        return false;
+      }
+
+      // If manual stop, mark the screen as manually closed
+      if (isManualStop) {
+        this.manuallyClosedScreens.add(screen);
+        logger.info(`Screen ${screen} marked as manually closed`, 'StreamManager');
+      }
+
+      // Clear any pending retries
+      this.streamRetries.delete(screen);
+      this.clearInactiveTimer(screen);
+      this.clearStreamRefresh(screen);
+
+      // Cleanup process
+      const process = stream.process;
+      if (process?.pid) {
+        // Double termination pattern
+        process.kill('SIGINT');
+        setTimeout(() => {
+          if (!process.killed) {
+            process.kill('SIGKILL');
+          }
+        }, 1000);
+      }
+
+      // Emit stopped state with stream info
+      this.emit('streamUpdate', {
+        ...stream,
+        playerStatus: 'stopped',
+        error: undefined,
+        process: null
+      } as Stream);
+
+      // Cleanup IPC/FIFO after process death
+      setTimeout(() => {
+        const fifoPath = this.fifoPaths.get(screen);
+        if (fifoPath) {
+          try { 
+            fs.unlinkSync(fifoPath); 
+          } catch {
+            // Ignore error, file may not exist
+            logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'PlayerService');
+          }
+          this.fifoPaths.delete(screen);
+        }
+        this.ipcPaths.delete(screen);
+      }, 2000);
+
+      this.streams.delete(screen);
+      logger.info(`Stream stopped on screen ${screen}${isManualStop ? ' (manual stop)' : ''}`, 'StreamManager');
+      return true;
+    } catch (error) {
+      logger.error(
+        'Failed to stop stream', 
+        'StreamManager', 
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return false;
+    }
   }
 
   /**
@@ -314,7 +393,7 @@ export class StreamManager extends EventEmitter {
    */
   async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
     try {
-      const results: Array<StreamSource & { screen?: number; sourceName?: string }> = [];
+      const results: Array<StreamSource & { screen?: number; sourceName?: string; priority?: number }> = [];
       const streamConfigs = this.config.streams;
       
       for (const streamConfig of streamConfigs) {
@@ -344,7 +423,8 @@ export class StreamManager extends EventEmitter {
               if (source.subtype === 'favorites') {
                 streams = await this.holodexService.getLiveStreams({
                   channels: this.favoriteChannels.holodex,
-                  limit: limit * 2
+                  limit: limit * 2,
+                  sort: 'start_scheduled'  // Sort by scheduled start time
                 });
                 logger.debug(
                   'Fetched %s favorite Holodex streams for screen %s',
@@ -354,15 +434,41 @@ export class StreamManager extends EventEmitter {
               } else if (source.subtype === 'organization' && source.name) {
                 streams = await this.holodexService.getLiveStreams({
                   organization: source.name,
-                  limit
+                  limit,
+                  sort: 'start_scheduled'  // Sort by scheduled start time
                 });
               }
+
+              // Additional sorting for Holodex streams
+              streams.sort((a, b) => {
+                // First by live status (live streams first)
+                if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
+                if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
+                
+                // Then by viewer count for live streams
+                if (a.sourceStatus === 'live' && b.sourceStatus === 'live') {
+                  return (b.viewerCount || 0) - (a.viewerCount || 0);
+                }
+                
+                // Then by scheduled start time
+                const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
+                const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
+                return aTime - bTime;
+              });
+
             } else if (source.type === 'twitch') {
               if (source.subtype === 'favorites') {
                 streams = await this.twitchService.getStreams({
                   channels: this.favoriteChannels.twitch,
-                  limit
+                  limit,
+                  sort: 'viewers'  // Sort by viewer count
                 });
+                // Ensure favorites are always at the top
+                streams.forEach(s => s.priority = (source.priority || 999) - 1);
+              } else if (source.tags?.includes('vtuber')) {
+                streams = await this.twitchService.getVTuberStreams(limit);
+                // Sort VTuber streams by viewer count
+                streams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
               }
             } else if (source.type === 'youtube') {
               if (source.subtype === 'favorites') {
@@ -378,7 +484,7 @@ export class StreamManager extends EventEmitter {
               ...stream,
               screen: screenNumber,
               sourceName: `${source.type}:${source.subtype || 'other'}`,
-              priority: source.priority || 999
+              priority: stream.priority || source.priority || 999
             }));
 
             results.push(...streamsWithMetadata);
@@ -393,8 +499,15 @@ export class StreamManager extends EventEmitter {
         }
       }
 
-      // Sort results by priority
-      results.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+      // Final sorting of all streams
+      results.sort((a, b) => {
+        // First by priority
+        const priorityDiff = (a.priority || 999) - (b.priority || 999);
+        if (priorityDiff !== 0) return priorityDiff;
+
+        // Then by viewer count
+        return (b.viewerCount || 0) - (a.viewerCount || 0);
+      });
 
       return results;
     } catch (error) {
@@ -817,6 +930,22 @@ export class StreamManager extends EventEmitter {
         y: screenConfig.y
       }
     };
+  }
+
+  private clearInactiveTimer(screen: number) {
+    const timer = this.inactiveTimers.get(screen);
+    if (timer) {
+      clearTimeout(timer);
+      this.inactiveTimers.delete(screen);
+    }
+  }
+
+  private clearStreamRefresh(screen: number) {
+    const timer = this.streamRefreshTimers.get(screen);
+    if (timer) {
+      clearTimeout(timer);
+      this.streamRefreshTimers.delete(screen);
+    }
   }
 }
 

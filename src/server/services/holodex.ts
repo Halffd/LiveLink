@@ -15,6 +15,13 @@ interface GetStreamsOptions {
   channels?: string[];
 }
 
+interface GetLiveStreamsOptions {
+  channels?: string[];
+  organization?: string;
+  limit?: number;
+  sort?: 'start_scheduled' | 'available_at' | 'live_viewers';
+}
+
 export class HolodexService implements StreamService {
   private client: HolodexApiClient | null = null;
   private favoriteChannels: string[];
@@ -37,14 +44,19 @@ export class HolodexService implements StreamService {
     }
   }
 
-  async getLiveStreams(options?: GetStreamsOptions): Promise<StreamSource[]> {
+  async getLiveStreams(options: GetLiveStreamsOptions): Promise<StreamSource[]> {
     try {
       if (!this.client) {
         logger.warn('Holodex service not initialized - returning empty streams', 'HolodexService');
         return [];
       }
 
-      const limit = options?.limit || 25;
+      const params: Record<string, any> = {
+        limit: options.limit || 25,
+        sort: options.sort || 'available_at',
+        order: 'asc'
+      };
+
       const organization = options?.organization;
       const channels = options?.channels;
 
@@ -71,17 +83,11 @@ export class HolodexService implements StreamService {
         logger.debug(`Found ${videos.length} live streams from favorite channels`, 'HolodexService');
       } else {
         // Fetch streams by organization or all
-        const params: VideosParam = {
-          limit,
-          status: 'live' as VideoStatus,
-          type: 'stream' as VideoType
-        };
-
         if (organization) {
           params.org = organization;
         }
 
-        logger.debug(`Fetching ${limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
+        logger.debug(`Fetching ${params.limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
         videos = await this.client.getLiveVideos(params);
       }
 
@@ -96,6 +102,23 @@ export class HolodexService implements StreamService {
         })))}`, 'HolodexService');
       }
 
+      // Additional sorting for Holodex streams
+      videos.sort((a, b) => {
+        // First by live status (live streams first)
+        if (a.status === 'live' && b.status !== 'live') return -1;
+        if (a.status !== 'live' && b.status === 'live') return 1;
+        
+        // Then by viewer count for live streams
+        if (a.status === 'live' && b.status === 'live') {
+          return (b.liveViewers || 0) - (a.liveViewers || 0);
+        }
+        
+        // Then by scheduled start time
+        const aTime = a.actualStart ? new Date(a.actualStart).getTime() : 0;
+        const bTime = b.actualStart ? new Date(b.actualStart).getTime() : 0;
+        return aTime - bTime;
+      });
+
       return videos
         .filter(video => !this.isChannelFiltered(video))
         .map(video => ({
@@ -104,7 +127,9 @@ export class HolodexService implements StreamService {
           platform: 'youtube' as const,
           viewerCount: video.liveViewers,
           thumbnail: video.channel?.avatarUrl,
-          startedAt: video.actualStart ? new Date(video.actualStart) : undefined,
+          startTime: video.actualStart ? new Date(video.actualStart).getTime() : undefined,
+          sourceStatus: video.status === 'live' ? 'live' : 
+                       video.status === 'upcoming' ? 'upcoming' : 'ended',
           channelId: video.channel?.channelId,
           organization: video.channel?.organization
         }));

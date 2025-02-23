@@ -315,6 +315,11 @@ function show_stream_info()
     local config = http_request(API_URL .. "/screens/" .. screen)
     local watched = http_request(API_URL .. "/streams/watched")
 
+    -- Get current playlist information
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    local current_url = mp.get_property("path")
+
     -- Format info text
     local info = string.format("Screen %d Info:\n", screen)
     
@@ -329,6 +334,40 @@ function show_stream_info()
         end
     else
         info = info .. "  No active streams\n"
+    end
+
+    -- Current Playlist section
+    info = info .. "\nCurrent Playlist:\n"
+    if playlist_count > 0 then
+        info = info .. string.format("  Position: %d/%d\n", playlist_pos + 1, playlist_count)
+        -- Get and display all playlist items
+        for i = 0, playlist_count - 1 do
+            local item_url = mp.get_property(string.format("playlist/%d/filename", i))
+            local is_current = i == playlist_pos
+            local watched_mark = has_value(watched or {}, item_url) and " (watched)" or ""
+            local current_mark = is_current and " *CURRENT*" or ""
+            info = info .. string.format("  %d: %s%s%s\n", i + 1, item_url, watched_mark, current_mark)
+        end
+    else
+        info = info .. "  Playlist is empty\n"
+    end
+
+    -- Check for remaining streams in JSON file
+    local remaining_path = string.format("/home/all/repos/LiveLink/logs/playlists/remaining-screen%d.json", screen)
+    local remaining_file = io.open(remaining_path, "r")
+    if remaining_file then
+        local content = remaining_file:read("*all")
+        remaining_file:close()
+        if content and content ~= "" then
+            local remaining = utils.parse_json(content)
+            if remaining and #remaining > 0 then
+                info = info .. "\nRemaining Streams:\n"
+                for i, url in ipairs(remaining) do
+                    local watched_mark = has_value(watched or {}, url) and " (watched)" or ""
+                    info = info .. string.format("  %d: %s%s\n", i, url, watched_mark)
+                end
+            end
+        end
     end
 
     -- Queue section
