@@ -367,26 +367,8 @@ export class PlayerService {
       // Stop existing stream if any
       await this.stopStream(options.screen);
 
-      // Get unwatched URLs from the queue for this screen
-      const queue = queueService.getQueue(options.screen);
-      const unwatchedStreams = queue.filter(source => !queueService.isStreamWatched(source.url));
-      
-      // Normalize URLs (ensure proper URL format for each platform)
-      const normalizedUrls = [options.url, ...unwatchedStreams.map(source => source.url)].map(url => {
-        // Handle Twitch URLs
-        if (url.includes('twitch.tv/') && !url.startsWith('https://')) {
-          return `https://twitch.tv/${url.split('twitch.tv/')[1]}`;
-        }
-        // Handle YouTube URLs
-        if (url.includes('youtube.com/') && !url.startsWith('https://')) {
-          return `https://youtube.com/${url.split('youtube.com/')[1]}`;
-        }
-        return url;
-      });
-
       // Create log paths
       const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
-      const streamlinkLogPath = path.join(this.BASE_LOG_DIR, 'streamlink', `streamlink-screen${options.screen}-${Date.now()}.log`);
 
       // Determine whether to use streamlink
       const useStreamlink = this.config.player.preferStreamlink;
@@ -409,47 +391,13 @@ export class PlayerService {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
 
-        // Create a temporary m3u8 playlist file with initial chunk
-        const INITIAL_CHUNK_SIZE = 10; // Start with first 10 streams
-        const initialUrls = normalizedUrls.slice(0, INITIAL_CHUNK_SIZE);
-        const remainingUrls = normalizedUrls.slice(INITIAL_CHUNK_SIZE);
-        
-        const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}.m3u8`);
-        await fs.promises.mkdir(path.dirname(playlistPath), { recursive: true });
-        
-        // Write initial m3u8 playlist file
-        const m3u8Content = '#EXTM3U\n' + initialUrls.map(url => {
-          return `#EXTINF:-1,${url}\n${url}`;
-        }).join('\n');
-        
-        await fs.promises.writeFile(playlistPath, m3u8Content, 'utf8');
+        // Add the URL as the first argument
+        args.unshift(options.url);
 
-        // Add player options and playlist file as the first argument
-        args.unshift(playlistPath);
-        args.push(
-          '--script-opts=ytdl_hook-ytdl_path=yt-dlp',
-          '--keep-open=yes',
-          '--force-window=yes',
-          '--idle=yes',
-          '--loop-playlist=no',
-          '--playlist-start=0',
-          '--no-resume-playback',
-          '--no-save-position-on-quit'
-        );
-
-        // Store remaining URLs for dynamic loading
-        if (remainingUrls.length > 0) {
-          const remainingPath = path.join(this.BASE_LOG_DIR, 'playlists', `remaining-screen${options.screen}.json`);
-          await fs.promises.writeFile(remainingPath, JSON.stringify(remainingUrls), 'utf8');
-        }
-
-        logger.info(`Starting ${command} with initial playlist of ${initialUrls.length} streams (${remainingUrls.length} remaining)`, 'PlayerService');
+        logger.info(`Starting ${command} with URL: ${options.url}`, 'PlayerService');
       }
 
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
-      if (useStreamlink) {
-        logger.info(`Logging Streamlink output to ${streamlinkLogPath}`, 'PlayerService');
-      }
 
       const spawnOptions: SpawnOptions & { nice?: number } = {
         nice: this.getProcessPriority(),

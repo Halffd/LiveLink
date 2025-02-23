@@ -185,12 +185,6 @@ function mark_current_watched()
     local path = mp.get_property("path")
     if not path then return end
 
-    -- Skip marking playlist files
-    if string.match(path, "playlist%-screen%d+") then
-        msg.debug("Skipping playlist file")
-        return
-    end
-
     -- Only mark as watched if we've watched at least 30 seconds or 20% of the video
     local duration = mp.get_property_number("duration") or 0
     local position = mp.get_property_number("time-pos") or 0
@@ -220,15 +214,6 @@ function mark_current_watched()
         
         if response then
             msg.info("Stream marked as watched")
-            -- Check if we should move to next stream
-            local playlist_count = mp.get_property_number("playlist-count") or 0
-            local playlist_pos = mp.get_property_number("playlist-pos") or 0
-            
-            if playlist_count > 0 and playlist_pos < playlist_count - 1 then
-                mp.commandv("playlist-next")
-            else
-                handle_end_of_playlist()
-            end
         else
             msg.error("Failed to mark stream as watched")
         end
@@ -440,33 +425,39 @@ function initialize_playlist()
     
     msg.info("Initializing playlist for screen " .. screen)
     
-    -- Check for remaining streams file
-    local remaining_path = string.format("/home/all/repos/LiveLink/logs/playlists/remaining-screen%d.json", screen)
-    local remaining_file = io.open(remaining_path, "r")
-    
-    if remaining_file then
-        local content = remaining_file:read("*all")
-        remaining_file:close()
+    -- Fetch queue from API
+    local response = http_request(API_URL .. "/streams/queue/" .. screen)
+    if response and #response > 0 then
+        msg.info(string.format("Found %d streams in queue", #response))
         
-        if content and content ~= "" then
-            local remaining = utils.parse_json(content)
-            if remaining and #remaining > 0 then
-                msg.info(string.format("Found %d streams to load", #remaining))
-                
-                -- Load all streams into playlist
-                for _, url in ipairs(remaining) do
-                    mp.commandv("loadfile", url, "append")
+        -- Get watched streams to filter
+        local watched = http_request(API_URL .. "/streams/watched")
+        local watched_urls = watched or {}
+        
+        -- Add unwatched streams to playlist
+        local added = 0
+        for _, stream in ipairs(response) do
+            if not has_value(watched_urls, stream.url) then
+                -- Normalize URL if needed
+                local url = stream.url
+                if url:match("twitch.tv/") and not url:match("^https://") then
+                    url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
+                elseif url:match("youtube.com/") and not url:match("^https://") then
+                    url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
                 end
                 
-                -- Remove the remaining streams file since we've loaded everything
-                os.remove(remaining_path)
-                
-                playlist_initialized = true
-                return true
+                msg.debug("Adding to playlist: " .. url)
+                mp.commandv("loadfile", url, "append")
+                added = added + 1
             end
         end
+        
+        msg.info(string.format("Added %d unwatched streams to playlist", added))
+        playlist_initialized = true
+        return true
     end
     
+    msg.info("No streams found in queue")
     return false
 end
 
@@ -476,12 +467,6 @@ mp.observe_property("playlist-pos", "number", function(name, value)
     
     local url = mp.get_property("path")
     if not url then return end
-    
-    -- Skip playlist files
-    if string.match(url, "playlist%-screen%d+") then
-        msg.debug("Skipping playlist file processing")
-        return
-    end
     
     msg.info(string.format("Playlist position changed to %d: %s", value, url))
     
@@ -503,9 +488,6 @@ mp.observe_property("playlist-pos", "number", function(name, value)
     
     -- Update stream info for the new position
     update_screen_info()
-    
-    -- Mark as watched after a short delay to ensure stream is actually playing
-    mp.add_timeout(2, mark_current_watched)
 end)
 
 -- Add handlers for manual navigation
@@ -530,28 +512,27 @@ end)
 mp.register_event("file-loaded", function()
     msg.info("File loaded event triggered")
     local url = mp.get_property("path")
-    local playlist_pos = mp.get_property_number("playlist-pos") or 0
-    local playlist_count = mp.get_property_number("playlist-count") or 0
     
-    msg.debug(string.format("File loaded: %s (playlist pos: %d/%d)", 
-        url or "nil",
-        playlist_pos + 1,
-        playlist_count))
+    -- Skip if no URL
+    if not url then return end
     
     -- Initialize playlist if needed
     if not playlist_initialized then
         initialize_playlist()
     end
     
-    -- Skip playlist files
-    if not string.match(url, "playlist%-screen%d+") then
-        msg.debug(string.format("Processing URL: %s", url))
-        update_screen_info()
-        -- Mark as watched after a short delay to ensure stream is actually playing
-        mp.add_timeout(2, mark_current_watched)
-    else
-        msg.debug("Skipping playlist file processing")
-    end
+    msg.debug(string.format("Processing URL: %s", url))
+    update_screen_info()
+    
+    -- Start watching for duration to mark as watched
+    local watch_timer = nil
+    watch_timer = mp.add_periodic_timer(1, function()
+        mark_current_watched()
+        -- If stream is marked as watched, clear the timer
+        if marked_streams[url] then
+            watch_timer:kill()
+        end
+    end)
 end)
 
 -- Update play_next_stream function
@@ -577,7 +558,10 @@ function play_next_stream()
     -- If we have more items in playlist, let MPV handle it
     if playlist_pos + 1 < playlist_count then
         msg.info("Using MPV playlist to play next stream")
-        mp.commandv("playlist-next", "force")
+        -- Add a small delay before playing next stream
+        mp.add_timeout(1, function()
+            mp.commandv("playlist-next", "force")
+        end)
         return
     end
     
