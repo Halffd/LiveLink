@@ -406,8 +406,61 @@ function play_next_stream()
         msg.info("Using MPV playlist to play next stream")
         mp.commandv("playlist-next", "force")  -- Force next even if at end
     else
-        msg.info("Requesting new streams")
-        handle_end_of_playlist()
+        -- Check for remaining streams
+        local remaining_path = string.format("/home/all/repos/LiveLink/logs/playlists/remaining-screen%d.json", screen)
+        local remaining_file = io.open(remaining_path, "r")
+        
+        if remaining_file then
+            local content = remaining_file:read("*all")
+            remaining_file:close()
+            
+            if content and content ~= "" then
+                local remaining = utils.parse_json(content)
+                if remaining and #remaining > 0 then
+                    msg.info(string.format("Loading next chunk of %d streams", math.min(10, #remaining)))
+                    
+                    -- Take next 10 streams
+                    local next_chunk = {}
+                    local remaining_streams = {}
+                    
+                    for i, url in ipairs(remaining) do
+                        if i <= 10 then
+                            table.insert(next_chunk, url)
+                        else
+                            table.insert(remaining_streams, url)
+                        end
+                    end
+                    
+                    -- Add next chunk to playlist
+                    for _, url in ipairs(next_chunk) do
+                        mp.commandv("loadfile", url, "append")
+                    end
+                    
+                    -- Save remaining streams
+                    if #remaining_streams > 0 then
+                        local f = io.open(remaining_path, "w")
+                        if f then
+                            f:write(utils.format_json(remaining_streams))
+                            f:close()
+                        end
+                    else
+                        -- No more streams, remove the file
+                        os.remove(remaining_path)
+                    end
+                    
+                    -- Start playing first stream in chunk
+                    mp.commandv("playlist-next", "force")
+                    return
+                else
+                    -- No more streams in remaining file, remove it
+                    os.remove(remaining_path)
+                end
+            end
+        end
+        
+        msg.info("End of playlist reached")
+        -- Don't request new streams, just stop playback
+        mp.commandv("stop")
     end
 end
 

@@ -352,6 +352,18 @@ export class PlayerService {
         throw new Error(`Invalid screen configuration for screen ${options.screen}`);
       }
 
+      // Check if there's already a player running for this screen
+      const existingStream = this.streams.get(options.screen);
+      if (existingStream?.process) {
+        // If player exists, just load the new URL
+        logger.info(`Player already exists for screen ${options.screen}, loading new URL`, 'PlayerService');
+        this.sendCommandToScreen(options.screen, `loadfile "${options.url}"`);
+        return {
+          screen: options.screen,
+          message: `Stream loaded on existing player on screen ${options.screen}`
+        };
+      }
+
       // Stop existing stream if any
       await this.stopStream(options.screen);
 
@@ -392,16 +404,21 @@ export class PlayerService {
           '--player-args',
           `--title=LiveLink-${options.screen} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --volume=${screenConfig.volume} --input-ipc-server=/tmp/mpv-ipc-${options.screen} --log-file=${mpvLogPath} --script=${scriptsPath} --script-opts=screen=${options.screen} ${screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'}`
         );
+        logger.info(`Starting ${command} with streamlink`, 'PlayerService');
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
 
-        // Create a temporary m3u8 playlist file
+        // Create a temporary m3u8 playlist file with initial chunk
+        const INITIAL_CHUNK_SIZE = 10; // Start with first 10 streams
+        const initialUrls = normalizedUrls.slice(0, INITIAL_CHUNK_SIZE);
+        const remainingUrls = normalizedUrls.slice(INITIAL_CHUNK_SIZE);
+        
         const playlistPath = path.join(this.BASE_LOG_DIR, 'playlists', `playlist-screen${options.screen}.m3u8`);
         await fs.promises.mkdir(path.dirname(playlistPath), { recursive: true });
         
-        // Write m3u8 playlist file with proper format
-        const m3u8Content = '#EXTM3U\n' + normalizedUrls.map(url => {
+        // Write initial m3u8 playlist file
+        const m3u8Content = '#EXTM3U\n' + initialUrls.map(url => {
           return `#EXTINF:-1,${url}\n${url}`;
         }).join('\n');
         
@@ -417,24 +434,18 @@ export class PlayerService {
           '--loop-playlist=no',
           '--playlist-start=0',
           '--no-resume-playback',
-          '--no-save-position-on-quit',
-          '--playlist-pos=0'  // Always start from the first item
+          '--no-save-position-on-quit'
         );
 
-        // Clean up old playlist files except current one
-        const playlistDir = path.join(this.BASE_LOG_DIR, 'playlists');
-        fs.readdir(playlistDir, (err, files) => {
-          if (err) return;
-          files.forEach(file => {
-            const filePath = path.join(playlistDir, file);
-            if (filePath !== playlistPath && file.startsWith(`playlist-screen${options.screen}`)) {
-              fs.unlink(filePath, () => {});
-            }
-          });
-        });
+        // Store remaining URLs for dynamic loading
+        if (remainingUrls.length > 0) {
+          const remainingPath = path.join(this.BASE_LOG_DIR, 'playlists', `remaining-screen${options.screen}.json`);
+          await fs.promises.writeFile(remainingPath, JSON.stringify(remainingUrls), 'utf8');
+        }
+
+        logger.info(`Starting ${command} with initial playlist of ${initialUrls.length} streams (${remainingUrls.length} remaining)`, 'PlayerService');
       }
 
-      logger.info(`Starting ${command} with playlist of ${normalizedUrls.length} streams`, 'PlayerService');
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
       if (useStreamlink) {
         logger.info(`Logging Streamlink output to ${streamlinkLogPath}`, 'PlayerService');
@@ -505,17 +516,11 @@ export class PlayerService {
           } else {
             logger.error(`Max retries (${this.MAX_RETRIES}) reached for screen ${options.screen}`, 'PlayerService');
             this.streamRetries.delete(options.screen);
-            // Try to get next stream from queue
-            this.handleEmptyQueue(options.screen);
-          }
-        } else {
-          // Clean exit or manual stop
-          this.streams.delete(options.screen);
-          if (code === 0) {
-            // Normal exit, try next stream
-            this.handleEmptyQueue(options.screen);
           }
         }
+        
+        // Clean up
+        this.streams.delete(options.screen);
       });
 
       // Store stream information
