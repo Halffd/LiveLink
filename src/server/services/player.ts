@@ -271,7 +271,8 @@ export class PlayerService {
         '--log-file=' + path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${new Date().toISOString()}.log`),
         '--force-window=yes',
         '--keep-open=yes',
-        '--idle=yes'
+        '--idle=yes',
+        '--vo=x11'
     ];
 
     // Get screen config from player config
