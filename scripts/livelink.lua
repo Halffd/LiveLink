@@ -481,7 +481,7 @@ mp.observe_property("playlist-pos", "number", function(name, value)
         msg.warn(string.format("URL already playing on screen %d, skipping", other_screen))
         if not manual_navigation then
             -- Only auto-skip if not manually navigating
-            mp.commandv("playlist-next", "force")
+            play_next_stream()
         end
         return
     end
@@ -499,7 +499,7 @@ mp.add_key_binding("ENTER", "playlist-play-selected", function()
     if url then
         msg.info("Manual selection of playlist item: " .. url)
         -- Force load the selected URL
-        mp.commandv("loadfile", url, "replace")
+        mp.commandv("loadfile", url)
     end
     
     -- Reset manual navigation flag after a short delay
@@ -542,33 +542,34 @@ function play_next_stream()
 
     msg.info("Attempting to play next stream")
     
-    -- Initialize playlist if needed
-    if not playlist_initialized and initialize_playlist() then
-        -- If we just initialized the playlist, start playing
-        mp.commandv("playlist-play-index", "0")
-        return
-    end
-    
     -- Get playlist info
     local playlist_pos = mp.get_property_number("playlist-pos") or 0
     local playlist_count = mp.get_property_number("playlist-count") or 0
     
     msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
     
-    -- If we have more items in playlist, let MPV handle it
+    -- If we have more items in playlist, try to play next
     if playlist_pos + 1 < playlist_count then
-        msg.info("Using MPV playlist to play next stream")
-        -- Add a small delay before playing next stream
-        mp.add_timeout(1, function()
-            mp.commandv("playlist-next", "force")
-        end)
+        msg.info("Playing next item in playlist")
+        mp.commandv("playlist-next", "force")
         return
     end
     
-    -- If we reach here, we've reached the end of the playlist
-    msg.info("End of playlist reached")
-    -- Request new streams from the server
-    handle_end_of_playlist()
+    -- If we reach here, we need to get new streams
+    msg.info("Reached end of playlist, fetching new streams")
+    
+    -- Clear the current playlist
+    mp.commandv("playlist-clear")
+    playlist_initialized = false
+    
+    -- Initialize new playlist
+    if initialize_playlist() then
+        -- If initialization was successful, start playing
+        mp.commandv("playlist-play-index", "0")
+    else
+        -- If no new streams, request update from server
+        handle_end_of_playlist()
+    end
 end
 
 -- Register event handlers
@@ -578,12 +579,41 @@ mp.register_event("end-file", function(event)
         mp.get_property("playlist-pos"),
         mp.get_property("playlist-count")))
     
-    -- Only proceed if the file ended naturally and it's not a playlist file
-    local url = mp.get_property("path")
-    if event.reason == "eof" and not string.match(url, "playlist%-screen%d+") then
+    -- Only proceed if the file ended naturally
+    if event.reason == "eof" then
         current_url = nil
-        -- Let MPV handle playlist progression
         play_next_stream()
+    end
+end)
+
+-- Add handler for manual playlist navigation
+mp.add_key_binding("ENTER", "playlist-play-selected", function()
+    manual_navigation = true
+    local pos = mp.get_property_number("playlist-pos") or 0
+    local url = mp.get_property(string.format("playlist/%d/filename", pos))
+    
+    if url then
+        msg.info("Manual selection of playlist item: " .. url)
+        -- Force load the selected URL
+        mp.commandv("loadfile", url)
+    end
+    
+    -- Reset manual navigation flag after a short delay
+    mp.add_timeout(1, function()
+        manual_navigation = false
+    end)
+end)
+
+-- Add handler for playlist-next command
+mp.add_key_binding("PGDWN", "playlist-next-stream", function()
+    play_next_stream()
+end)
+
+-- Add handler for playlist-prev command
+mp.add_key_binding("PGUP", "playlist-prev-stream", function()
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    if playlist_pos > 0 then
+        mp.commandv("playlist-prev", "force")
     end
 end)
 
@@ -611,10 +641,38 @@ mp.add_hook("on_load", 50, function()
     return true
 end)
 
+-- Function to auto-start streams on a specific screen
+function auto_start_screen(screen)
+    msg.info(string.format("Auto-starting streams on screen %d", screen))
+    
+    local data = utils.format_json({
+        screen = screen
+    })
+    
+    local response = http_request(
+        API_URL .. "/streams/autostart",
+        "POST",
+        nil,
+        data
+    )
+    
+    if response then
+        mp.osd_message(string.format("Auto-starting streams on screen %d", screen), 3)
+    else
+        mp.osd_message(string.format("Failed to auto-start streams on screen %d", screen), 3)
+    end
+end
+
 -- Register key bindings
 mp.add_key_binding("F2", "show-stream-info", show_stream_info)
 mp.add_key_binding("F5", "refresh-stream", refresh_stream)
 mp.add_key_binding("Ctrl+F5", "clear-watched", clear_watched)
+mp.add_key_binding("Alt+k", "auto-start-screen-2", function()
+    auto_start_screen(2)
+end)
+mp.add_key_binding("Alt+l", "auto-start-screen-1", function()
+    auto_start_screen(1)
+end)
 
 -- Log initialization
 msg.info("LiveLink MPV script initialized")

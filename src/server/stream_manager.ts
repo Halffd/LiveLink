@@ -25,6 +25,8 @@ import { queueService } from './services/queue_service.js';
 import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { KeyboardService, keyboardEvents } from './services/keyboard_service.js';
+import './types/events.js';
 
 /**
  * Manages multiple video streams across different screens
@@ -36,6 +38,7 @@ export class StreamManager extends EventEmitter {
   private holodexService: HolodexService;
   private youtubeService: YouTubeService;
   private playerService: PlayerService;
+  private keyboardService: KeyboardService;
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
   private favoriteChannels: FavoriteChannels = {
@@ -69,6 +72,7 @@ export class StreamManager extends EventEmitter {
     this.twitchService = twitchService;
     this.youtubeService = youtubeService;
     this.playerService = playerService;
+    this.keyboardService = new KeyboardService();
     this.favoriteChannels = {
       holodex: config.favoriteChannels.holodex || [],
       twitch: config.favoriteChannels.twitch || [],
@@ -88,6 +92,7 @@ export class StreamManager extends EventEmitter {
     this.cleanupHandler = () => {
       logger.info('Cleaning up stream processes...', 'StreamManager');
       this.isShuttingDown = true;
+      this.keyboardService.cleanup();
       for (const [screen] of this.streams) {
         this.stopStream(screen).catch(error => {
           logger.error(
@@ -113,6 +118,34 @@ export class StreamManager extends EventEmitter {
     queueService.on('queue:empty', async (screen) => {
       if (!this.isShuttingDown) {
         await this.handleEmptyQueue(screen);
+      }
+    });
+
+    // Handle keyboard events
+    keyboardEvents.on('autostart', async (screen: number) => {
+      try {
+        await this.handleQueueEmpty(screen);
+      } catch (error) {
+        logger.error(
+          `Failed to handle autostart for screen ${screen}`,
+          'StreamManager',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
+    });
+
+    keyboardEvents.on('closeall', async () => {
+      try {
+        const activeStreams = this.getActiveStreams();
+        await Promise.all(
+          activeStreams.map(stream => this.stopStream(stream.screen, true))
+        );
+      } catch (error) {
+        logger.error(
+          'Failed to close all streams',
+          'StreamManager',
+          error instanceof Error ? error : new Error(String(error))
+        );
       }
     });
   }
@@ -678,17 +711,27 @@ export class StreamManager extends EventEmitter {
     }
   }
 
-  async restartStreams(screen?: number): Promise<void> {
+  /**
+   * Handles empty queue by fetching and starting new streams
+   */
+  public async handleQueueEmpty(screen: number): Promise<void> {
+    return this.handleEmptyQueue(screen);
+  }
+
+  /**
+   * Restarts streams on specified screen or all screens
+   */
+  public async restartStreams(screen?: number): Promise<void> {
     if (screen) {
       // Restart specific screen
       await this.stopStream(screen, false);
-      await this.handleEmptyQueue(screen);
+      await this.handleQueueEmpty(screen);
     } else {
       // Restart all screens
       const activeScreens = Array.from(this.streams.keys());
       for (const screenId of activeScreens) {
         await this.stopStream(screenId, false);
-        await this.handleEmptyQueue(screenId);
+        await this.handleQueueEmpty(screenId);
       }
     }
   }
@@ -748,6 +791,7 @@ export class StreamManager extends EventEmitter {
     if (this.cleanupHandler) {
       this.cleanupHandler();
     }
+    this.keyboardService.cleanup();
   }
 
   public sendCommandToScreen(screen: number, command: string): void {

@@ -632,4 +632,58 @@ router.get('/screens/:screen', async (ctx) => {
   }
 });
 
+// Add after other stream routes
+router.post('/api/streams/autostart', async (ctx: Context) => {
+  try {
+    const { screen } = ctx.request.body as { screen?: number };
+    
+    if (screen) {
+      // Start streams on specific screen
+      const screenConfig = streamManager.getScreenConfig(screen);
+      if (!screenConfig) {
+        ctx.status = 400;
+        ctx.body = { error: `Invalid screen number: ${screen}` };
+        return;
+      }
+      
+      // Enable screen if disabled
+      if (!screenConfig.enabled) {
+        await streamManager.enableScreen(screen);
+      }
+      
+      // Stop any existing streams
+      await streamManager.stopStream(screen);
+      
+      // Start new streams
+      await streamManager.handleQueueEmpty(screen);
+      ctx.body = { success: true, message: `Auto-started streams on screen ${screen}` };
+    } else {
+      // Start streams on all screens
+      await streamManager.autoStartStreams();
+      ctx.body = { success: true, message: 'Auto-started streams on all screens' };
+    }
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Add after other stream routes
+router.post('/api/streams/close-all', async (ctx: Context) => {
+  try {
+    // Get all active screens
+    const activeStreams = streamManager.getActiveStreams();
+    
+    // Stop all streams
+    for (const stream of activeStreams) {
+      await streamManager.stopStream(stream.screen, true);
+    }
+    
+    ctx.body = { success: true, message: 'All players closed' };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
 export const apiRouter = router; 
