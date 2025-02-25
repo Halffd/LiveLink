@@ -1,3 +1,61 @@
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
+@import 'bootstrap/dist/css/bootstrap.min.css';
+@import 'bootstrap-icons/font/bootstrap-icons.css';
+
+/* Custom styles that override Bootstrap */
+:root {
+  --bs-primary: #0d6efd;
+  --bs-secondary: #6c757d;
+  --bs-success: #198754;
+  --bs-info: #0dcaf0;
+  --bs-warning: #ffc107;
+  --bs-danger: #dc3545;
+  --bs-light: #f8f9fa;
+  --bs-dark: #212529;
+  --bs-dark-custom: #1a1a1a;
+  --bs-card-dark: #2c2c2c;
+  --bs-card-header-dark: #222;
+}
+
+/* Dark theme overrides */
+.bg-dark-custom {
+  background-color: var(--bs-dark-custom);
+}
+
+.text-light-custom {
+  color: var(--bs-light);
+}
+
+/* Custom card styles */
+.card-dark {
+  background-color: var(--bs-card-dark);
+  border-color: #444;
+  color: var(--bs-light);
+}
+
+.card-header-dark {
+  background-color: var(--bs-card-header-dark);
+  border-color: #444;
+  color: var(--bs-light);
+}
+
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #333;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #666;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #888;
+}

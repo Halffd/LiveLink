@@ -2,22 +2,39 @@
     import { page } from '$app/stores';
 </script>
 
-<nav class="bg-gray-900 text-white p-4">
-    <div class="container mx-auto flex items-center justify-between">
-        <div class="text-xl font-bold">LiveLink</div>
-        <div class="space-x-4">
-            <a
-                href="/"
-                class="px-3 py-2 rounded hover:bg-gray-800 {$page.url.pathname === '/' ? 'bg-gray-800' : ''}"
-            >
-                Streams
-            </a>
-            <a
-                href="/settings"
-                class="px-3 py-2 rounded hover:bg-gray-800 {$page.url.pathname === '/settings' ? 'bg-gray-800' : ''}"
-            >
-                Settings
-            </a>
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/">LiveLink</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav">
+                <li class="nav-item">
+                    <a 
+                        href="/" 
+                        class="nav-link {$page.url.pathname === '/' ? 'active' : ''}"
+                    >
+                        Home
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a 
+                        href="/streams" 
+                        class="nav-link {$page.url.pathname === '/streams' ? 'active' : ''}"
+                    >
+                        Streams
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a 
+                        href="/settings" 
+                        class="nav-link {$page.url.pathname === '/settings' ? 'active' : ''}"
+                    >
+                        Settings
+                    </a>
+                </li>
+            </ul>
         </div>
     </div>
 </nav> 

@@ -88,19 +88,19 @@
     onMount(fetchStreams);
 </script>
 
-<div class="space-y-6 p-6">
-    <div class="flex justify-between items-center">
-        <h1 class="text-2xl font-bold">Stream Manager</h1>
-        <div class="space-x-4">
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">Stream Manager</h1>
+        <div class="d-flex gap-2">
             <button
                 on:click={autoStartStreams}
-                class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+                class="btn btn-success"
             >
                 Auto-Start Streams
             </button>
             <button
                 on:click={stopAllStreams}
-                class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white"
+                class="btn btn-danger"
                 disabled={streams.length === 0}
             >
                 Stop All Streams
@@ -109,86 +109,117 @@
     </div>
 
     {#if error}
-        <div class="bg-red-500 text-white p-4 rounded">
-            {error}
-            <button class="ml-4 underline" on:click={() => error = null}>Dismiss</button>
+        <div class="alert alert-danger alert-dismissible fade show mb-4">
+            <strong>Error!</strong> {error}
+            <button type="button" class="btn-close" on:click={() => error = null}></button>
         </div>
     {/if}
 
-    <div class="space-y-4">
-        <div class="grid grid-cols-3 gap-4">
-            <input 
-                type="text" 
-                bind:value={url} 
-                placeholder="Stream URL"
-                class="px-4 py-2 rounded bg-gray-700"
-            />
-            <select
-                bind:value={selectedScreen}
-                class="px-4 py-2 rounded bg-gray-700"
-            >
-                {#each screenConfigs as config}
-                    <option value={config.screen}>
-                        Screen {config.screen} {config.enabled ? '' : '(Disabled)'}
-                    </option>
-                {/each}
-            </select>
-            <select 
-                bind:value={quality}
-                class="px-4 py-2 rounded bg-gray-700"
-            >
-                {#each qualities as q}
-                    <option value={q}>{q}</option>
-                {/each}
-            </select>
+    <div class="card card-dark mb-4">
+        <div class="card-header card-header-dark">
+            <h5 class="mb-0">Add Stream</h5>
         </div>
-        <div class="flex justify-end">
-            <button 
-                on:click={addStream}
-                class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
-                disabled={!url}
-            >
-                Add Stream
-            </button>
-        </div>
-
-        <div class="space-y-4">
-            <h2 class="text-xl font-semibold">Active Streams</h2>
-            {#if streams.length === 0}
-                <p class="text-gray-400">No active streams</p>
-            {:else}
-                <div class="space-y-4">
-                    {#each streams as stream (stream.screen)}
-                        <div class="bg-gray-800 rounded-lg overflow-hidden">
-                            <div class="p-4">
-                                <div class="flex justify-between items-start mb-4">
-                                    <div>
-                                        <h3 class="font-medium text-lg">Screen {stream.screen}</h3>
-                                        <p class="text-sm text-gray-400">{stream.url}</p>
-                                        <p class="text-sm text-gray-400">Quality: {stream.quality}</p>
-                                    </div>
-                                    <div class="space-x-2">
-                                        <button 
-                                            on:click={() => toggleScreen(stream.screen)}
-                                            class="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-white"
-                                        >
-                                            {screenConfigs.find(c => c.screen === stream.screen)?.enabled ? 'Disable' : 'Enable'}
-                                        </button>
-                                        <button 
-                                            on:click={() => stopStream(stream.screen)}
-                                            class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
-                                        >
-                                            Stop
-                                        </button>
-                                    </div>
-                                </div>
-                                <PlayerControls {stream} />
-                            </div>
-                            <QueueList screen={stream.screen} queue={stream.queue || []} />
-                        </div>
-                    {/each}
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label for="streamUrl" class="form-label">Stream URL</label>
+                    <input 
+                        type="text" 
+                        id="streamUrl"
+                        class="form-control bg-dark text-light border-secondary" 
+                        bind:value={url} 
+                        placeholder="Enter stream URL"
+                    />
                 </div>
-            {/if}
+                <div class="col-md-3">
+                    <label for="screenSelect" class="form-label">Screen</label>
+                    <select
+                        id="screenSelect"
+                        bind:value={selectedScreen}
+                        class="form-select bg-dark text-light border-secondary"
+                    >
+                        {#each screenConfigs as config}
+                            <option value={config.screen}>
+                                Screen {config.screen} {config.enabled ? '' : '(Disabled)'}
+                            </option>
+                        {/each}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="qualitySelect" class="form-label">Quality</label>
+                    <select 
+                        id="qualitySelect"
+                        bind:value={quality}
+                        class="form-select bg-dark text-light border-secondary"
+                    >
+                        {#each qualities as q}
+                            <option value={q}>{q}</option>
+                        {/each}
+                    </select>
+                </div>
+            </div>
+            <div class="d-flex justify-content-end mt-3">
+                <button 
+                    on:click={addStream}
+                    class="btn btn-primary"
+                    disabled={!url}
+                >
+                    Add Stream
+                </button>
+            </div>
         </div>
     </div>
+
+    <h2 class="h4 mb-3">Active Streams</h2>
+    {#if streams.length === 0}
+        <div class="alert alert-secondary">No active streams</div>
+    {:else}
+        <div class="row g-4">
+            {#each streams as stream (stream.screen)}
+                <div class="col-12">
+                    <div class="card card-dark">
+                        <div class="card-header card-header-dark d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">Screen {stream.screen}</h5>
+                            <div class="d-flex gap-2">
+                                <button 
+                                    on:click={() => toggleScreen(stream.screen)}
+                                    class="btn btn-sm {screenConfigs.find(c => c.screen === stream.screen)?.enabled ? 'btn-warning' : 'btn-success'}"
+                                >
+                                    {screenConfigs.find(c => c.screen === stream.screen)?.enabled ? 'Disable' : 'Enable'}
+                                </button>
+                                <button 
+                                    on:click={() => stopStream(stream.screen)}
+                                    class="btn btn-sm btn-danger"
+                                >
+                                    Stop
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="mb-3">
+                                <p class="mb-1"><strong>URL:</strong> <span class="text-muted">{stream.url}</span></p>
+                                <p class="mb-0"><strong>Quality:</strong> <span class="text-muted">{stream.quality}</span></p>
+                            </div>
+                            <PlayerControls {stream} />
+                            <QueueList screen={stream.screen} queue={stream.queue || []} />
+                        </div>
+                    </div>
+                </div>
+            {/each}
+        </div>
+    {/if}
 </div>
+
+<style>
+    .card-dark {
+        background-color: #2c2c2c;
+        border-color: #444;
+        color: #f8f9fa;
+    }
+    
+    .card-header-dark {
+        background-color: #222;
+        border-color: #444;
+        color: #f8f9fa;
+    }
+</style>

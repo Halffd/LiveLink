@@ -58,67 +58,100 @@
     }
     draggedIndex = null;
   }
+  
+  function removeFromQueue(index: number) {
+    streamQueues.update(queues => {
+      const currentQueue = [...(queues.get(screen) || [])];
+      currentQueue.splice(index, 1);
+      queues.set(screen, currentQueue);
+      return queues;
+    });
+  }
 </script>
 
-<div class="mt-6">
-  <h3 class="text-lg font-semibold mb-4">Queue</h3>
-  
-  {#if queue.length === 0}
-    <div class="text-center py-4 bg-gray-700 rounded text-gray-400">
-      Queue is empty
+<div class="mt-4">
+  <div class="card card-dark">
+    <div class="card-header card-header-dark d-flex justify-content-between align-items-center">
+      <h5 class="mb-0">Queue</h5>
+      <span class="badge bg-info">{queue.length}</span>
     </div>
-  {:else}
-    <div class="space-y-2">
-      {#each queue as stream, i}
-        <div
-          class="bg-gray-700 p-3 rounded-lg cursor-move hover:bg-gray-600 transition-colors"
-          draggable="true"
-          role="listitem"
-          ondragstart={(e) => handleDragStart(e, i)}
-          ondragover={(e) => handleDragOver(e, i)}
-          ondrop={(e) => handleDrop(e, i)}
-        >
-          <div class="flex justify-between items-start">
-            <div class="space-y-1">
-              <h4 class="font-medium truncate max-w-[300px]">
-                {stream.title || 'Untitled Stream'}
-              </h4>
-              <p class="text-sm text-gray-400 truncate max-w-[300px]">
-                {stream.url}
-              </p>
-              {#if stream.viewerCount !== undefined}
-                <p class="text-sm text-gray-400">
-                  {stream.viewerCount.toLocaleString()} viewers
-                </p>
-              {/if}
-            </div>
-
-            <div class="flex items-center space-x-2">
-              {#if stream.platform}
-                <span class="text-xs px-2 py-1 rounded bg-gray-800 text-gray-300">
-                  {stream.platform}
-                </span>
-              {/if}
-              <button
-                class="p-1.5 rounded hover:bg-gray-500 transition-colors"
-                aria-label="Remove from queue"
-                onclick={() => {
-                  streamQueues.update(queues => {
-                    const currentQueue = [...(queues.get(screen) || [])];
-                    currentQueue.splice(i, 1);
-                    queues.set(screen, currentQueue);
-                    return queues;
-                  });
-                }}
-              >
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-          </div>
+    
+    <div class="card-body">
+      {#if queue.length === 0}
+        <div class="alert alert-secondary text-center">
+          Queue is empty
         </div>
-      {/each}
+      {:else}
+        <div class="list-group">
+          {#each queue as stream, i}
+            <div
+              class="list-group-item list-group-item-action bg-dark text-light border-secondary"
+              draggable="true"
+              role="listitem"
+              ondragstart={(e) => handleDragStart(e, i)}
+              ondragover={(e) => handleDragOver(e, i)}
+              ondrop={(e) => handleDrop(e, i)}
+            >
+              <div class="d-flex justify-content-between align-items-start">
+                <div>
+                  <h6 class="mb-1 text-truncate" style="max-width: 300px;">
+                    {stream.title || 'Untitled Stream'}
+                  </h6>
+                  <p class="mb-1 text-muted small text-truncate" style="max-width: 300px;">
+                    {stream.url}
+                  </p>
+                  {#if stream.viewerCount !== undefined}
+                    <span class="badge bg-secondary">
+                      {stream.viewerCount.toLocaleString()} viewers
+                    </span>
+                  {/if}
+                </div>
+
+                <div class="d-flex align-items-center">
+                  {#if stream.platform}
+                    <span class="badge bg-primary me-2">
+                      {stream.platform}
+                    </span>
+                  {/if}
+                  <button
+                    class="btn btn-sm btn-outline-danger"
+                    aria-label="Remove from queue"
+                    onclick={() => removeFromQueue(i)}
+                  >
+                    <i class="bi bi-x"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
-  {/if}
-</div> 
+  </div>
+</div>
+
+<style>
+  .card-dark {
+    background-color: #2c2c2c;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  .card-header-dark {
+    background-color: #222;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  /* Drag and drop styling */
+  [draggable=true] {
+    cursor: move;
+  }
+  
+  /* Bootstrap Icons fallback */
+  .bi-x::before {
+    content: "×";
+    font-size: 1.5rem;
+    line-height: 1;
+  }
+</style> 

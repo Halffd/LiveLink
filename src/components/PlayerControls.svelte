@@ -6,7 +6,7 @@
     stream: Stream;
   }>();
 
-  let volume = $state(50);
+  let volume = $state(stream.volume || 50);
   let seeking = $state(false);
   let error = $state<string | null>(null);
 
@@ -54,93 +54,109 @@
   }
 </script>
 
-<div class="flex items-center space-x-4 bg-gray-800 p-4 rounded-lg">
-  {#if error}
-    <div class="absolute top-0 right-0 m-4 bg-red-500 text-white px-4 py-2 rounded shadow">
-      {error}
+<div class="card card-dark mb-4">
+  <div class="card-header card-header-dark">
+    <h5 class="mb-0">Player Controls</h5>
+  </div>
+  
+  <div class="card-body">
+    {#if error}
+      <div class="alert alert-danger alert-dismissible fade show mb-3">
+        <strong>Error!</strong> {error}
+        <button type="button" class="btn-close" on:click={() => error = null}></button>
+      </div>
+    {/if}
+
+    <div class="d-flex align-items-center gap-3">
+      <button
+        class="btn btn-outline-light"
+        on:click={togglePause}
+        title="Play/Pause"
+      >
+        <i class="bi bi-play-fill"></i>
+      </button>
+
+      <div class="d-flex gap-2">
+        <button
+          class="btn btn-outline-light"
+          on:click={() => handleSeek(-10)}
+          title="Rewind 10s"
+          disabled={seeking}
+        >
+          <i class="bi bi-rewind-fill"></i>
+        </button>
+
+        <button
+          class="btn btn-outline-light"
+          on:click={() => handleSeek(10)}
+          title="Forward 10s"
+          disabled={seeking}
+        >
+          <i class="bi bi-fast-forward-fill"></i>
+        </button>
+      </div>
+
+      <div class="d-flex align-items-center flex-grow-1 gap-2">
+        <i class="bi bi-volume-up"></i>
+        <input
+          type="range"
+          class="form-range"
+          min="0"
+          max="100"
+          bind:value={volume}
+          on:change={handleVolumeChange}
+        />
+      </div>
+
+      <button
+        class="btn btn-outline-light"
+        on:click={restartStream}
+        title="Restart Stream"
+      >
+        <i class="bi bi-arrow-repeat"></i>
+      </button>
     </div>
-  {/if}
-
-  <button
-    class="p-2 hover:bg-gray-700 rounded"
-    on:click={togglePause}
-    title="Play/Pause"
-  >
-    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width="2"
-        d="M14 5l7 7m0 0l-7 7m7-7H3"
-      />
-    </svg>
-  </button>
-
-  <div class="flex items-center space-x-2">
-    <button
-      class="p-2 hover:bg-gray-700 rounded"
-      on:click={() => handleSeek(-10)}
-      title="Rewind 10s"
-      disabled={seeking}
-    >
-      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z"
-        />
-      </svg>
-    </button>
-
-    <button
-      class="p-2 hover:bg-gray-700 rounded"
-      on:click={() => handleSeek(10)}
-      title="Forward 10s"
-      disabled={seeking}
-    >
-      <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          stroke-width="2"
-          d="M11.933 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zM19.933 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z"
-        />
-      </svg>
-    </button>
+    
+    <div class="mt-3">
+      <div class="d-flex justify-content-between text-muted small">
+        <div>Status: <span class="badge {stream.playerStatus === 'playing' ? 'bg-success' : stream.playerStatus === 'paused' ? 'bg-warning text-dark' : stream.playerStatus === 'error' ? 'bg-danger' : 'bg-secondary'}">{stream.playerStatus || 'unknown'}</span></div>
+        <div>Volume: {volume}%</div>
+      </div>
+    </div>
   </div>
+</div>
 
-  <div class="flex items-center space-x-2 flex-1">
-    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width="2"
-        d="M15.536 8.464a5 5 0 010 7.072M12 9.5l-3-3m0 0l-3 3m3-3v12"
-      />
-    </svg>
-    <input
-      type="range"
-      min="0"
-      max="100"
-      bind:value={volume}
-      on:change={handleVolumeChange}
-      class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
-    />
-  </div>
-
-  <button
-    class="p-2 hover:bg-gray-700 rounded"
-    on:click={restartStream}
-    title="Restart Stream"
-  >
-    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        stroke-width="2"
-        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-      />
-    </svg>
-  </button>
-</div> 
+<style>
+  .card-dark {
+    background-color: #2c2c2c;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  .card-header-dark {
+    background-color: #222;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  /* Bootstrap Icons fallback */
+  .bi-play-fill::before {
+    content: "▶";
+  }
+  
+  .bi-rewind-fill::before {
+    content: "◀◀";
+  }
+  
+  .bi-fast-forward-fill::before {
+    content: "▶▶";
+  }
+  
+  .bi-volume-up::before {
+    content: "🔊";
+  }
+  
+  .bi-arrow-repeat::before {
+    content: "↻";
+  }
+</style> 

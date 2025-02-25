@@ -6,12 +6,20 @@
 
 	onMount(() => {
 		initializeStores();
+		
+		// Initialize Bootstrap JavaScript components
+		if (typeof document !== 'undefined') {
+			// Import Bootstrap JS
+			import('bootstrap/dist/js/bootstrap.bundle.min.js').then(() => {
+				console.log('Bootstrap JS loaded');
+			});
+		}
 	});
 </script>
 
-<div class="min-h-screen bg-gray-900 text-white">
+<div class="min-vh-100 bg-dark text-light">
 	<Navigation />
-	<main class="container mx-auto px-4 py-8">
+	<main class="container-fluid py-4">
 		<slot />
 	</main>
 </div>

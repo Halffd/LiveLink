@@ -19,6 +19,21 @@
     testable: boolean;
   }
 
+  interface ConfigSection {
+    title: string;
+    description: string;
+    fields: ConfigField[];
+  }
+
+  interface ConfigField {
+    name: string;
+    type: 'text' | 'number' | 'boolean' | 'select';
+    label: string;
+    value: any;
+    options?: string[];
+    description?: string;
+  }
+
   let twitchStreams: StreamSource[] = [];
   let holodexStreams: StreamSource[] = [];
   let selectedOrg = 'Hololive';
@@ -54,10 +69,64 @@
       { method: 'GET', path: '/api/config', description: 'Get app config', testable: true },
       { method: 'PUT', path: '/api/config', description: 'Update app config', testable: false },
       { method: 'GET', path: '/api/organizations', description: 'Get organizations', testable: true }
+    ],
+    'Queue': [
+      { method: 'GET', path: '/api/streams/queue/:screen', description: 'Get queue for screen', testable: true },
+      { method: 'POST', path: '/api/streams/queue/:screen', description: 'Add to queue', testable: false },
+      { method: 'DELETE', path: '/api/streams/queue/:screen/:index', description: 'Remove from queue', testable: false },
+      { method: 'POST', path: '/api/streams/reorder', description: 'Reorder queue', testable: false }
+    ],
+    'Watched': [
+      { method: 'GET', path: '/api/streams/watched', description: 'Get watched streams', testable: true },
+      { method: 'POST', path: '/api/streams/watched', description: 'Mark stream as watched', testable: false },
+      { method: 'DELETE', path: '/api/streams/watched', description: 'Clear watched streams', testable: false }
     ]
   };
 
+  // Configuration sections
+  const configSections: ConfigSection[] = [
+    {
+      title: 'Player Settings',
+      description: 'Configure global player settings',
+      fields: [
+        { name: 'defaultQuality', type: 'select', label: 'Default Quality', value: 'best', options: ['best', 'high', 'medium', 'low'] },
+        { name: 'defaultVolume', type: 'number', label: 'Default Volume', value: 50 },
+        { name: 'processPriority', type: 'select', label: 'Process Priority', value: 'normal', options: ['normal', 'high', 'realtime', 'above_normal', 'below_normal', 'low', 'idle'] },
+        { name: 'windowMode', type: 'select', label: 'Window Mode', value: 'windowed', options: ['windowed', 'fullscreen', 'borderless'] },
+        { name: 'preferStreamlink', type: 'boolean', label: 'Prefer Streamlink', value: false },
+        { name: 'windowMaximized', type: 'boolean', label: 'Maximize Window', value: true },
+        { name: 'maxStreams', type: 'number', label: 'Max Streams', value: 4 },
+        { name: 'autoStart', type: 'boolean', label: 'Auto-Start Streams', value: true }
+      ]
+    },
+    {
+      title: 'Twitch Settings',
+      description: 'Configure Twitch API settings',
+      fields: [
+        { name: 'clientId', type: 'text', label: 'Client ID', value: '' },
+        { name: 'clientSecret', type: 'text', label: 'Client Secret', value: '' },
+        { name: 'streamersFile', type: 'text', label: 'Streamers File', value: 'config/streamers.txt' }
+      ]
+    },
+    {
+      title: 'Holodex Settings',
+      description: 'Configure Holodex API settings',
+      fields: [
+        { name: 'apiKey', type: 'text', label: 'API Key', value: '' }
+      ]
+    },
+    {
+      title: 'MPV Settings',
+      description: 'Configure MPV player settings',
+      fields: [
+        { name: 'priority', type: 'select', label: 'Priority', value: 'normal', options: ['normal', 'high', 'realtime', 'above_normal', 'below_normal', 'low', 'idle'] },
+        { name: 'gpu-context', type: 'text', label: 'GPU Context', value: 'auto' }
+      ]
+    }
+  ];
+
   let testResults: Record<string, { data: any, error: string | null }> = {};
+  let expandedConfig: string | null = null;
 
   async function fetchData() {
     loading = true;
@@ -153,6 +222,10 @@
     }
   }
 
+  function toggleConfigSection(title: string) {
+    expandedConfig = expandedConfig === title ? null : title;
+  }
+
   onMount(() => {
     fetchData();
     setRefreshInterval(60); // Refresh every 60 seconds by default
@@ -165,61 +238,87 @@
   });
 </script>
 
-<div class="container mx-auto p-4">
-  <header class="mb-8">
-    <nav class="flex justify-between items-center bg-gray-800 text-white p-4 rounded-lg">
-      <div class="flex gap-4">
-        <a href="/" class="hover:text-gray-300">Home</a>
-        <a href="/streams" class="hover:text-gray-300">Streams</a>
-        <a href="/settings" class="hover:text-gray-300">Settings</a>
-      </div>
-      {#if !$twitchUser.isAuthenticated}
-        <button 
-          class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded"
-          on:click={login}
-        >
-          Login with Twitch
+<div class="container-fluid py-4">
+  <header class="mb-4">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/">LiveLink</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+          <span class="navbar-toggler-icon"></span>
         </button>
-      {:else}
-        <span>Welcome, {$twitchUser.username}!</span>
-      {/if}
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <ul class="navbar-nav me-auto">
+            <li class="nav-item">
+              <a class="nav-link" href="/">Home</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/streams">Streams</a>
+            </li>
+            <li class="nav-item">
+              <a class="nav-link" href="/settings">Settings</a>
+            </li>
+          </ul>
+          {#if !$twitchUser.isAuthenticated}
+            <button 
+              class="btn btn-outline-light"
+              on:click={login}
+            >
+              Login with Twitch
+            </button>
+          {:else}
+            <span class="navbar-text">Welcome, {$twitchUser.username}!</span>
+          {/if}
+        </div>
+      </div>
     </nav>
   </header>
 
   <main>
     <!-- Tab Navigation -->
-    <div class="mb-6 border-b border-gray-700">
-      <div class="flex space-x-4">
+    <ul class="nav nav-tabs mb-4">
+      <li class="nav-item">
         <button 
-          class="py-2 px-4 {activeTab === 'streams' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400 hover:text-gray-300'}"
+          class="nav-link {activeTab === 'streams' ? 'active' : ''}"
           on:click={() => activeTab = 'streams'}
         >
           Live Streams
         </button>
+      </li>
+      <li class="nav-item">
         <button 
-          class="py-2 px-4 {activeTab === 'api' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400 hover:text-gray-300'}"
+          class="nav-link {activeTab === 'api' ? 'active' : ''}"
           on:click={() => activeTab = 'api'}
         >
           API Explorer
         </button>
-      </div>
-    </div>
+      </li>
+      <li class="nav-item">
+        <button 
+          class="nav-link {activeTab === 'config' ? 'active' : ''}"
+          on:click={() => activeTab = 'config'}
+        >
+          Configuration
+        </button>
+      </li>
+    </ul>
 
     {#if error}
-      <div class="bg-red-500 text-white p-4 rounded mb-6">
-        <p>{error}</p>
-        <button class="underline mt-2" on:click={fetchData}>Retry</button>
+      <div class="alert alert-danger alert-dismissible fade show mb-4">
+        <strong>Error!</strong> {error}
+        <button type="button" class="btn-close" on:click={() => error = null}></button>
       </div>
     {/if}
 
     <!-- Streams Tab -->
     {#if activeTab === 'streams'}
-      <div class="mb-6 flex justify-between items-center">
-        <div>
+      <div class="mb-4 d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center">
+          <label for="orgSelect" class="me-2">Organization:</label>
           <select 
+            id="orgSelect"
+            class="form-select"
             bind:value={selectedOrg}
             on:change={() => fetchData()}
-            class="p-2 border rounded bg-gray-700 text-white"
           >
             {#each organizations as org}
               <option value={org}>{org}</option>
@@ -228,7 +327,7 @@
         </div>
         <div>
           <button 
-            class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white"
+            class="btn btn-primary"
             on:click={fetchData}
             disabled={loading}
           >
@@ -238,129 +337,261 @@
       </div>
 
       <!-- Stream Grid -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="row g-4">
         <!-- Twitch Streams -->
-        <section>
-          <h2 class="text-2xl font-bold mb-4">Twitch VTubers</h2>
-          {#if loading && twitchStreams.length === 0}
-            <div class="bg-gray-800 p-4 rounded-lg">Loading...</div>
-          {:else if twitchStreams.length === 0}
-            <div class="bg-gray-800 p-4 rounded-lg">No streams available</div>
-          {:else}
-            <div class="grid gap-4">
-              {#each twitchStreams as stream}
-                <div class="bg-gray-800 p-4 rounded-lg shadow hover:shadow-lg transition-shadow">
-                  <h3 class="font-bold truncate text-white">{stream.title || 'Untitled Stream'}</h3>
-                  <p class="text-gray-400">{stream.url ? new URL(stream.url).pathname.slice(1) : 'Unknown'}</p>
-                  <div class="flex justify-between items-center mt-2">
-                    <span class="text-sm text-gray-400">
-                      {stream.viewerCount?.toLocaleString() || 0} viewers
-                    </span>
-                    <button 
-                      class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
-                      on:click={() => window.location.href = `/streams?url=${stream.url}`}
-                    >
-                      Watch
-                    </button>
+        <div class="col-md-6">
+          <div class="card card-dark h-100">
+            <div class="card-header card-header-dark d-flex justify-content-between align-items-center">
+              <h5 class="mb-0">Twitch VTubers</h5>
+              <span class="badge bg-info">{twitchStreams.length}</span>
+            </div>
+            <div class="card-body">
+              {#if loading && twitchStreams.length === 0}
+                <div class="d-flex justify-content-center">
+                  <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
                   </div>
                 </div>
-              {/each}
+              {:else if twitchStreams.length === 0}
+                <div class="alert alert-secondary">No streams available</div>
+              {:else}
+                <div class="list-group">
+                  {#each twitchStreams as stream}
+                    <div class="list-group-item list-group-item-action bg-dark text-light border-secondary">
+                      <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                          <h6 class="mb-1 text-truncate" style="max-width: 300px;">{stream.title || 'Untitled Stream'}</h6>
+                          <p class="mb-1 text-muted small">{stream.url ? new URL(stream.url).pathname.slice(1) : 'Unknown'}</p>
+                          <div class="d-flex align-items-center">
+                            <span class="badge bg-secondary me-2">
+                              {stream.viewerCount?.toLocaleString() || 0} viewers
+                            </span>
+                            {#if stream.platform}
+                              <span class="badge bg-primary">{stream.platform}</span>
+                            {/if}
+                          </div>
+                        </div>
+                        <a 
+                          href={`/streams?url=${stream.url}`}
+                          class="btn btn-sm btn-primary"
+                        >
+                          Watch
+                        </a>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </div>
-          {/if}
-        </section>
+          </div>
+        </div>
 
         <!-- Holodex Streams -->
-        <section>
-          <h2 class="text-2xl font-bold mb-4">{selectedOrg} Streams</h2>
-          {#if loading && holodexStreams.length === 0}
-            <div class="bg-gray-800 p-4 rounded-lg">Loading...</div>
-          {:else if holodexStreams.length === 0}
-            <div class="bg-gray-800 p-4 rounded-lg">No streams available</div>
-          {:else}
-            <div class="grid gap-4">
-              {#each holodexStreams as stream}
-                <div class="bg-gray-800 p-4 rounded-lg shadow hover:shadow-lg transition-shadow">
-                  <h3 class="font-bold truncate text-white">{stream.title || 'Untitled Stream'}</h3>
-                  <p class="text-gray-400">{stream.channelId || 'Unknown channel'}</p>
-                  <div class="flex justify-between items-center mt-2">
-                    <span class="text-sm text-gray-400">
-                      {stream.viewerCount?.toLocaleString() || 0} viewers
-                    </span>
-                    <button 
-                      class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
-                      on:click={() => window.location.href = `/streams?url=${stream.url}`}
-                    >
-                      Watch
-                    </button>
+        <div class="col-md-6">
+          <div class="card card-dark h-100">
+            <div class="card-header card-header-dark d-flex justify-content-between align-items-center">
+              <h5 class="mb-0">{selectedOrg} Streams</h5>
+              <span class="badge bg-info">{holodexStreams.length}</span>
+            </div>
+            <div class="card-body">
+              {#if loading && holodexStreams.length === 0}
+                <div class="d-flex justify-content-center">
+                  <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
                   </div>
                 </div>
-              {/each}
+              {:else if holodexStreams.length === 0}
+                <div class="alert alert-secondary">No streams available</div>
+              {:else}
+                <div class="list-group">
+                  {#each holodexStreams as stream}
+                    <div class="list-group-item list-group-item-action bg-dark text-light border-secondary">
+                      <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                          <h6 class="mb-1 text-truncate" style="max-width: 300px;">{stream.title || 'Untitled Stream'}</h6>
+                          <p class="mb-1 text-muted small">{stream.channelId || 'Unknown channel'}</p>
+                          <div class="d-flex align-items-center">
+                            <span class="badge bg-secondary me-2">
+                              {stream.viewerCount?.toLocaleString() || 0} viewers
+                            </span>
+                            {#if stream.platform}
+                              <span class="badge bg-danger">{stream.platform}</span>
+                            {/if}
+                          </div>
+                        </div>
+                        <a 
+                          href={`/streams?url=${stream.url}`}
+                          class="btn btn-sm btn-primary"
+                        >
+                          Watch
+                        </a>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </div>
-          {/if}
-        </section>
+          </div>
+        </div>
       </div>
     {/if}
 
     <!-- API Explorer Tab -->
     {#if activeTab === 'api'}
-      <div class="space-y-8">
-        <div class="bg-gray-800 p-4 rounded-lg">
-          <h2 class="text-xl font-bold mb-4">API Explorer</h2>
-          <p class="text-gray-400 mb-4">
+      <div class="card card-dark mb-4">
+        <div class="card-header card-header-dark">
+          <h4 class="mb-0">API Explorer</h4>
+        </div>
+        <div class="card-body">
+          <p class="text-muted mb-4">
             This page allows you to explore the available API endpoints. Click "Test" to see the response from GET endpoints.
           </p>
-        </div>
-
-        {#each Object.entries(apiRoutes) as [category, routes]}
-          <div class="bg-gray-800 p-4 rounded-lg">
-            <h3 class="text-lg font-bold mb-4">{category}</h3>
-            <div class="overflow-x-auto">
-              <table class="w-full">
-                <thead>
-                  <tr class="border-b border-gray-700">
-                    <th class="text-left p-2">Method</th>
-                    <th class="text-left p-2">Path</th>
-                    <th class="text-left p-2">Description</th>
-                    <th class="text-right p-2">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each routes as route}
-                    <tr class="border-b border-gray-700">
-                      <td class="p-2">
-                        <span class="inline-block px-2 py-1 rounded {route.method === 'GET' ? 'bg-green-700' : route.method === 'POST' ? 'bg-blue-700' : 'bg-yellow-700'}">
-                          {route.method}
-                        </span>
-                      </td>
-                      <td class="p-2 font-mono text-sm">{route.path}</td>
-                      <td class="p-2">{route.description}</td>
-                      <td class="p-2 text-right">
-                        {#if route.testable}
-                          <button 
-                            class="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-white text-sm"
-                            on:click={() => testApiRoute(route)}
-                          >
-                            Test
-                          </button>
-                        {/if}
-                      </td>
-                    </tr>
-                    {#if testResults[route.path]}
-                      <tr>
-                        <td colspan="4" class="p-2">
-                          <div class="bg-gray-900 p-3 rounded">
-                            {#if testResults[route.path].error}
-                              <div class="text-red-400">Error: {testResults[route.path].error}</div>
-                            {:else}
-                              <pre class="text-green-400 overflow-x-auto text-sm">{JSON.stringify(testResults[route.path].data, null, 2)}</pre>
+          
+          <div class="accordion" id="apiAccordion">
+            {#each Object.entries(apiRoutes) as [category, routes], i}
+              <div class="accordion-item bg-dark text-light border-secondary">
+                <h2 class="accordion-header" id="heading{i}">
+                  <button 
+                    class="accordion-button bg-dark text-light collapsed" 
+                    type="button" 
+                    data-bs-toggle="collapse" 
+                    data-bs-target="#collapse{i}"
+                  >
+                    {category} <span class="badge bg-secondary ms-2">{routes.length}</span>
+                  </button>
+                </h2>
+                <div 
+                  id="collapse{i}" 
+                  class="accordion-collapse collapse" 
+                  data-bs-parent="#apiAccordion"
+                >
+                  <div class="accordion-body p-0">
+                    <div class="table-responsive">
+                      <table class="table table-dark table-hover mb-0">
+                        <thead>
+                          <tr>
+                            <th>Method</th>
+                            <th>Path</th>
+                            <th>Description</th>
+                            <th class="text-end">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {#each routes as route}
+                            <tr>
+                              <td>
+                                <span class="badge {route.method === 'GET' ? 'bg-success' : route.method === 'POST' ? 'bg-primary' : route.method === 'PUT' ? 'bg-warning text-dark' : 'bg-danger'}">
+                                  {route.method}
+                                </span>
+                              </td>
+                              <td><code>{route.path}</code></td>
+                              <td>{route.description}</td>
+                              <td class="text-end">
+                                {#if route.testable}
+                                  <button 
+                                    class="btn btn-sm btn-outline-primary"
+                                    on:click={() => testApiRoute(route)}
+                                  >
+                                    Test
+                                  </button>
+                                {/if}
+                              </td>
+                            </tr>
+                            {#if testResults[route.path]}
+                              <tr>
+                                <td colspan="4" class="p-0">
+                                  <div class="p-3 bg-dark">
+                                    {#if testResults[route.path].error}
+                                      <div class="alert alert-danger mb-0">
+                                        Error: {testResults[route.path].error}
+                                      </div>
+                                    {:else}
+                                      <div class="bg-dark border border-secondary rounded p-2">
+                                        <pre class="text-success mb-0" style="max-height: 300px; overflow-y: auto;">{JSON.stringify(testResults[route.path].data, null, 2)}</pre>
+                                      </div>
+                                    {/if}
+                                  </div>
+                                </td>
+                              </tr>
                             {/if}
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Configuration Tab -->
+    {#if activeTab === 'config'}
+      <div class="row g-4">
+        {#each configSections as section}
+          <div class="col-md-6">
+            <div class="card card-dark h-100">
+              <div class="card-header card-header-dark">
+                <h5 class="mb-0">{section.title}</h5>
+              </div>
+              <div class="card-body">
+                <p class="text-muted mb-3">{section.description}</p>
+                
+                <div class="list-group">
+                  {#each section.fields as field}
+                    <div class="list-group-item bg-dark text-light border-secondary">
+                      <div class="mb-3">
+                        <label for="{field.name}" class="form-label">{field.label}</label>
+                        
+                        {#if field.type === 'text'}
+                          <input 
+                            type="text" 
+                            class="form-control bg-dark text-light border-secondary" 
+                            id="{field.name}" 
+                            bind:value={field.value}
+                          />
+                        {:else if field.type === 'number'}
+                          <input 
+                            type="number" 
+                            class="form-control bg-dark text-light border-secondary" 
+                            id="{field.name}" 
+                            bind:value={field.value}
+                          />
+                        {:else if field.type === 'boolean'}
+                          <div class="form-check form-switch">
+                            <input 
+                              class="form-check-input" 
+                              type="checkbox" 
+                              id="{field.name}" 
+                              bind:checked={field.value}
+                            />
                           </div>
-                        </td>
-                      </tr>
-                    {/if}
+                        {:else if field.type === 'select' && field.options}
+                          <select 
+                            class="form-select bg-dark text-light border-secondary" 
+                            id="{field.name}" 
+                            bind:value={field.value}
+                          >
+                            {#each field.options as option}
+                              <option value={option}>{option}</option>
+                            {/each}
+                          </select>
+                        {/if}
+                        
+                        {#if field.description}
+                          <div class="form-text text-muted">{field.description}</div>
+                        {/if}
+                      </div>
+                    </div>
                   {/each}
-                </tbody>
-              </table>
+                </div>
+                
+                <div class="d-flex justify-content-end mt-3">
+                  <button class="btn btn-primary">Save {section.title}</button>
+                </div>
+              </div>
             </div>
           </div>
         {/each}
@@ -373,5 +604,49 @@
   pre {
     max-height: 300px;
     overflow-y: auto;
+  }
+  
+  .card-dark {
+    background-color: #2c2c2c;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  .card-header-dark {
+    background-color: #222;
+    border-color: #444;
+    color: #f8f9fa;
+  }
+  
+  /* Override Bootstrap dark theme */
+  .bg-dark {
+    background-color: #222 !important;
+  }
+  
+  .text-light {
+    color: #f8f9fa !important;
+  }
+  
+  .border-secondary {
+    border-color: #444 !important;
+  }
+  
+  /* Custom scrollbar for dark theme */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: #333;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: #666;
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: #888;
   }
 </style>

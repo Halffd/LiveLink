@@ -60,161 +60,290 @@
     onMount(fetchSettings);
 </script>
 
-<div class="space-y-6 p-6">
-    <div class="flex justify-between items-center">
-        <h1 class="text-2xl font-bold">Settings</h1>
+<div class="container-fluid py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1 class="h3 mb-0">Settings</h1>
         <button
             on:click={stopServer}
-            class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white"
+            class="btn btn-danger"
         >
             Stop Server
         </button>
     </div>
 
     {#if error}
-        <div class="bg-red-500 text-white p-4 rounded">
-            {error}
-            <button class="ml-4 underline" on:click={() => error = null}>Dismiss</button>
+        <div class="alert alert-danger alert-dismissible fade show mb-4">
+            <strong>Error!</strong> {error}
+            <button type="button" class="btn-close" on:click={() => error = null}></button>
         </div>
     {/if}
 
     {#if success}
-        <div class="bg-green-500 text-white p-4 rounded">
-            {success}
-            <button class="ml-4 underline" on:click={() => success = null}>Dismiss</button>
+        <div class="alert alert-success alert-dismissible fade show mb-4">
+            <strong>Success!</strong> {success}
+            <button type="button" class="btn-close" on:click={() => success = null}></button>
         </div>
     {/if}
 
     {#if playerSettings}
-        <div class="space-y-4">
-            <h2 class="text-xl font-semibold">Player Settings</h2>
-            <div class="grid grid-cols-2 gap-4 bg-gray-800 p-4 rounded-lg">
-                <div class="space-y-2">
-                    <label class="block text-sm font-medium">Default Volume</label>
-                    <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        bind:value={playerSettings.defaultVolume}
-                        class="w-full px-4 py-2 rounded bg-gray-700"
-                    />
-                </div>
-                <div class="space-y-2">
-                    <label class="block text-sm font-medium">Default Quality</label>
-                    <select
-                        bind:value={playerSettings.defaultQuality}
-                        class="w-full px-4 py-2 rounded bg-gray-700"
-                    >
-                        <option value="best">Best</option>
-                        <option value="high">High</option>
-                        <option value="medium">Medium</option>
-                        <option value="low">Low</option>
-                    </select>
-                </div>
-                <div class="space-y-2">
-                    <label class="block text-sm font-medium">Process Priority</label>
-                    <select
-                        bind:value={playerSettings.processPriority}
-                        class="w-full px-4 py-2 rounded bg-gray-700"
-                    >
-                        <option value="normal">Normal</option>
-                        <option value="high">High</option>
-                        <option value="realtime">Realtime</option>
-                    </select>
-                </div>
-                <div class="space-y-2">
-                    <label class="block text-sm font-medium">Window Mode</label>
-                    <select
-                        bind:value={playerSettings.windowMode}
-                        class="w-full px-4 py-2 rounded bg-gray-700"
-                    >
-                        <option value="windowed">Windowed</option>
-                        <option value="fullscreen">Fullscreen</option>
-                        <option value="borderless">Borderless</option>
-                    </select>
-                </div>
+        <div class="card card-dark mb-4">
+            <div class="card-header card-header-dark">
+                <h5 class="mb-0">Player Settings</h5>
             </div>
-            <div class="flex justify-end">
-                <button
-                    on:click={updatePlayerSettings}
-                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
-                >
-                    Save Player Settings
-                </button>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-6 col-lg-3">
+                        <label for="defaultVolume" class="form-label">Default Volume</label>
+                        <input
+                            type="number"
+                            id="defaultVolume"
+                            min="0"
+                            max="100"
+                            bind:value={playerSettings.defaultVolume}
+                            class="form-control bg-dark text-light border-secondary"
+                        />
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <label for="defaultQuality" class="form-label">Default Quality</label>
+                        <select
+                            id="defaultQuality"
+                            bind:value={playerSettings.defaultQuality}
+                            class="form-select bg-dark text-light border-secondary"
+                        >
+                            <option value="best">Best</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <label for="processPriority" class="form-label">Process Priority</label>
+                        <select
+                            id="processPriority"
+                            bind:value={playerSettings.processPriority}
+                            class="form-select bg-dark text-light border-secondary"
+                        >
+                            <option value="normal">Normal</option>
+                            <option value="high">High</option>
+                            <option value="realtime">Realtime</option>
+                            <option value="above_normal">Above Normal</option>
+                            <option value="below_normal">Below Normal</option>
+                            <option value="low">Low</option>
+                            <option value="idle">Idle</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <label for="windowMode" class="form-label">Window Mode</label>
+                        <select
+                            id="windowMode"
+                            bind:value={playerSettings.windowMode}
+                            class="form-select bg-dark text-light border-secondary"
+                        >
+                            <option value="windowed">Windowed</option>
+                            <option value="fullscreen">Fullscreen</option>
+                            <option value="borderless">Borderless</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <label for="maxStreams" class="form-label">Max Concurrent Streams</label>
+                        <input
+                            type="number"
+                            id="maxStreams"
+                            min="1"
+                            max="10"
+                            bind:value={playerSettings.maxStreams}
+                            class="form-control bg-dark text-light border-secondary"
+                        />
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="form-check form-switch mt-4">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="autoStart"
+                                bind:checked={playerSettings.autoStart}
+                            />
+                            <label class="form-check-label" for="autoStart">
+                                Auto-start streams
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="form-check form-switch mt-4">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="preferStreamlink"
+                                bind:checked={playerSettings.preferStreamlink}
+                            />
+                            <label class="form-check-label" for="preferStreamlink">
+                                Prefer Streamlink
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="form-check form-switch mt-4">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="windowMaximized"
+                                bind:checked={playerSettings.windowMaximized}
+                            />
+                            <label class="form-check-label" for="windowMaximized">
+                                Maximize windows
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end mt-3">
+                    <button
+                        on:click={updatePlayerSettings}
+                        class="btn btn-primary"
+                    >
+                        Save Player Settings
+                    </button>
+                </div>
             </div>
         </div>
     {/if}
 
-    <div class="space-y-4">
-        <h2 class="text-xl font-semibold">Screen Settings</h2>
-        <div class="grid gap-4">
-            {#each screenConfigs as config}
-                <div class="bg-gray-800 p-4 rounded-lg">
-                    <h3 class="text-lg font-medium mb-4">Screen {config.screen}</h3>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="space-y-2">
-                            <label class="block text-sm font-medium">Status</label>
-                            <div class="flex items-center space-x-2">
-                                <button
-                                    class="px-3 py-1 {config.enabled ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} rounded text-white"
-                                    on:click={() => updateScreenConfig(config.screen, { enabled: !config.enabled })}
+    <h2 class="h4 mb-3">Screen Settings</h2>
+    <div class="row g-4">
+        {#each screenConfigs as config}
+            <div class="col-12">
+                <div class="card card-dark">
+                    <div class="card-header card-header-dark d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Screen {config.screen}</h5>
+                        <button
+                            class="btn btn-sm {config.enabled ? 'btn-warning' : 'btn-success'}"
+                            on:click={() => updateScreenConfig(config.screen, { enabled: !config.enabled })}
+                        >
+                            {config.enabled ? 'Disable' : 'Enable'}
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6 col-lg-3">
+                                <label for="volume-{config.screen}" class="form-label">Default Volume</label>
+                                <input
+                                    type="number"
+                                    id="volume-{config.screen}"
+                                    min="0"
+                                    max="100"
+                                    bind:value={config.volume}
+                                    on:change={() => updateScreenConfig(config.screen, { volume: config.volume })}
+                                    class="form-control bg-dark text-light border-secondary"
+                                />
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <label for="quality-{config.screen}" class="form-label">Default Quality</label>
+                                <select
+                                    id="quality-{config.screen}"
+                                    bind:value={config.quality}
+                                    on:change={() => updateScreenConfig(config.screen, { quality: config.quality })}
+                                    class="form-select bg-dark text-light border-secondary"
                                 >
-                                    {config.enabled ? 'Enabled' : 'Disabled'}
-                                </button>
+                                    <option value="best">Best</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                </select>
                             </div>
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-sm font-medium">Default Volume</label>
-                            <input
-                                type="number"
-                                min="0"
-                                max="100"
-                                bind:value={config.volume}
-                                on:change={() => updateScreenConfig(config.screen, { volume: config.volume })}
-                                class="w-full px-4 py-2 rounded bg-gray-700"
-                            />
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-sm font-medium">Window Position</label>
-                            <div class="grid grid-cols-2 gap-2">
-                                <input
-                                    type="number"
-                                    placeholder="X"
-                                    bind:value={config.windowX}
-                                    on:change={() => updateScreenConfig(config.screen, { windowX: config.windowX })}
-                                    class="w-full px-4 py-2 rounded bg-gray-700"
-                                />
-                                <input
-                                    type="number"
-                                    placeholder="Y"
-                                    bind:value={config.windowY}
-                                    on:change={() => updateScreenConfig(config.screen, { windowY: config.windowY })}
-                                    class="w-full px-4 py-2 rounded bg-gray-700"
-                                />
+                            <div class="col-md-6 col-lg-3">
+                                <label class="form-label">Window Position</label>
+                                <div class="input-group">
+                                    <input
+                                        type="number"
+                                        placeholder="X"
+                                        bind:value={config.windowX}
+                                        on:change={() => updateScreenConfig(config.screen, { windowX: config.windowX })}
+                                        class="form-control bg-dark text-light border-secondary"
+                                    />
+                                    <input
+                                        type="number"
+                                        placeholder="Y"
+                                        bind:value={config.windowY}
+                                        on:change={() => updateScreenConfig(config.screen, { windowY: config.windowY })}
+                                        class="form-control bg-dark text-light border-secondary"
+                                    />
+                                </div>
                             </div>
-                        </div>
-                        <div class="space-y-2">
-                            <label class="block text-sm font-medium">Window Size</label>
-                            <div class="grid grid-cols-2 gap-2">
-                                <input
-                                    type="number"
-                                    placeholder="Width"
-                                    bind:value={config.windowWidth}
-                                    on:change={() => updateScreenConfig(config.screen, { windowWidth: config.windowWidth })}
-                                    class="w-full px-4 py-2 rounded bg-gray-700"
-                                />
-                                <input
-                                    type="number"
-                                    placeholder="Height"
-                                    bind:value={config.windowHeight}
-                                    on:change={() => updateScreenConfig(config.screen, { windowHeight: config.windowHeight })}
-                                    class="w-full px-4 py-2 rounded bg-gray-700"
-                                />
+                            <div class="col-md-6 col-lg-3">
+                                <label class="form-label">Window Size</label>
+                                <div class="input-group">
+                                    <input
+                                        type="number"
+                                        placeholder="Width"
+                                        bind:value={config.windowWidth}
+                                        on:change={() => updateScreenConfig(config.screen, { windowWidth: config.windowWidth })}
+                                        class="form-control bg-dark text-light border-secondary"
+                                    />
+                                    <input
+                                        type="number"
+                                        placeholder="Height"
+                                        bind:value={config.windowHeight}
+                                        on:change={() => updateScreenConfig(config.screen, { windowHeight: config.windowHeight })}
+                                        class="form-control bg-dark text-light border-secondary"
+                                    />
+                                </div>
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <div class="form-check form-switch mt-4">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="windowMaximized-{config.screen}"
+                                        bind:checked={config.windowMaximized}
+                                        on:change={() => updateScreenConfig(config.screen, { windowMaximized: config.windowMaximized })}
+                                    />
+                                    <label class="form-check-label" for="windowMaximized-{config.screen}">
+                                        Maximize window
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <div class="form-check form-switch mt-4">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="autoStart-{config.screen}"
+                                        bind:checked={config.autoStart}
+                                        on:change={() => updateScreenConfig(config.screen, { autoStart: config.autoStart })}
+                                    />
+                                    <label class="form-check-label" for="autoStart-{config.screen}">
+                                        Auto-start streams
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
-            {/each}
-        </div>
+            </div>
+        {/each}
     </div>
-</div> 
+</div>
+
+<style>
+    .card-dark {
+        background-color: #2c2c2c;
+        border-color: #444;
+        color: #f8f9fa;
+    }
+    
+    .card-header-dark {
+        background-color: #222;
+        border-color: #444;
+        color: #f8f9fa;
+    }
+    
+    /* Custom form switch styling for dark theme */
+    :global(.form-check-input) {
+        background-color: #495057;
+        border-color: #6c757d;
+    }
+    
+    :global(.form-check-input:checked) {
+        background-color: #0d6efd;
+        border-color: #0d6efd;
+    }
+</style> 
