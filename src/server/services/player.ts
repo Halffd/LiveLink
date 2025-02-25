@@ -1,4 +1,4 @@
-import { spawn, type SpawnOptions } from 'child_process';
+import { spawn, type SpawnOptions, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { 
   StreamOptions
@@ -46,12 +46,12 @@ export class PlayerService {
   private errorCallback?: (data: StreamError) => void;
   private config = loadAllConfigs();
   private streamRetries: Map<number, number> = new Map();
-  private readonly MAX_RETRIES = 3;
-  private RETRY_INTERVAL = 10000; // 10 seconds
-  private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours in milliseconds
+  private readonly MAX_RETRIES = 5;
+  private RETRY_INTERVAL = 30000;
+  private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000;
   private streamStartTimes: Map<number, number> = new Map();
   private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
-  private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+  private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000;
   private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
   private lastStreamEndTime: Map<number, number> = new Map();
   private readonly BASE_LOG_DIR: string;
@@ -62,6 +62,7 @@ export class PlayerService {
   private manuallyClosedScreens: Set<number> = new Set();
   private isShuttingDown = false;
   private signalHandlersRegistered = false;
+  private healthCheckIntervals: Map<number, NodeJS.Timeout> = new Map();
 
   constructor() {
     this.events = new EventEmitter();
@@ -522,32 +523,62 @@ export class PlayerService {
         });
       }
 
-      // Handle process exit
+      // Handle process exit with improved error handling
       playerProcess.on('exit', (code: number | null) => {
         logger.info(`Process for screen ${options.screen} exited with code ${code}`, 'PlayerService');
         
-        // Only restart if:
-        // 1. Process crashed (non-zero exit code)
-        // 2. Not manually stopped
-        // 3. Not at max retries
+        // Clear health check on exit
+        this.clearHealthCheck(options.screen);
+        
         if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(options.screen)) {
-          logger.error(`Stream process crashed with code ${code}, attempting recovery...`, 'PlayerService');
+          // Add more detailed error logging
+          logger.error(
+            `Stream process crashed with code ${code} on screen ${options.screen}. ` +
+            `URL: ${options.url}, Quality: ${options.quality}`, 
+            'PlayerService'
+          );
+          
           const retryCount = this.streamRetries.get(options.screen) || 0;
           
           if (retryCount < this.MAX_RETRIES) {
+            // Add exponential backoff
+            const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
             this.streamRetries.set(options.screen, retryCount + 1);
-            setTimeout(() => {
-              this.startStream(options).catch(error => {
-                logger.error(
-                  `Failed to restart stream on screen ${options.screen}`,
-                  'PlayerService',
-                  error instanceof Error ? error : new Error(String(error))
-                );
-              });
-            }, this.RETRY_INTERVAL);
+            
+            logger.info(
+              `Attempting retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s...`,
+              'PlayerService'
+            );
+            
+            setTimeout(async () => {
+              try {
+                // First try with same quality
+                await this.startStream(options);
+              } catch (error) {
+                // If that fails, try fallback quality
+                if (!await this.tryFallbackQuality(options)) {
+                  logger.error(
+                    `Failed to restart stream on screen ${options.screen} with all quality options`,
+                    'PlayerService',
+                    error instanceof Error ? error : new Error(String(error))
+                  );
+                }
+              }
+            }, delay);
           } else {
-            logger.error(`Max retries (${this.MAX_RETRIES}) reached for screen ${options.screen}`, 'PlayerService');
+            logger.error(
+              `Max retries (${this.MAX_RETRIES}) reached for screen ${options.screen}. ` +
+              'Attempting to fetch new stream from queue...',
+              'PlayerService'
+            );
             this.streamRetries.delete(options.screen);
+            
+            // Try to get a new stream from the queue
+            this.errorCallback?.({
+              screen: options.screen,
+              error: 'Max retries reached, fetching new stream',
+              code: -1
+            });
           }
         }
         
@@ -577,6 +608,9 @@ export class PlayerService {
 
       // Store stream start time
       this.streamStartTimes.set(options.screen, Date.now());
+
+      // Set up stream health monitoring
+      this.setupStreamHealthCheck(options.screen, playerProcess);
 
       return {
         screen: options.screen,
@@ -898,7 +932,84 @@ export class PlayerService {
     }
   }
 
-  private cleanup(): void {
+  private setupStreamHealthCheck(screen: number, process: ChildProcess) {
+    // Clear any existing health check
+    this.clearHealthCheck(screen);
+    
+    const healthCheck = setInterval(() => {
+      if (!process.killed) {
+        // Check if process is responsive
+        try {
+          process.kill(0); // Just check if process exists
+        } catch (error) {
+          logger.warn(
+            `Stream process on screen ${screen} appears to be unresponsive: ${error instanceof Error ? error.message : String(error)}`, 
+            'PlayerService'
+          );
+          // Force restart the stream
+          const streamInfo = this.streams.get(screen);
+          if (streamInfo) {
+            this.stopStream(screen).then(() => {
+              this.startStream({ 
+                screen, 
+                url: streamInfo.url,
+                quality: streamInfo.quality,
+                volume: streamInfo.volume
+              }).catch(error => {
+                logger.error(
+                  `Failed to restart unresponsive stream on screen ${screen}`,
+                  'PlayerService',
+                  error instanceof Error ? error : new Error(String(error))
+                );
+              });
+            });
+          }
+        }
+      }
+    }, 60000); // Check every minute
+
+    this.healthCheckIntervals.set(screen, healthCheck);
+  }
+
+  private clearHealthCheck(screen: number) {
+    const interval = this.healthCheckIntervals.get(screen);
+    if (interval) {
+      clearInterval(interval);
+      this.healthCheckIntervals.delete(screen);
+    }
+  }
+
+  private async tryFallbackQuality(options: StreamOptions & { screen: number }): Promise<boolean> {
+    const qualities = ['best', 'high', 'medium', 'low'];
+    const currentQuality = options.quality || 'best';
+    const currentIndex = qualities.indexOf(currentQuality);
+    
+    if (currentIndex < qualities.length - 1) {
+      const nextQuality = qualities[currentIndex + 1];
+      logger.info(
+        `Attempting fallback quality ${nextQuality} for screen ${options.screen}`,
+        'PlayerService'
+      );
+      
+      try {
+        await this.startStream({
+          ...options,
+          quality: nextQuality
+        });
+        return true;
+      } catch (error) {
+        logger.error(
+          `Failed to start stream with fallback quality ${nextQuality}`,
+          'PlayerService',
+          error instanceof Error ? error : new Error(String(error))
+        );
+        return false;
+      }
+    }
+    return false;
+  }
+
+  async cleanup() {
     if (this.isShuttingDown) {
       logger.debug('Cleanup already in progress, skipping', 'PlayerService');
       return;
@@ -911,6 +1022,12 @@ export class PlayerService {
   private forceCleanup(): void {
     logger.info('Force cleaning up all player processes', 'PlayerService');
     
+    // Clear all health check intervals
+    for (const [screen, interval] of this.healthCheckIntervals) {
+      clearInterval(interval);
+      this.healthCheckIntervals.delete(screen);
+    }
+
     // Kill only LiveLink MPV processes by checking window title
     try {
       exec('pgrep -f "LiveLink-[0-9]+" | xargs -r kill -9', (error) => {
