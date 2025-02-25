@@ -285,8 +285,7 @@ export class PlayerService {
         '--log-file=' + path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${new Date().toISOString()}.log`),
         '--force-window=yes',
         '--keep-open=yes',
-        '--idle=yes',
-        '--vo=x11'
+        '--idle=yes'
     ];
 
     // Get screen config from player config
@@ -326,12 +325,10 @@ export class PlayerService {
     const args: string[] = [
       url,          // URL must be first positional argument
       'best',       // Quality selection
-      '--stdout',   // Output to stdout
-      '--quiet',    // Reduce noise in logs
-      '--twitch-disable-hosting',
+      '--twitch-disable-hosting',  // Boolean flags without =true
       '--twitch-disable-ads',
-      '--stream-segment-threads', '4',
-      '--ringbuffer-size', '64M'
+      '--stream-segment-threads=4',
+      '--ringbuffer-size=64M'
     ];
 
     // Add config settings from streamlink.json
@@ -349,22 +346,22 @@ export class PlayerService {
 
         // Handle arrays (like default_stream)
         if (Array.isArray(value)) {
-          args.push(`--${paramKey}`, value.join(','));
+          args.push(`--${paramKey}=${value.join(',')}`);
         }
-        // Handle booleans
+        // Handle booleans - just add the flag without =true
         else if (typeof value === 'boolean') {
           if (value) args.push(`--${paramKey}`);
         }
         // Handle all other values
         else if (value !== undefined) {
-          args.push(`--${paramKey}`, value.toString());
+          args.push(`--${paramKey}=${value}`);
         }
       });
 
       // Handle http headers separately
       if (this.config.streamlink.http_header) {
         Object.entries(this.config.streamlink.http_header).forEach(([header, value]) => {
-          args.push('--http-header', `${header}=${value}`);
+          args.push(`--http-header`, `${header}=${value}`);  // Changed to use space instead of = for http-header
         });
       }
     }
@@ -388,9 +385,9 @@ export class PlayerService {
       screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
     ].join(' ');
 
-    // Add player and player args
-    args.push('--player', 'mpv');
-    args.push('--player-args', mpvArgs);
+    // Add player and player args as a single quoted string
+    args.push('--player', 'mpv');  // Changed to use space instead of =
+    args.push('--player-args', `"${mpvArgs}"`);  // Changed to use space instead of =
 
     return args;
   }
@@ -434,20 +431,21 @@ export class PlayerService {
       // Create log paths
       const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
 
-      // Determine whether to use streamlink
-      const useStreamlink = this.config.player.preferStreamlink;
+      // Determine whether to use streamlink based on URL
+      const isTwitchStream = options.url.includes('twitch.tv');
+      const useStreamlink = isTwitchStream;  // Only use streamlink for Twitch
       let args: string[] = [];
       const command = useStreamlink ? 'streamlink' : 'mpv';
 
       if (useStreamlink) {
         // Get streamlink arguments including the URL
         args = this.getStreamlinkArgs(options.url, options.screen);
-        logger.info(`Starting ${command} with streamlink`, 'PlayerService');
+        logger.info(`Starting ${command} with streamlink for Twitch stream`, 'PlayerService');
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
         args.unshift(options.url);
-        logger.info(`Starting ${command} with URL: ${options.url}`, 'PlayerService');
+        logger.info(`Starting ${command} directly for YouTube stream`, 'PlayerService');
       }
 
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');

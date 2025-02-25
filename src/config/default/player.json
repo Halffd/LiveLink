@@ -1,5 +1,4 @@
 {
-  "preferStreamlink": true,
   "defaultQuality": "best",
   "defaultVolume": 50,
   "windowMaximized": false,
@@ -29,7 +28,7 @@
       "y": 312,
       "volume": 0,
       "quality": "best",
-      "windowMaximized": false,
+      "windowMaximized": true,
       "primary": false
     }
   ]
