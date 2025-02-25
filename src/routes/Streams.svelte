@@ -1,56 +1,112 @@
 <script lang="ts">
     import { onMount } from 'svelte';
-    import type { Stream } from '../types/stream.js';
+    import type { Stream, StreamConfig } from '../types/stream.js';
+    import { api } from '$lib/api';
+    import PlayerControls from '../components/PlayerControls.svelte';
+    import QueueList from '../components/QueueList.svelte';
 
     let streams = $state<Stream[]>([]);
+    let screenConfigs = $state<StreamConfig[]>([]);
     let url = $state('');
-    let quality = $state('');
+    let quality = $state('best');
+    let selectedScreen = $state(1);
     let error = $state<string | null>(null);
+
+    const qualities = ['best', 'high', 'medium', 'low'];
 
     const fetchStreams = async () => {
         try {
-            const response = await fetch('/api/streams/active');
-            if (!response.ok) throw new Error('Failed to fetch streams');
-            streams = await response.json();
+            const [activeStreams, configs] = await Promise.all([
+                api.getActiveStreams(),
+                api.getScreenConfigs()
+            ]);
+            streams = activeStreams;
+            screenConfigs = configs;
         } catch (err) {
             error = err instanceof Error ? err.message : 'Failed to fetch streams';
+            setTimeout(() => error = null, 3000);
         }
     };
 
     const addStream = async () => {
         try {
-            const response = await fetch('/api/streams', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ url, quality })
-            });
-            if (!response.ok) throw new Error('Failed to add stream');
+            await api.startStream(url, selectedScreen, quality);
             await fetchStreams();
-            // Clear inputs on success
             url = '';
-            quality = '';
+            quality = 'best';
         } catch (err) {
             error = err instanceof Error ? err.message : 'Failed to add stream';
+            setTimeout(() => error = null, 3000);
         }
     };
 
     const stopStream = async (screen: number) => {
         try {
-            const response = await fetch(`/api/streams/${screen}`, { 
-                method: 'DELETE' 
-            });
-            if (!response.ok) throw new Error('Failed to stop stream');
+            await api.stopStream(screen);
             await fetchStreams();
         } catch (err) {
             error = err instanceof Error ? err.message : 'Failed to stop stream';
+            setTimeout(() => error = null, 3000);
+        }
+    };
+
+    const toggleScreen = async (screen: number) => {
+        try {
+            const config = screenConfigs.find(c => c.screen === screen);
+            if (config) {
+                await api.updateScreenConfig(screen, { enabled: !config.enabled });
+                await fetchStreams();
+            }
+        } catch (err) {
+            error = err instanceof Error ? err.message : 'Failed to toggle screen';
+            setTimeout(() => error = null, 3000);
+        }
+    };
+
+    const stopAllStreams = async () => {
+        try {
+            for (const stream of streams) {
+                await api.stopStream(stream.screen);
+            }
+            await fetchStreams();
+        } catch (err) {
+            error = err instanceof Error ? err.message : 'Failed to stop all streams';
+            setTimeout(() => error = null, 3000);
+        }
+    };
+
+    const autoStartStreams = async () => {
+        try {
+            await fetch('/api/streams/autostart', { method: 'POST' });
+            await fetchStreams();
+        } catch (err) {
+            error = err instanceof Error ? err.message : 'Failed to auto-start streams';
+            setTimeout(() => error = null, 3000);
         }
     };
 
     onMount(fetchStreams);
 </script>
 
-<div class="space-y-6">
-    <h1 class="text-2xl font-bold">Stream Manager</h1>
+<div class="space-y-6 p-6">
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold">Stream Manager</h1>
+        <div class="space-x-4">
+            <button
+                on:click={autoStartStreams}
+                class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded text-white"
+            >
+                Auto-Start Streams
+            </button>
+            <button
+                on:click={stopAllStreams}
+                class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-white"
+                disabled={streams.length === 0}
+            >
+                Stop All Streams
+            </button>
+        </div>
+    </div>
 
     {#if error}
         <div class="bg-red-500 text-white p-4 rounded">
@@ -60,19 +116,33 @@
     {/if}
 
     <div class="space-y-4">
-        <div class="flex gap-4">
+        <div class="grid grid-cols-3 gap-4">
             <input 
                 type="text" 
                 bind:value={url} 
                 placeholder="Stream URL"
-                class="flex-1 px-4 py-2 rounded bg-gray-700"
+                class="px-4 py-2 rounded bg-gray-700"
             />
-            <input 
-                type="text" 
-                bind:value={quality} 
-                placeholder="Quality (optional)"
-                class="w-48 px-4 py-2 rounded bg-gray-700"
-            />
+            <select
+                bind:value={selectedScreen}
+                class="px-4 py-2 rounded bg-gray-700"
+            >
+                {#each screenConfigs as config}
+                    <option value={config.screen}>
+                        Screen {config.screen} {config.enabled ? '' : '(Disabled)'}
+                    </option>
+                {/each}
+            </select>
+            <select 
+                bind:value={quality}
+                class="px-4 py-2 rounded bg-gray-700"
+            >
+                {#each qualities as q}
+                    <option value={q}>{q}</option>
+                {/each}
+            </select>
+        </div>
+        <div class="flex justify-end">
             <button 
                 on:click={addStream}
                 class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-white"
@@ -87,20 +157,34 @@
             {#if streams.length === 0}
                 <p class="text-gray-400">No active streams</p>
             {:else}
-                <div class="space-y-2">
+                <div class="space-y-4">
                     {#each streams as stream (stream.screen)}
-                        <div class="flex justify-between items-center p-4 bg-gray-800 rounded">
-                            <div>
-                                <h3 class="font-medium">{stream.title || 'Untitled Stream'}</h3>
-                                <p class="text-sm text-gray-400">{stream.url}</p>
-                                <p class="text-sm text-gray-400">Quality: {stream.quality}</p>
+                        <div class="bg-gray-800 rounded-lg overflow-hidden">
+                            <div class="p-4">
+                                <div class="flex justify-between items-start mb-4">
+                                    <div>
+                                        <h3 class="font-medium text-lg">Screen {stream.screen}</h3>
+                                        <p class="text-sm text-gray-400">{stream.url}</p>
+                                        <p class="text-sm text-gray-400">Quality: {stream.quality}</p>
+                                    </div>
+                                    <div class="space-x-2">
+                                        <button 
+                                            on:click={() => toggleScreen(stream.screen)}
+                                            class="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 rounded text-white"
+                                        >
+                                            {screenConfigs.find(c => c.screen === stream.screen)?.enabled ? 'Disable' : 'Enable'}
+                                        </button>
+                                        <button 
+                                            on:click={() => stopStream(stream.screen)}
+                                            class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
+                                        >
+                                            Stop
+                                        </button>
+                                    </div>
+                                </div>
+                                <PlayerControls {stream} />
                             </div>
-                            <button 
-                                on:click={() => stopStream(stream.screen)}
-                                class="px-3 py-1 bg-red-600 hover:bg-red-700 rounded text-white"
-                            >
-                                Stop
-                            </button>
+                            <QueueList screen={stream.screen} queue={stream.queue || []} />
                         </div>
                     {/each}
                 </div>

@@ -141,6 +141,8 @@ export const defaultConfig: Config = {
     windowMaximized: false,
     maxStreams: 4,
     autoStart: true,
+    processPriority: 'normal',
+    windowMode: 'windowed',
     screens: []
   },
   mpv: {

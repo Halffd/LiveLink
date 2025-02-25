@@ -437,9 +437,11 @@ export class StreamManager extends EventEmitter {
         }
 
         // Sort sources by priority first
-        const sortedSources = [...streamConfig.sources]
-          .filter(source => source.enabled)
-          .sort((a, b) => (a.priority || 999) - (b.priority || 999));
+        const sortedSources = streamConfig.sources && Array.isArray(streamConfig.sources) 
+          ? [...streamConfig.sources]
+              .filter(source => source.enabled)
+              .sort((a, b) => (a.priority || 999) - (b.priority || 999))
+          : [];
 
         logger.debug(
           'Sources for screen %s: %s',
@@ -1052,14 +1054,14 @@ export class StreamManager extends EventEmitter {
 const config = loadAllConfigs();
 const holodexService = new HolodexService(
   env.HOLODEX_API_KEY,
-  config.filters?.filters || [],
+  config.filters?.filters ? config.filters.filters.map(f => typeof f === 'string' ? f : f.value) : [],
   config.favoriteChannels.holodex,
   config
 );
 const twitchService = new TwitchService(
   env.TWITCH_CLIENT_ID,
   env.TWITCH_CLIENT_SECRET,
-  config.filters?.filters || []
+  config.filters?.filters ? config.filters.filters.map(f => typeof f === 'string' ? f : f.value) : []
 );
 const youtubeService = new YouTubeService(
   config.favoriteChannels.youtube
