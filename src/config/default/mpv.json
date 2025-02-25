@@ -1,6 +1,3 @@
 {
-  "priority": "normal",
-  "gpu-context": "auto",
-  "vo": "gpu",
-  "hwdec": "auto-safe"
+  "vo": "gpu"
 } 

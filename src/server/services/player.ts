@@ -413,39 +413,48 @@ export class PlayerService {
         throw new Error(`Invalid screen configuration for screen ${options.screen}`);
       }
 
+      // Determine whether to use streamlink based on URL and stream type
+      const isTwitchStream = options.url.includes('twitch.tv');
+      const isYouTubeLive = options.url.includes('youtube.com') && 
+        (options.url.includes('/live/') || options.url.includes('?v=') || options.url.includes('watch?v='));
+      const useStreamlink = isTwitchStream || isYouTubeLive;
+      
       // Check if there's already a player running for this screen
       const existingStream = this.streams.get(options.screen);
       if (existingStream?.process) {
-        // If player exists, just load the new URL
-        logger.info(`Player already exists for screen ${options.screen}, loading new URL`, 'PlayerService');
-        this.sendCommandToScreen(options.screen, `loadfile "${options.url}"`);
-        return {
-          screen: options.screen,
-          message: `Stream loaded on existing player on screen ${options.screen}`
-        };
+        if (useStreamlink) {
+          // For Streamlink streams, we need to restart the process with the new URL
+          logger.info(`Restarting Streamlink for new URL on screen ${options.screen}`, 'PlayerService');
+          await this.stopStream(options.screen);
+        } else {
+          // For direct MPV playback, we can just load the new URL
+          logger.info(`Player already exists for screen ${options.screen}, loading new URL`, 'PlayerService');
+          this.sendCommandToScreen(options.screen, `loadfile "${options.url}"`);
+          return {
+            screen: options.screen,
+            message: `Stream loaded on existing player on screen ${options.screen}`
+          };
+        }
       }
 
-      // Stop existing stream if any
+      // Stop existing stream if any (in case stopStream wasn't called above)
       await this.stopStream(options.screen);
 
       // Create log paths
       const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${options.screen}-${Date.now()}.log`);
 
-      // Determine whether to use streamlink based on URL
-      const isTwitchStream = options.url.includes('twitch.tv');
-      const useStreamlink = isTwitchStream;  // Only use streamlink for Twitch
       let args: string[] = [];
-      const command = useStreamlink ? 'streamlink' : 'mpv';
+      const command = useStreamlink ? 'streamlink' : '/usr/bin/mpv';
 
       if (useStreamlink) {
         // Get streamlink arguments including the URL
         args = this.getStreamlinkArgs(options.url, options.screen);
-        logger.info(`Starting ${command} with streamlink for Twitch stream`, 'PlayerService');
+        logger.info(`Starting ${command} with streamlink for ${isTwitchStream ? 'Twitch' : 'YouTube Live'} stream`, 'PlayerService');
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
         args.unshift(options.url);
-        logger.info(`Starting ${command} directly for YouTube stream`, 'PlayerService');
+        logger.info(`Starting ${command} directly for video playback`, 'PlayerService');
       }
 
       logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
@@ -455,10 +464,16 @@ export class PlayerService {
         env: {
           ...process.env,
           MPV_HOME: undefined,
-          XDG_CONFIG_HOME: undefined
-        }
+          XDG_CONFIG_HOME: undefined,
+          DISPLAY: process.env.DISPLAY || ':0'
+        },
+        shell: true
       };
-      logger.info(`Starting ${command} ${args.join(' ')}`, 'PlayerService');
+
+      // Log the full command for debugging
+      const fullCommand = [command, ...args].join(' ');
+      logger.info(`Full command: ${fullCommand}`, 'PlayerService');
+
       const playerProcess = spawn(command, args, spawnOptions);
 
       // Handle process output
