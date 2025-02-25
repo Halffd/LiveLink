@@ -4,17 +4,6 @@
     "twitch_disable_hosting": true,
     "twitch_disable_ads": true,
     "twitch_low_latency": true,
-    "twitch_disable_reruns": true,
-    "stream-timeout": 60,
-    "retry-max": 10,
-    "retry-streams": 3,
-    "retry-open": 3,
-    "ringbuffer-size": "64M",
-    "stream-segment-threads": 4,
-    "stream-segment-attempts": 5,
-    "stream-segment-timeout": 10,
-    "hls-live-edge": 3,
-    "hls-timeout": 60,
-    "player-no-close": true
+    "twitch_disable_reruns": true
   }
 } 
