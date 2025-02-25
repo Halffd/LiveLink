@@ -108,6 +108,8 @@ export interface StreamConfig {
   quality: string;
   /** Whether the window should be maximized */
   windowMaximized: boolean;
+  /** Player type to use for this screen (streamlink or mpv) */
+  playerType?: 'streamlink' | 'mpv';
   /** X position of the window */
   windowX?: number;
   /** Y position of the window */
@@ -178,6 +180,8 @@ export interface PlayerSettings {
   maxStreams: number;
   /** Whether to auto-start streams on startup */
   autoStart: boolean;
+  /** Whether to force player to always be running for each enabled screen */
+  force_player: boolean;
 }
 
 /**
@@ -242,6 +246,8 @@ export interface Config {
     autoStart: boolean;
     /** Whether to prefer streamlink over direct playback */
     preferStreamlink: boolean;
+    /** Whether to force player to always be running for each enabled screen */
+    force_player: boolean;
     /** Configuration for each screen */
     screens: StreamConfig[];
   };

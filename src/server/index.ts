@@ -8,6 +8,22 @@ const signals = ['SIGINT', 'SIGTERM', 'SIGQUIT'];
 
 let isShuttingDown = false;
 
+// Add this before server startup
+// Check if API keys are set
+const holodexApiKey = process.env.HOLODEX_API_KEY;
+const twitchClientId = process.env.TWITCH_CLIENT_ID;
+const twitchClientSecret = process.env.TWITCH_CLIENT_SECRET;
+
+if (!holodexApiKey) {
+  logger.error('HOLODEX_API_KEY is not set in environment variables', 'Server');
+  logger.error('Holodex streams will not be available', 'Server');
+}
+
+if (!twitchClientId || !twitchClientSecret) {
+  logger.error('TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET is not set in environment variables', 'Server');
+  logger.error('Twitch streams will not be available', 'Server');
+}
+
 async function shutdown() {
   if (isShuttingDown) return;
   isShuttingDown = true;

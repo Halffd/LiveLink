@@ -198,7 +198,7 @@ export class StreamManager extends EventEmitter {
   private async handleEmptyQueue(screen: number) {
     try {
       // Validate screen number
-      const screenConfig = this.config.player.screens.find(s => s.id === screen);
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
       if (!screenConfig) {
         logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
         return;
@@ -211,6 +211,42 @@ export class StreamManager extends EventEmitter {
       
       // Get new streams
       const streams = await this.getLiveStreams();
+      
+      // Log detailed information about the streams fetched
+      logger.info(`Fetched ${streams.length} total streams`, 'StreamManager');
+      
+      if (streams.length === 0) {
+        logger.warn('No streams found. Check API keys and stream configuration.', 'StreamManager');
+        
+        // Check API keys
+        if (!process.env.HOLODEX_API_KEY) {
+          logger.error('HOLODEX_API_KEY is not set in environment variables', 'StreamManager');
+        }
+        
+        if (!process.env.TWITCH_CLIENT_ID || !process.env.TWITCH_CLIENT_SECRET) {
+          logger.error('TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET is not set in environment variables', 'StreamManager');
+        }
+        
+        // Check stream configuration
+        const streamConfig = this.config.streams.find(s => s.screen === screen);
+        if (!streamConfig) {
+          logger.error(`No stream configuration found for screen ${screen}`, 'StreamManager');
+        } else if (!streamConfig.enabled) {
+          logger.error(`Stream configuration for screen ${screen} is disabled`, 'StreamManager');
+        } else if (!streamConfig.sources || streamConfig.sources.length === 0) {
+          logger.error(`No sources configured for screen ${screen}`, 'StreamManager');
+        } else {
+          const enabledSources = streamConfig.sources.filter(s => s.enabled);
+          if (enabledSources.length === 0) {
+            logger.error(`No enabled sources for screen ${screen}`, 'StreamManager');
+          } else {
+            logger.info(`Enabled sources for screen ${screen}: ${enabledSources.map(s => `${s.type}:${s.subtype || 'other'}`).join(', ')}`, 'StreamManager');
+          }
+        }
+        
+        return;
+      }
+      
       const availableStreams = streams.filter(stream => {
         // Filter streams for this screen
         if (stream.screen !== screen) return false;
@@ -222,6 +258,8 @@ export class StreamManager extends EventEmitter {
         );
       });
 
+      logger.info(`Found ${availableStreams.length} streams for screen ${screen}`, 'StreamManager');
+
       if (availableStreams.length > 0) {
         // Sort by priority
         availableStreams.sort((a, b) => (a.priority || 999) - (b.priority || 999));
@@ -229,8 +267,12 @@ export class StreamManager extends EventEmitter {
         // Filter unwatched streams
         const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
         
+        logger.info(`Found ${unwatchedStreams.length} unwatched streams for screen ${screen}`, 'StreamManager');
+        
         if (unwatchedStreams.length > 0) {
           const [firstStream, ...remainingStreams] = unwatchedStreams;
+          
+          logger.info(`Starting stream ${firstStream.url} on screen ${screen}`, 'StreamManager');
           
           // Start first stream
           await this.startStream({
@@ -591,96 +633,37 @@ export class StreamManager extends EventEmitter {
   }
 
   async autoStartStreams() {
-    if (!this.config.player.autoStart) return;
-
+    if (this.isShuttingDown) return;
+    
+    logger.info('Auto-starting streams...', 'StreamManager');
+    
     try {
-      const streams = await this.getLiveStreams();
-      logger.info(`Auto-starting ${streams.length} streams`, 'StreamManager');
+      // Get all enabled screens with autoStart enabled from streams config
+      const autoStartScreens = this.config.streams
+        .filter(stream => stream.enabled && stream.autoStart)
+        .map(stream => stream.screen);
       
-      // Group streams by screen
-      const streamsByScreen = new Map<number, StreamSource[]>();
-      const usedUrls = new Set<string>();
-      
-      // First, group streams by their assigned screen
-      streams.forEach(stream => {
-        if (!stream.screen) return;
-        logger.debug(`Stream ${stream.url} is on screen ${stream.screen} with priority ${stream.priority || 999}`);
-        const screenStreams = streamsByScreen.get(stream.screen) || [];
-        screenStreams.push(stream);
-        streamsByScreen.set(stream.screen, screenStreams);
-      });
-
-      // Process screens in order (lower screen numbers first)
-      const orderedScreens = Array.from(streamsByScreen.keys()).sort((a, b) => a - b);
-      
-      for (const screen of orderedScreens) {
-        const screenConfig = this.config.player.screens.find(s => s.id === screen);
-        if (!screenConfig || !screenConfig.enabled) continue;
-
-        const allScreenStreams = streamsByScreen.get(screen) || [];
+      if (autoStartScreens.length === 0) {
+        logger.info('No screens configured for auto-start', 'StreamManager');
         
-        // Filter out streams that are already playing on higher priority screens
-        const availableStreams = allScreenStreams.filter(stream => {
-          if (usedUrls.has(stream.url)) {
-            logger.debug(
-              `Stream ${stream.url} already playing on a higher priority screen, skipping for screen ${screen}`,
-              'StreamManager'
-            );
-            return false;
-          }
-          return true;
-        });
-
-        // Get unwatched streams while maintaining priority order
-        const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
-        
-        if (unwatchedStreams.length === 0) {
-          logger.info(`No unwatched streams for screen ${screen}`, 'StreamManager');
-          continue;
-        }
-
-        // Start first unwatched and non-duplicate stream
-        const [firstStream, ...remainingStreams] = unwatchedStreams;
-        if (firstStream) {
-          logger.info(
-            `Starting stream on screen ${screen}: ${firstStream.url} ` +
-            `(${firstStream.platform}) with priority ${firstStream.priority || 999}`
-          );
-          
-          // Mark this URL as used
-          usedUrls.add(firstStream.url);
-          
-          await this.startStream({
-            url: firstStream.url,
-            quality: screenConfig.quality || this.config.player.defaultQuality,
-            screen: screen,
-            volume: screenConfig.volume,
-            windowMaximized: screenConfig.windowMaximized
-          });
-
-          // Queue remaining non-duplicate streams
-          const uniqueRemainingStreams = remainingStreams.filter(stream => !usedUrls.has(stream.url));
-          
-          if (uniqueRemainingStreams.length > 0) {
-            queueService.setQueue(screen, uniqueRemainingStreams);
-            logger.info(
-              `Queued ${uniqueRemainingStreams.length} unique streams for screen ${screen}. ` +
-              `First in queue: ${uniqueRemainingStreams[0].url} (Priority: ${uniqueRemainingStreams[0].priority || 999})`,
-              'StreamManager'
-            );
-            
-            // Mark queued streams as used to prevent duplicates on lower priority screens
-            uniqueRemainingStreams.forEach(stream => usedUrls.add(stream.url));
-          }
-        }
+        // Even if no auto-start screens, ensure players are running if force_player is enabled
+        await this.playerService.ensurePlayersRunning();
+        return;
       }
-
+      
+      logger.info(`Auto-starting streams for screens: ${autoStartScreens.join(', ')}`, 'StreamManager');
+      
+      // Auto-start streams for each screen
+      for (const screen of autoStartScreens) {
+        await this.handleQueueEmpty(screen);
+      }
+      
+      logger.info('Auto-start complete', 'StreamManager');
+      
+      // Ensure players are running for all enabled screens if force_player is enabled
+      await this.playerService.ensurePlayersRunning();
     } catch (error) {
-      logger.error(
-        'Failed to auto-start streams',
-        'StreamManager',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      logger.error(`Error during auto-start: ${error instanceof Error ? error.message : String(error)}`, 'StreamManager');
     }
   }
 
@@ -887,7 +870,15 @@ export class StreamManager extends EventEmitter {
   }
 
   public async updatePlayerSettings(settings: Partial<PlayerSettings>): Promise<void> {
+    // Update the settings
     Object.assign(this.config.player, settings);
+    
+    // If force_player was enabled, ensure players are running
+    if (settings.force_player === true) {
+      logger.info('Force player enabled, ensuring all enabled screens have players running', 'StreamManager');
+      await this.playerService.ensurePlayersRunning();
+    }
+    
     this.emit('settingsUpdate', this.config.player);
     await this.saveConfig();
   }
@@ -919,8 +910,30 @@ export class StreamManager extends EventEmitter {
     if (!screenConfig) {
       throw new Error(`Screen ${screen} not found`);
     }
+    
+    // Update the config
     Object.assign(screenConfig, config);
+    
+    // If enabling a screen and force_player is set, ensure player is running
+    if (config.enabled === true && this.config.player.force_player) {
+      const isPlayerRunning = this.playerService.getActiveStreams().some(s => s.screen === screen);
+      if (!isPlayerRunning && !this.manuallyClosedScreens.has(screen)) {
+        logger.info(`Screen ${screen} enabled with force_player active, starting player`, 'StreamManager');
+        // Start player with blank page
+        this.playerService.startStream({
+          url: 'about:blank',
+          screen,
+          quality: screenConfig.quality || this.config.player.defaultQuality,
+          volume: screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume,
+          windowMaximized: screenConfig.windowMaximized !== undefined ? screenConfig.windowMaximized : this.config.player.windowMaximized
+        }).catch(error => {
+          logger.error(`Failed to start player for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'StreamManager');
+        });
+      }
+    }
+    
     this.emit('screenUpdate', screen, screenConfig);
+    this.saveConfig();
   }
 
   public getConfig() {

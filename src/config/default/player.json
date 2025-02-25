@@ -4,6 +4,7 @@
   "windowMaximized": false,
   "maxStreams": 4,
   "autoStart": true,
+  "force_player": true,
   "screens": [
     {
       "id": 1,
@@ -16,6 +17,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
+      "playerType": "mpv",
       "primary": true
     },
     {
@@ -29,6 +31,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
+      "playerType": "streamlink",
       "primary": false
     }
   ]

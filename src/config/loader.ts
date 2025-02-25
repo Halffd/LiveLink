@@ -16,6 +16,7 @@ export interface PlayerConfig {
   windowMaximized: boolean;
   maxStreams: number;
   autoStart: boolean;
+  force_player: boolean;
   screens: Array<{
     id: number;
     width: number;
@@ -90,6 +91,7 @@ export function loadAllConfigs(): Config {
         windowMaximized: false,
         maxStreams: 4,
         autoStart: true,
+        force_player: false,
         screens: [
           {
             id: 1,

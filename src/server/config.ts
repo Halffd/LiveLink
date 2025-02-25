@@ -143,6 +143,7 @@ export const defaultConfig: Config = {
     autoStart: true,
     processPriority: 'normal',
     windowMode: 'windowed',
+    force_player: false,
     screens: []
   },
   mpv: {

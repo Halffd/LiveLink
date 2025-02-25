@@ -194,6 +194,22 @@
                             </label>
                         </div>
                     </div>
+                    <div class="col-md-6 col-lg-3">
+                        <div class="form-check form-switch mt-4">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                id="forcePlayer"
+                                bind:checked={playerSettings.force_player}
+                            />
+                            <label class="form-check-label" for="forcePlayer">
+                                Force player always running
+                            </label>
+                            <div class="form-text text-muted small">
+                                Automatically restart players if they close
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="d-flex justify-content-end mt-3">
                     <button
@@ -248,6 +264,21 @@
                                     <option value="medium">Medium</option>
                                     <option value="low">Low</option>
                                 </select>
+                            </div>
+                            <div class="col-md-6 col-lg-3">
+                                <label for="playerType-{config.screen}" class="form-label">Player Type</label>
+                                <select
+                                    id="playerType-{config.screen}"
+                                    bind:value={config.playerType}
+                                    on:change={() => updateScreenConfig(config.screen, { playerType: config.playerType })}
+                                    class="form-select bg-dark text-light border-secondary"
+                                >
+                                    <option value="mpv">MPV (Direct)</option>
+                                    <option value="streamlink">Streamlink</option>
+                                </select>
+                                <div class="form-text text-muted small">
+                                    Streamlink is better for Twitch/YouTube
+                                </div>
                             </div>
                             <div class="col-md-6 col-lg-3">
                                 <label class="form-label">Window Position</label>
