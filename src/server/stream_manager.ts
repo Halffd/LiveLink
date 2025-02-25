@@ -787,11 +787,66 @@ export class StreamManager extends EventEmitter {
     logger.info('Cleared watched streams history', 'StreamManager');
   }
 
-  cleanup() {
-    if (this.cleanupHandler) {
-      this.cleanupHandler();
+  async cleanup() {
+    this.isShuttingDown = true;
+    
+    try {
+      // Stop all keyboard listeners
+      this.keyboardService.cleanup();
+
+      // Get all active screens
+      const activeScreens = Array.from(this.streams.keys());
+      
+      // Stop all streams
+      const stopPromises = activeScreens.map(screen => 
+        this.stopStream(screen, true).catch(error => {
+          logger.error(
+            `Failed to stop stream on screen ${screen} during cleanup`,
+            'StreamManager',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        })
+      );
+
+      // Wait for all streams to stop
+      await Promise.all(stopPromises);
+
+      // Clear all timers
+      for (const screen of this.streamRefreshTimers.keys()) {
+        this.clearStreamRefresh(screen);
+      }
+      
+      for (const screen of this.inactiveTimers.keys()) {
+        this.clearInactiveTimer(screen);
+      }
+
+      // Clear all queues
+      this.queues.clear();
+      
+      // Remove all FIFO files
+      for (const [, fifoPath] of this.fifoPaths) {
+        try {
+          fs.unlinkSync(fifoPath);
+        } catch {
+          // Ignore errors, file might not exist
+          logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'StreamManager');
+        }
+      }
+      this.fifoPaths.clear();
+      this.ipcPaths.clear();
+
+      // Clear all event listeners
+      this.removeAllListeners();
+      
+      logger.info('Stream manager cleanup complete', 'StreamManager');
+    } catch (error) {
+      logger.error(
+        'Error during stream manager cleanup',
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      throw error;
     }
-    this.keyboardService.cleanup();
   }
 
   public sendCommandToScreen(screen: number, command: string): void {

@@ -60,6 +60,8 @@ export class PlayerService {
   private disabledScreens: Set<number> = new Set();
   private screenErrors: Map<number, { count: number; lastError: string }> = new Map();
   private manuallyClosedScreens: Set<number> = new Set();
+  private isShuttingDown = false;
+  private signalHandlersRegistered = false;
 
   constructor() {
     this.events = new EventEmitter();
@@ -100,17 +102,29 @@ export class PlayerService {
       });
     }, 60 * 60 * 1000); // Rotate hourly
 
-    // Don't forget to clear on cleanup
-    this.events.on('cleanup', () => {
-      clearInterval(logRotation);
-      // Force kill all processes
-      this.streams.forEach((stream) => {
-        const process = stream.process;
-        if (process && process.pid) {
-          process.kill('SIGKILL');
-        }
+    // Register signal handlers only once
+    if (!this.signalHandlersRegistered) {
+      const signals = ['SIGINT', 'SIGTERM', 'SIGQUIT'];
+      signals.forEach(signal => {
+        process.once(signal, () => {
+          if (!this.isShuttingDown) {
+            logger.info(`Received ${signal} signal in PlayerService`, 'PlayerService');
+            this.isShuttingDown = true;
+            this.forceCleanup();
+            process.exit(0);
+          }
+        });
       });
-      this.streams.clear();
+      this.signalHandlersRegistered = true;
+    }
+
+    // Don't forget to clear on cleanup
+    this.events.once('cleanup', () => {
+      clearInterval(logRotation);
+      if (!this.isShuttingDown) {
+        this.isShuttingDown = true;
+        this.forceCleanup();
+      }
     });
   }
 
@@ -307,26 +321,43 @@ export class PlayerService {
     return args;
   }
 
-  private getStreamlinkArgs(): string[] {
-    const args: string[] = ['--stdout'];
+  private getStreamlinkArgs(url: string, screen: number): string[] {
+    // Start with base arguments
+    const args: string[] = [
+      url,          // URL must be first positional argument
+      'best',       // Quality selection
+      '--stdout',   // Output to stdout
+      '--quiet',    // Reduce noise in logs
+      '--twitch-disable-hosting',
+      '--twitch-disable-ads',
+      '--stream-segment-threads', '4',
+      '--ringbuffer-size', '64M'
+    ];
 
-    // Add all streamlink.json config settings
+    // Add config settings from streamlink.json
     if (this.config.streamlink) {
       Object.entries(this.config.streamlink).forEach(([key, value]) => {
-        // Skip null values and http_header (handled separately)
-        if (value === null || key === 'http_header') return;
+        // Skip null values, http_header (handled separately), and special cases
+        if (value === null || 
+            key === 'http_header' || 
+            key === 'path' || 
+            key === 'options') {
+          return;
+        }
+
+        const paramKey = key.replace(/([A-Z])/g, '-$1').toLowerCase();
 
         // Handle arrays (like default_stream)
         if (Array.isArray(value)) {
-          args.push(`--${key}`, value.join(','));
+          args.push(`--${paramKey}`, value.join(','));
         }
         // Handle booleans
         else if (typeof value === 'boolean') {
-          if (value) args.push(`--${key}`);
+          if (value) args.push(`--${paramKey}`);
         }
         // Handle all other values
         else if (value !== undefined) {
-          args.push(`--${key}`, value.toString());
+          args.push(`--${paramKey}`, value.toString());
         }
       });
 
@@ -338,10 +369,42 @@ export class PlayerService {
       }
     }
 
+    // Get screen config from player config
+    const screenConfig = this.config.player.screens.find(s => s.id === screen);
+    if (!screenConfig) {
+      logger.error(`No screen config found for screen ${screen}`, 'PlayerService');
+      throw new Error(`Invalid screen configuration for screen ${screen}`);
+    }
+
+    // Build MPV player args as a single quoted string
+    const mpvArgs = [
+      `--title=LiveLink-${screen}`,
+      `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+      `--volume=${screenConfig.volume}`,
+      `--input-ipc-server=/tmp/mpv-ipc-${screen}`,
+      `--log-file=${path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${Date.now()}.log`)}`,
+      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
+      `--script-opts=screen=${screen}`,
+      screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
+    ].join(' ');
+
+    // Add player and player args
+    args.push('--player', 'mpv');
+    args.push('--player-args', mpvArgs);
+
     return args;
   }
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
+    // Don't start new streams during shutdown
+    if (this.isShuttingDown) {
+      logger.info('Ignoring stream start request during shutdown', 'PlayerService');
+      return {
+        screen: options.screen,
+        message: 'Server is shutting down'
+      };
+    }
+
     try {
       // Clear the manually closed flag when starting a new stream
       this.manuallyClosedScreens.delete(options.screen);
@@ -373,28 +436,17 @@ export class PlayerService {
 
       // Determine whether to use streamlink
       const useStreamlink = this.config.player.preferStreamlink;
+      let args: string[] = [];
       const command = useStreamlink ? 'streamlink' : 'mpv';
 
-      let args: string[] = [];
-      const scriptsPath = path.join(process.cwd(), 'scripts', 'livelink.lua');
-
       if (useStreamlink) {
-        // Streamlink configuration
-        args = this.getStreamlinkArgs();
-        args.push(
-          '--player',
-          'mpv',
-          '--player-args',
-          `--title=LiveLink-${options.screen} --geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y} --volume=${screenConfig.volume} --input-ipc-server=/tmp/mpv-ipc-${options.screen} --log-file=${mpvLogPath} --script=${scriptsPath} --script-opts=screen=${options.screen} ${screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'}`
-        );
+        // Get streamlink arguments including the URL
+        args = this.getStreamlinkArgs(options.url, options.screen);
         logger.info(`Starting ${command} with streamlink`, 'PlayerService');
       } else {
         // Get all MPV arguments including screen config and window settings
         args = this.getMpvArgs(options);
-
-        // Add the URL as the first argument
         args.unshift(options.url);
-
         logger.info(`Starting ${command} with URL: ${options.url}`, 'PlayerService');
       }
 
@@ -408,33 +460,51 @@ export class PlayerService {
           XDG_CONFIG_HOME: undefined
         }
       };
-
+      logger.info(`Starting ${command} ${args.join(' ')}`, 'PlayerService');
       const playerProcess = spawn(command, args, spawnOptions);
 
       // Handle process output
       if (playerProcess.stdout) {
         playerProcess.stdout.on('data', (data: Buffer) => {
-          const output = data.toString().trim();
-          if (output) {
-            logger.debug(`[${command}-${options.screen}-stdout] ${output}`, 'PlayerService');
-            this.outputCallback?.({
-              screen: options.screen,
-              data: output,
-              type: 'stdout'
-            });
+          try {
+            const output = data.toString('utf8').trim();
+            // Only log if it contains printable characters
+            if (output && /[\x20-\x7E]/.test(output)) {
+              logger.debug(`[${command}-${options.screen}-stdout] ${output}`, 'PlayerService');
+              this.outputCallback?.({
+                screen: options.screen,
+                data: output,
+                type: 'stdout'
+              });
+            }
+          } catch (error: unknown) {
+            // Log error details for debugging
+            logger.debug(
+              `Received binary or invalid UTF-8 data on stdout for screen ${options.screen}: ${error instanceof Error ? error.message : String(error)}`,
+              'PlayerService'
+            );
           }
         });
       }
 
       if (playerProcess.stderr) {
         playerProcess.stderr.on('data', (data: Buffer) => {
-          const output = data.toString().trim();
-          if (output) {
-            logger.debug(`[${command}-${options.screen}-stderr] ${output}`, 'PlayerService');
-            this.errorCallback?.({
-              screen: options.screen,
-              error: output
-            });
+          try {
+            const output = data.toString('utf8').trim();
+            // Only log if it contains printable characters
+            if (output && /[\x20-\x7E]/.test(output)) {
+              logger.debug(`[${command}-${options.screen}-stderr] ${output}`, 'PlayerService');
+              this.errorCallback?.({
+                screen: options.screen,
+                error: output
+              });
+            }
+          } catch (error: unknown) {
+            // Log error details for debugging
+            logger.debug(
+              `Received binary or invalid UTF-8 data on stderr for screen ${options.screen}: ${error instanceof Error ? error.message : String(error)}`,
+              'PlayerService'
+            );
           }
         });
       }
@@ -816,13 +886,69 @@ export class PlayerService {
   }
 
   private cleanup(): void {
+    if (this.isShuttingDown) {
+      logger.debug('Cleanup already in progress, skipping', 'PlayerService');
+      return;
+    }
+
+    this.isShuttingDown = true;
+    this.forceCleanup();
+  }
+
+  private forceCleanup(): void {
+    logger.info('Force cleaning up all player processes', 'PlayerService');
+    
+    // Kill only LiveLink MPV processes by checking window title
+    try {
+      exec('pgrep -f "LiveLink-[0-9]+" | xargs -r kill -9', (error) => {
+        if (error && error.code !== 1) { // code 1 means no processes found
+          logger.error('Error killing LiveLink MPV processes', 'PlayerService', error);
+        }
+      });
+    } catch (error: unknown) {
+      logger.error(
+        'Failed to kill LiveLink MPV processes',
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
+    // Kill only streamlink processes associated with LiveLink
+    try {
+      exec('pgrep -f "streamlink.*LiveLink-[0-9]+" | xargs -r kill -9', (error) => {
+        if (error && error.code !== 1) { // code 1 means no processes found
+          logger.error('Error killing LiveLink Streamlink processes', 'PlayerService', error);
+        }
+      });
+    } catch (error: unknown) {
+      logger.error(
+        'Failed to kill LiveLink Streamlink processes',
+        'PlayerService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+
+    // Force kill all tracked processes
+    this.streams.forEach((stream) => {
+      const process = stream.process;
+      if (process?.pid) {
+        try {
+          process.kill('SIGKILL');
+        } catch {
+          // Process might already be gone
+        }
+      }
+    });
+
+    // Clear all streams immediately
+    this.streams.clear();
+
     // Clean up IPC and FIFO files
     for (const [screen, ipcPath] of this.ipcPaths) {
       try { 
         fs.unlinkSync(ipcPath);
-        logger.debug(`Removed IPC file: ${ipcPath}`, 'PlayerService');
       } catch {
-        logger.debug(`Failed to remove IPC file: ${ipcPath}`, 'PlayerService');
+        // Ignore errors during cleanup
       }
       this.ipcPaths.delete(screen);
     }
@@ -830,23 +956,25 @@ export class PlayerService {
     for (const [screen, fifoPath] of this.fifoPaths) {
       try { 
         fs.unlinkSync(fifoPath);
-        logger.debug(`Removed FIFO file: ${fifoPath}`, 'PlayerService');
       } catch {
-        logger.debug(`Failed to remove FIFO file: ${fifoPath}`, 'PlayerService');
+        // Ignore errors during cleanup
       }
       this.fifoPaths.delete(screen);
     }
     
     // Clear all timers and state
-    this.streamRefreshTimers.forEach((timer: NodeJS.Timeout) => clearTimeout(timer));
+    this.streamRefreshTimers.forEach(clearTimeout);
     this.streamRefreshTimers.clear();
     
-    this.inactiveTimers.forEach((timer: NodeJS.Timeout) => clearTimeout(timer));
+    this.inactiveTimers.forEach(clearTimeout);
     this.inactiveTimers.clear();
     
     this.streamStartTimes.clear();
     this.lastStreamEndTime.clear();
     this.screenErrors.clear();
     this.disabledScreens.clear();
+    this.manuallyClosedScreens.clear();
+
+    logger.info('Cleanup complete', 'PlayerService');
   }
 } 

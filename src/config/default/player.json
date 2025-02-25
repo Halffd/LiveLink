@@ -1,5 +1,5 @@
 {
-  "preferStreamlink": false,
+  "preferStreamlink": true,
   "defaultQuality": "best",
   "defaultVolume": 50,
   "windowMaximized": false,

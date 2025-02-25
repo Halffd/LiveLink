@@ -15,13 +15,20 @@ local API_URL = "http://localhost:3001/api"
 local current_screen = nil
 local current_url = nil
 local info_display_time = 10 -- How long to show info overlay (seconds)
+local REFRESH_INTERVAL = 30 * 60 -- 30 minutes in seconds
+local last_refresh_time = os.time()
+local MIN_WATCH_TIME = 60 -- Minimum time to watch before marking as watched (seconds)
+local ERROR_RETRY_COUNT = 3 -- Number of times to retry on error
+local RETRY_DELAY = 5 -- Delay between retries in seconds
+local STREAM_SWITCH_DELAY = 2 -- Delay between switching streams in seconds
 
--- Track already marked streams
+-- Track state
 local marked_streams = {}
-
--- Track playlist state
 local playlist_initialized = false
 local manual_navigation = false
+local current_error_count = 0
+local stream_start_time = nil
+local is_stream_active = false
 
 -- Helper function to make HTTP requests with better error handling
 function http_request(url, method, headers, data)
@@ -183,21 +190,20 @@ end
 -- Mark current stream as watched
 function mark_current_watched()
     local path = mp.get_property("path")
-    if not path then return end
+    if not path or not stream_start_time then return end
 
-    -- Only mark as watched if we've watched at least 30 seconds or 20% of the video
-    local duration = mp.get_property_number("duration") or 0
-    local position = mp.get_property_number("time-pos") or 0
-    local threshold = math.min(30, duration * 0.2)
+    -- Only mark as watched if we've watched at least MIN_WATCH_TIME seconds
+    local current_time = os.time()
+    local watch_duration = current_time - stream_start_time
     
-    if position >= threshold then
+    if watch_duration >= MIN_WATCH_TIME then
         -- Skip if already marked
         if marked_streams[path] then
             msg.debug("Stream already marked as watched: " .. path)
             return
         end
 
-        msg.info("Marking as watched: " .. path)
+        msg.info(string.format("Marking as watched: %s (watched for %d seconds)", path, watch_duration))
         marked_streams[path] = true
         
         local data = utils.format_json({
@@ -214,6 +220,12 @@ function mark_current_watched()
         
         if response then
             msg.info("Stream marked as watched")
+            -- Remove from playlist only after successfully marking as watched
+            local pos = mp.get_property_number("playlist-pos")
+            if pos ~= nil then
+                mp.commandv("playlist-remove", pos)
+                msg.info(string.format("Removed watched stream from playlist: %s", path))
+            end
         else
             msg.error("Failed to mark stream as watched")
         end
@@ -494,8 +506,21 @@ end)
 mp.add_key_binding("ENTER", "playlist-play-selected", function()
     manual_navigation = true
     local pos = mp.get_property_number("playlist-pos") or 0
-    local url = mp.get_property(string.format("playlist/%d/filename", pos))
+    local count = mp.get_property_number("playlist-count") or 0
     
+    -- Only allow playing current or future items
+    local selected_pos = mp.get_property_number("playlist-pos-1") or 0
+    if selected_pos < pos then
+        mp.osd_message("Cannot play previous streams", 2)
+        return
+    end
+    
+    if selected_pos >= count then
+        mp.osd_message("Invalid playlist position", 2)
+        return
+    end
+    
+    local url = mp.get_property(string.format("playlist/%d/filename", selected_pos))
     if url then
         msg.info("Manual selection of playlist item: " .. url)
         -- Force load the selected URL
@@ -516,23 +541,20 @@ mp.register_event("file-loaded", function()
     -- Skip if no URL
     if not url then return end
     
-    -- Initialize playlist if needed
-    if not playlist_initialized then
-        initialize_playlist()
-    end
+    -- Reset stream state
+    stream_start_time = os.time()
+    is_stream_active = true
     
     msg.debug(string.format("Processing URL: %s", url))
     update_screen_info()
     
-    -- Start watching for duration to mark as watched
-    local watch_timer = nil
-    watch_timer = mp.add_periodic_timer(1, function()
-        mark_current_watched()
-        -- If stream is marked as watched, clear the timer
-        if marked_streams[url] then
-            watch_timer:kill()
-        end
-    end)
+    -- Check if we need to refresh based on time
+    local current_time = os.time()
+    if current_time - last_refresh_time >= REFRESH_INTERVAL then
+        msg.info("Refresh interval reached, refreshing stream")
+        last_refresh_time = current_time
+        refresh_stream()
+    end
 end)
 
 -- Update play_next_stream function
@@ -542,6 +564,9 @@ function play_next_stream()
 
     msg.info("Attempting to play next stream")
     
+    -- Reset error count when moving to next stream
+    current_error_count = 0
+    
     -- Get playlist info
     local playlist_pos = mp.get_property_number("playlist-pos") or 0
     local playlist_count = mp.get_property_number("playlist-count") or 0
@@ -549,9 +574,12 @@ function play_next_stream()
     msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
     
     -- If we have more items in playlist, try to play next
-    if playlist_pos + 1 < playlist_count then
-        msg.info("Playing next item in playlist")
-        mp.commandv("playlist-next", "force")
+    if playlist_count > 0 then
+        -- Add delay before playing next stream
+        mp.add_timeout(STREAM_SWITCH_DELAY, function()
+            msg.info("Playing next item in playlist")
+            mp.commandv("playlist-play-index", "0")
+        end)
         return
     end
     
@@ -562,15 +590,57 @@ function play_next_stream()
     mp.commandv("playlist-clear")
     playlist_initialized = false
     
-    -- Initialize new playlist
-    if initialize_playlist() then
-        -- If initialization was successful, start playing
-        mp.commandv("playlist-play-index", "0")
-    else
-        -- If no new streams, request update from server
-        handle_end_of_playlist()
-    end
+    -- Initialize new playlist with delay
+    mp.add_timeout(STREAM_SWITCH_DELAY, function()
+        if initialize_playlist() then
+            -- If initialization was successful, start playing first item
+            mp.commandv("playlist-play-index", "0")
+        else
+            -- If no new streams, request update from server
+            handle_end_of_playlist()
+        end
+    end)
 end
+
+-- Add error handling for stream failures
+mp.register_event("end-file", function(event)
+    msg.info(string.format("File ended event triggered: %s (playlist-pos: %s/%s)", 
+        event.reason or "unknown reason",
+        mp.get_property("playlist-pos"),
+        mp.get_property("playlist-count")))
+    
+    -- Reset stream state
+    is_stream_active = false
+    
+    if event.reason == "error" then
+        current_error_count = current_error_count + 1
+        msg.warn(string.format("Stream error occurred (attempt %d/%d)", current_error_count, ERROR_RETRY_COUNT))
+        
+        if current_error_count < ERROR_RETRY_COUNT then
+            -- Retry current stream after delay
+            mp.add_timeout(RETRY_DELAY, function()
+                local current_url = mp.get_property("path")
+                if current_url then
+                    msg.info("Retrying stream: " .. current_url)
+                    mp.commandv("loadfile", current_url)
+                end
+            end)
+            return
+        else
+            msg.error("Max retry attempts reached, moving to next stream")
+            current_error_count = 0
+        end
+    elseif event.reason == "eof" or event.reason == "stop" then
+        -- Only mark as watched and proceed if stream ended normally
+        mark_current_watched()
+    end
+    
+    -- Add delay before playing next stream
+    mp.add_timeout(STREAM_SWITCH_DELAY, function()
+        current_url = nil
+        play_next_stream()
+    end)
+end)
 
 -- Register event handlers
 mp.register_event("end-file", function(event)
@@ -590,8 +660,21 @@ end)
 mp.add_key_binding("ENTER", "playlist-play-selected", function()
     manual_navigation = true
     local pos = mp.get_property_number("playlist-pos") or 0
-    local url = mp.get_property(string.format("playlist/%d/filename", pos))
+    local count = mp.get_property_number("playlist-count") or 0
     
+    -- Only allow playing current or future items
+    local selected_pos = mp.get_property_number("playlist-pos-1") or 0
+    if selected_pos < pos then
+        mp.osd_message("Cannot play previous streams", 2)
+        return
+    end
+    
+    if selected_pos >= count then
+        mp.osd_message("Invalid playlist position", 2)
+        return
+    end
+    
+    local url = mp.get_property(string.format("playlist/%d/filename", selected_pos))
     if url then
         msg.info("Manual selection of playlist item: " .. url)
         -- Force load the selected URL
@@ -611,10 +694,8 @@ end)
 
 -- Add handler for playlist-prev command
 mp.add_key_binding("PGUP", "playlist-prev-stream", function()
-    local playlist_pos = mp.get_property_number("playlist-pos") or 0
-    if playlist_pos > 0 then
-        mp.commandv("playlist-prev", "force")
-    end
+    -- Disable going backwards in playlist
+    mp.osd_message("Cannot go back in playlist", 2)
 end)
 
 -- Initialize

@@ -420,13 +420,32 @@ router.delete('/api/streams/watched', async (ctx: Context) => {
 // Server Control
 router.post('/api/server/stop', async (ctx: Context) => {
   try {
-    // Give time for response to be sent
-    setTimeout(() => {
-      streamManager.cleanup();
-      process.exit(0);
-    }, 1000);
+    logger.info('Received stop server request', 'API');
+    
+    // Set response headers to prevent connection from closing
+    ctx.set('Connection', 'close');
+    
+    // Send response before cleanup
+    ctx.status = 200;
     ctx.body = { success: true, message: 'Server stopping...' };
+    
+    // Force send the response
+    ctx.res.end();
+    
+    // Perform cleanup after response is sent
+    setTimeout(async () => {
+      try {
+        logger.info('Starting server cleanup...', 'API');
+        await streamManager.cleanup();
+        logger.info('Server cleanup complete, exiting...', 'API');
+        process.exit(0);
+      } catch (error) {
+        logger.error('Failed to cleanup server', 'API', error instanceof Error ? error : new Error(String(error)));
+        process.exit(1);
+      }
+    }, 100);
   } catch (error) {
+    logger.error('Failed to stop server', 'API', error instanceof Error ? error : new Error(String(error)));
     ctx.status = 500;
     ctx.body = { error: String(error) };
   }

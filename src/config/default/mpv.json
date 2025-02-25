@@ -1,8 +1,9 @@
 {
   "priority": "normal",
   "gpu-context": "auto",
-  "vo": "x11",
+  "vo": "gpu",
   "hwdec": "auto-safe",
+  "gpu-api": "auto",
 
   "cache": true,
   "cache-secs": 120,
@@ -10,15 +11,23 @@
   "demuxer-max-back-bytes": "200M",
   "network-timeout": 60,
   "stream-buffer-size": "64M",
+  "demuxer-readahead-secs": 20,
+  "demuxer-seekable-cache": true,
 
   "keep-open": true,
   "ontop": false,
   "border": false,
+  "force-window": true,
+  "reset-on-next-file": true,
 
   "osd-level": 1,
   "osd-duration": 1000,
   "osd-font": "sans-serif",
   "osd-font-size": 32,
   "osd-color": "#CCFFFFFF",
-  "osd-border-color": "#DD322640"
+  "osd-border-color": "#DD322640",
+
+  "msg-level": "all=v",
+  "ytdl-format": "bestvideo[height<=?1080]+bestaudio/best",
+  "ytdl-raw-options": "ignore-errors=,quiet=,no-warnings=,retries=10"
 } 
