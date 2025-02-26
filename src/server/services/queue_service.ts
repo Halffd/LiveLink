@@ -58,8 +58,22 @@ class QueueService extends EventEmitter {
 
   public removeFromQueue(screen: number, index: number): void {
     const queue = this.queues.get(screen) || [];
-    queue.splice(index, 1);
-    this.queues.set(screen, queue);
+    if (index >= 0 && index < queue.length) {
+      queue.splice(index, 1);
+      this.queues.set(screen, queue);
+      
+      logger.debug(`Removed item at index ${index} from queue for screen ${screen}. New queue size: ${queue.length}`, 'QueueService');
+      
+      // Emit appropriate events
+      this.emit('queue:updated', screen, queue);
+      
+      if (queue.length === 0) {
+        logger.info(`Queue for screen ${screen} is now empty`, 'QueueService');
+        this.emit('queue:empty', screen);
+      }
+    } else {
+      logger.warn(`Invalid index ${index} for queue of screen ${screen} with length ${queue.length}`, 'QueueService');
+    }
   }
 
   // Watched Streams Management

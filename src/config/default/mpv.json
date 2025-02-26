@@ -1,3 +1,4 @@
 {
-  "vo": "gpu-next"
+  "vo": "x11",      
+  "hwdec": "auto"
 } 

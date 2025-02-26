@@ -159,7 +159,7 @@ export class StreamManager extends EventEmitter {
     // Try to get next stream from current queue
     const nextStream = queueService.getNextStream(screen);
     if (nextStream) {
-      const screenConfig = this.config.player.screens.find(s => s.id === screen);
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
       if (!screenConfig) {
         logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
         return;
@@ -181,6 +181,12 @@ export class StreamManager extends EventEmitter {
         return this.handleStreamEnd(screen);
       }
 
+      logger.info(`Starting next stream from queue: ${nextStream.url} on screen ${screen}`, 'StreamManager');
+      
+      // Remove the stream from the queue before starting it
+      queueService.removeFromQueue(screen, 0);
+      
+      // Start the stream
       await this.startStream({
         url: nextStream.url,
         screen: screen,
@@ -188,6 +194,10 @@ export class StreamManager extends EventEmitter {
         windowMaximized: screenConfig.windowMaximized,
         volume: screenConfig.volume
       });
+      
+      // Mark the stream as watched
+      queueService.markStreamAsWatched(nextStream.url);
+      
       return;
     }
 
@@ -200,9 +210,11 @@ export class StreamManager extends EventEmitter {
       // Validate screen number
       const screenConfig = this.config.player.screens.find(s => s.screen === screen);
       if (!screenConfig) {
-        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        logger.error(`Invalid screen number: ${screen}. Available screens: ${this.config.player.screens.map(s => s.screen).join(', ')}`, 'StreamManager');
         return;
       }
+
+      logger.info(`Handling empty queue for screen ${screen}`, 'StreamManager');
 
       // Add a small delay to prevent rapid fetching
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -247,15 +259,25 @@ export class StreamManager extends EventEmitter {
         return;
       }
       
+      // Log all streams with their screen assignments
+      logger.debug(`Stream assignments: ${streams.map(s => `${s.url} -> screen ${s.screen}`).join(', ')}`, 'StreamManager');
+      
       const availableStreams = streams.filter(stream => {
         // Filter streams for this screen
-        if (stream.screen !== screen) return false;
+        if (stream.screen !== screen) {
+          logger.debug(`Stream ${stream.url} is assigned to screen ${stream.screen}, not ${screen}`, 'StreamManager');
+          return false;
+        }
         
         // Check if stream is already playing on another screen
         const activeStreams = this.getActiveStreams();
-        return !activeStreams.some(s => 
-          s.url === stream.url && s.screen < screen
-        );
+        const isPlaying = activeStreams.some(s => s.url === stream.url && s.screen < screen);
+        if (isPlaying) {
+          logger.debug(`Stream ${stream.url} is already playing on another screen with higher priority`, 'StreamManager');
+          return false;
+        }
+        
+        return true;
       });
 
       logger.info(`Found ${availableStreams.length} streams for screen ${screen}`, 'StreamManager');
@@ -282,6 +304,9 @@ export class StreamManager extends EventEmitter {
             windowMaximized: screenConfig.windowMaximized,
             volume: screenConfig.volume
           });
+          
+          // Mark the stream as watched
+          queueService.markStreamAsWatched(firstStream.url);
 
           // Queue remaining streams
           if (remainingStreams.length > 0) {
