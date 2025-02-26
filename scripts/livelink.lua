@@ -131,6 +131,12 @@ end
 
 -- Check if URL is already playing on another screen
 function check_url_duplicate(url)
+    -- Skip checking if URL is nil
+    if not url then
+        msg.debug("Skipping duplicate check for nil URL")
+        return false, nil
+    end
+
     -- Skip checking playlist files
     if string.match(url, "playlist%-screen%d+") then
         msg.debug("Skipping duplicate check for playlist file")
@@ -142,18 +148,40 @@ function check_url_duplicate(url)
         msg.debug("Skipping duplicate check for local file")
         return false, nil
     end
+    
+    -- Skip checking for about:blank
+    if url == "about:blank" then
+        msg.debug("Skipping about:blank update")
+        return false, nil
+    end
 
-    msg.debug("Checking for duplicate stream: " .. url)
+    -- Normalize URL for comparison
+    local normalized_url = url
+    if url:match("twitch.tv/") and not url:match("^https://") then
+        normalized_url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
+    elseif url:match("youtube.com/") and not url:match("^https://") then
+        normalized_url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
+    end
+
+    msg.debug("Checking for duplicate stream: " .. normalized_url)
     
     local response = http_request(API_URL .. "/streams/active")
     if response then
         local current_screen = get_current_screen()
         for _, stream in ipairs(response) do
+            -- Normalize the stream URL for comparison
+            local stream_url = stream.url
+            if stream_url:match("twitch.tv/") and not stream_url:match("^https://") then
+                stream_url = "https://twitch.tv/" .. stream_url:match("twitch.tv/(.+)")
+            elseif stream_url:match("youtube.com/") and not stream_url:match("^https://") then
+                stream_url = "https://youtube.com/" .. stream_url:match("youtube.com/(.+)")
+            end
+            
             -- Only consider it a duplicate if:
-            -- 1. Same URL
+            -- 1. Same URL (after normalization)
             -- 2. Different screen
             -- 3. The other screen has a lower number (higher priority)
-            if stream.url == url and 
+            if stream_url == normalized_url and 
                stream.screen ~= current_screen and 
                stream.screen < current_screen then
                 msg.warn(string.format("URL already playing on higher priority screen %d", stream.screen))
@@ -162,7 +190,6 @@ function check_url_duplicate(url)
         end
     end
     
-    msg.debug("No duplicates found")
     return false, nil
 end
 
@@ -235,7 +262,10 @@ end
 -- Update screen info
 function update_screen_info()
     local screen = get_current_screen()
-    if not screen then return end
+    if not screen then 
+        msg.debug("Cannot update screen info: screen number unknown")
+        return 
+    end
     
     local url = mp.get_property("path")
     if not url then 
@@ -249,30 +279,58 @@ function update_screen_info()
         return
     end
     
+    -- Skip about:blank
+    if url == "about:blank" then
+        msg.debug("Skipping about:blank update")
+        return
+    end
+    
     -- Normalize URL if needed
+    local normalized_url = url
     if url:match("twitch.tv/") and not url:match("^https://") then
-        url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
+        normalized_url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
     elseif url:match("youtube.com/") and not url:match("^https://") then
-        url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
+        normalized_url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
     end
     
     -- Only update if URL has changed
-    if url ~= current_url then
+    if normalized_url ~= current_url then
         msg.info("URL changed, updating stream info")
         
-        local is_duplicate, other_screen = check_url_duplicate(url)
+        local is_duplicate, other_screen = check_url_duplicate(normalized_url)
         if is_duplicate then
             msg.warn(string.format("URL already playing on screen %d, moving to next stream", other_screen))
-            -- Instead of stopping, try to play next stream
-            play_next_stream()
+            
+            -- Mark this URL as watched to avoid it coming back in the queue
+            local data = utils.format_json({
+                url = normalized_url,
+                screen = get_current_screen()
+            })
+            
+            http_request(
+                API_URL .. "/streams/watched",
+                "POST",
+                nil,
+                data
+            )
+            
+            -- Only skip to next stream if not in manual navigation mode
+            if not manual_navigation then
+                -- Add a small delay before playing next stream
+                mp.add_timeout(STREAM_SWITCH_DELAY, function()
+                    play_next_stream()
+                end)
+            else
+                mp.osd_message(string.format("Warning: This stream is already playing on screen %d", other_screen), 5)
+            end
             return
         end
         
-        current_url = url
+        current_url = normalized_url
         
         -- Update screen info via API
         local data = utils.format_json({
-            url = url,
+            url = normalized_url,
             screen = screen,
             quality = mp.get_property("options/quality") or "best",
             notify_only = true  -- Add flag to indicate this is just a notification
@@ -287,19 +345,8 @@ function update_screen_info()
             data
         )
         
-        if response then
-            if response.message then
-                msg.info("API response: " .. response.message)
-                if response.message:match("already playing") then
-                    -- If stream is already playing somewhere, move to next
-                    play_next_stream()
-                    return
-                end
-            end
-            msg.info("Stream info update sent")
-        else
-            msg.error("Failed to update stream info")
-        end
+        -- Reset stream start time for watched tracking
+        stream_start_time = os.time()
     end
 end
 
@@ -430,10 +477,17 @@ end
 
 -- Add this new function for playlist initialization
 function initialize_playlist()
-    if playlist_initialized then return end
+    -- Return early if already initialized to prevent duplicate initialization
+    if playlist_initialized then 
+        msg.debug("Playlist already initialized, skipping")
+        return true 
+    end
     
     local screen = get_current_screen()
-    if not screen then return end
+    if not screen then 
+        msg.error("Cannot initialize playlist: screen number unknown")
+        return false 
+    end
     
     msg.info("Initializing playlist for screen " .. screen)
     
@@ -445,6 +499,9 @@ function initialize_playlist()
         -- Get watched streams to filter
         local watched = http_request(API_URL .. "/streams/watched")
         local watched_urls = watched or {}
+        
+        -- Clear the current playlist first
+        mp.commandv("playlist-clear")
         
         -- Add unwatched streams to playlist
         local added = 0
@@ -466,11 +523,12 @@ function initialize_playlist()
         
         msg.info(string.format("Added %d unwatched streams to playlist", added))
         playlist_initialized = true
-        return true
+        return added > 0
+    else
+        msg.info("No streams found in queue")
+        playlist_initialized = true  -- Mark as initialized even if empty to prevent repeated attempts
+        return false
     end
-    
-    msg.info("No streams found in queue")
-    return false
 end
 
 -- Update the playlist position observer
@@ -533,75 +591,6 @@ mp.add_key_binding("ENTER", "playlist-play-selected", function()
     end)
 end)
 
--- Update the file-loaded event handler
-mp.register_event("file-loaded", function()
-    msg.info("File loaded event triggered")
-    local url = mp.get_property("path")
-    
-    -- Skip if no URL
-    if not url then return end
-    
-    -- Reset stream state
-    stream_start_time = os.time()
-    is_stream_active = true
-    
-    msg.debug(string.format("Processing URL: %s", url))
-    update_screen_info()
-    
-    -- Check if we need to refresh based on time
-    local current_time = os.time()
-    if current_time - last_refresh_time >= REFRESH_INTERVAL then
-        msg.info("Refresh interval reached, refreshing stream")
-        last_refresh_time = current_time
-        refresh_stream()
-    end
-end)
-
--- Update play_next_stream function
-function play_next_stream()
-    local screen = get_current_screen()
-    if not screen then return end
-
-    msg.info("Attempting to play next stream")
-    
-    -- Reset error count when moving to next stream
-    current_error_count = 0
-    
-    -- Get playlist info
-    local playlist_pos = mp.get_property_number("playlist-pos") or 0
-    local playlist_count = mp.get_property_number("playlist-count") or 0
-    
-    msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
-    
-    -- If we have more items in playlist, try to play next
-    if playlist_count > 0 then
-        -- Add delay before playing next stream
-        mp.add_timeout(STREAM_SWITCH_DELAY, function()
-            msg.info("Playing next item in playlist")
-            mp.commandv("playlist-play-index", "0")
-        end)
-        return
-    end
-    
-    -- If we reach here, we need to get new streams
-    msg.info("Reached end of playlist, fetching new streams")
-    
-    -- Clear the current playlist
-    mp.commandv("playlist-clear")
-    playlist_initialized = false
-    
-    -- Initialize new playlist with delay
-    mp.add_timeout(STREAM_SWITCH_DELAY, function()
-        if initialize_playlist() then
-            -- If initialization was successful, start playing first item
-            mp.commandv("playlist-play-index", "0")
-        else
-            -- If no new streams, request update from server
-            handle_end_of_playlist()
-        end
-    end)
-end
-
 -- Add error handling for stream failures
 mp.register_event("end-file", function(event)
     msg.info(string.format("File ended event triggered: %s (playlist-pos: %s/%s)", 
@@ -642,19 +631,119 @@ mp.register_event("end-file", function(event)
     end)
 end)
 
--- Register event handlers
-mp.register_event("end-file", function(event)
-    msg.info(string.format("File ended event triggered: %s (playlist-pos: %s/%s)", 
-        event.reason or "unknown reason",
-        mp.get_property("playlist-pos"),
-        mp.get_property("playlist-count")))
-    
-    -- Only proceed if the file ended naturally
-    if event.reason == "eof" then
-        current_url = nil
-        play_next_stream()
+-- Handle initial about:blank URL
+function handle_initial_blank()
+    local url = mp.get_property("path")
+    if url == "about:blank" then
+        msg.info("Initial about:blank detected, initializing playlist")
+        
+        -- Clear any existing playlist
+        mp.commandv("playlist-clear")
+        playlist_initialized = false
+        
+        -- Add a delay before initializing playlist
+        mp.add_timeout(3, function()
+            local success = initialize_playlist()
+            if success then
+                -- If initialization was successful, start playing first item after a short delay
+                mp.add_timeout(1, function()
+                    msg.info("Starting playback of initial playlist")
+                    mp.commandv("playlist-play-index", "0")
+                end)
+            else
+                -- If no streams available, show message
+                msg.info("No streams available for initial playback")
+                mp.osd_message("No streams available. Please add streams to the queue.", 5)
+            end
+        end)
     end
+end
+
+-- Register file-loaded event handler
+mp.register_event("file-loaded", function()
+    msg.info("File loaded event triggered")
+    local url = mp.get_property("path")
+    
+    -- Skip if no URL
+    if not url then return end
+    
+    -- Reset stream state
+    stream_start_time = os.time()
+    is_stream_active = true
+    
+    -- Handle initial about:blank URL
+    if url == "about:blank" then
+        handle_initial_blank()
+        return
+    end
+    
+    -- Add a small delay before processing the URL to allow the player to stabilize
+    mp.add_timeout(0.5, function()
+        msg.debug(string.format("Processing URL: %s", url))
+        update_screen_info()
+        
+        -- Check if we need to refresh based on time
+        local current_time = os.time()
+        if current_time - last_refresh_time >= REFRESH_INTERVAL then
+            msg.info("Refresh interval reached, refreshing stream")
+            last_refresh_time = current_time
+            refresh_stream()
+        end
+    end)
 end)
+
+-- Update play_next_stream function
+function play_next_stream()
+    local screen = get_current_screen()
+    if not screen then return end
+
+    msg.info("Attempting to play next stream")
+    
+    -- Reset error count when moving to next stream
+    current_error_count = 0
+    
+    -- Get playlist info
+    local playlist_pos = mp.get_property_number("playlist-pos") or 0
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    
+    msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
+    
+    -- If we have more items in playlist, try to play next
+    if playlist_count > 1 and playlist_pos < playlist_count - 1 then
+        -- Add delay before playing next stream
+        mp.add_timeout(STREAM_SWITCH_DELAY, function()
+            msg.info("Playing next item in playlist")
+            mp.commandv("playlist-next")
+        end)
+        return
+    end
+    
+    -- If we reach here, we need to get new streams
+    msg.info("Reached end of playlist, fetching new streams")
+    
+    -- Clear the current playlist
+    mp.commandv("playlist-clear")
+    playlist_initialized = false
+    
+    -- Initialize new playlist with delay
+    mp.add_timeout(STREAM_SWITCH_DELAY * 2, function()
+        local success = initialize_playlist()
+        if success then
+            -- If initialization was successful, start playing first item after a short delay
+            mp.add_timeout(STREAM_SWITCH_DELAY, function()
+                msg.info("Starting playback of new playlist")
+                mp.commandv("playlist-play-index", "0")
+            end)
+        else
+            -- If no new streams, request update from server
+            msg.info("No new streams found, requesting update from server")
+            handle_end_of_playlist()
+            
+            -- Show a message to the user
+            mp.osd_message("No more streams available. Requesting new content...", 5)
+        end
+    end)
+end
 
 -- Add handler for manual playlist navigation
 mp.add_key_binding("ENTER", "playlist-play-selected", function()
@@ -698,28 +787,22 @@ mp.add_key_binding("PGUP", "playlist-prev-stream", function()
     mp.osd_message("Cannot go back in playlist", 2)
 end)
 
--- Initialize
+-- Add hook to check URL on load
 mp.add_hook("on_load", 50, function()
     local url = mp.get_property("path")
-    if url then
-        msg.debug(string.format("Checking URL on load: %s (playlist-pos: %s/%s)", 
-            url,
-            mp.get_property("playlist-pos"),
-            mp.get_property("playlist-count")))
-            
-        -- Skip duplicate check for playlist files
-        if string.match(url, "playlist%-screen%d+") then
-            msg.debug("Skipping duplicate check for playlist file")
-            return true
-        end
-            
-        local is_duplicate, other_screen = check_url_duplicate(url)
-        if is_duplicate then
-            msg.warn(string.format("URL already playing on screen %d", other_screen))
-            return false
-        end
+    if not url then return end
+    
+    local playlist_pos = mp.get_property("playlist-pos")
+    local playlist_count = mp.get_property("playlist-count")
+    
+    msg.debug(string.format("Checking URL on load: %s (playlist-pos: %s/%s)", url, playlist_pos, playlist_count))
+    
+    -- Check if this URL is already playing on another screen
+    local is_duplicate, other_screen = check_url_duplicate(url)
+    if is_duplicate then
+        msg.warn(string.format("URL already playing on screen %d, skipping", other_screen))
+        play_next_stream()
     end
-    return true
 end)
 
 -- Function to auto-start streams on a specific screen

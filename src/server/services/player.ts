@@ -290,7 +290,7 @@ export class PlayerService {
     ];
 
     // Get screen config from player config
-    const screenConfig = this.config.player.screens.find(s => s.id === options.screen);
+    const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
     if (!screenConfig) {
       logger.error(`No screen config found for screen ${options.screen}`, 'PlayerService');
       throw new Error(`Invalid screen configuration for screen ${options.screen}`);

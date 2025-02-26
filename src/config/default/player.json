@@ -31,7 +31,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
-      "playerType": "streamlink",
+      "playerType": "streamlink ",
       "primary": false
     }
   ]
