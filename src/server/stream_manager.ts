@@ -214,6 +214,18 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
+      // Find the stream configuration for this screen
+      const streamConfig = this.config.streams.find(s => s.screen === screen);
+      if (!streamConfig) {
+        logger.error(`No stream configuration found for screen ${screen}`, 'StreamManager');
+        return;
+      }
+
+      if (!streamConfig.enabled) {
+        logger.warn(`Stream configuration for screen ${screen} is disabled`, 'StreamManager');
+        return;
+      }
+
       logger.info(`Handling empty queue for screen ${screen}`, 'StreamManager');
 
       // Add a small delay to prevent rapid fetching
@@ -240,12 +252,7 @@ export class StreamManager extends EventEmitter {
         }
         
         // Check stream configuration
-        const streamConfig = this.config.streams.find(s => s.screen === screen);
-        if (!streamConfig) {
-          logger.error(`No stream configuration found for screen ${screen}`, 'StreamManager');
-        } else if (!streamConfig.enabled) {
-          logger.error(`Stream configuration for screen ${screen} is disabled`, 'StreamManager');
-        } else if (!streamConfig.sources || streamConfig.sources.length === 0) {
+        if (!streamConfig.sources || streamConfig.sources.length === 0) {
           logger.error(`No sources configured for screen ${screen}`, 'StreamManager');
         } else {
           const enabledSources = streamConfig.sources.filter(s => s.enabled);
@@ -271,9 +278,9 @@ export class StreamManager extends EventEmitter {
         
         // Check if stream is already playing on another screen
         const activeStreams = this.getActiveStreams();
-        const isPlaying = activeStreams.some(s => s.url === stream.url && s.screen < screen);
+        const isPlaying = activeStreams.some(s => s.url === stream.url);
         if (isPlaying) {
-          logger.debug(`Stream ${stream.url} is already playing on another screen with higher priority`, 'StreamManager');
+          logger.debug(`Stream ${stream.url} is already playing on another screen`, 'StreamManager');
           return false;
         }
         
@@ -356,8 +363,8 @@ export class StreamManager extends EventEmitter {
     if (!screen) {
       const activeScreens = new Set(this.streams.keys());
       for (const streamConfig of this.config.player.screens) {
-        if (!activeScreens.has(streamConfig.id)) {
-          screen = streamConfig.id;
+        if (!activeScreens.has(streamConfig.screen)) {
+          screen = streamConfig.screen;
           break;
         }
       }
@@ -370,7 +377,7 @@ export class StreamManager extends EventEmitter {
       };
     }
 
-    const streamConfig = this.config.player.screens.find(s => s.id === screen);
+    const streamConfig = this.config.player.screens.find(s => s.screen === screen);
     if (!streamConfig) {
       return {
         screen,
@@ -693,7 +700,7 @@ export class StreamManager extends EventEmitter {
   }
 
   async disableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.player.screens.find(s => s.id === screen);
+    const streamConfig = this.config.player.screens.find(s => s.screen === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -707,7 +714,7 @@ export class StreamManager extends EventEmitter {
   }
 
   async enableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.player.screens.find(s => s.id === screen);
+    const streamConfig = this.config.player.screens.find(s => s.screen === screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
@@ -927,7 +934,7 @@ export class StreamManager extends EventEmitter {
   }
 
   public getScreenConfig(screen: number): StreamConfig | undefined {
-    return this.config.player.screens.find(s => s.id === screen);
+    return this.config.player.screens.find(s => s.screen === screen);
   }
 
   public updateScreenConfig(screen: number, config: Partial<StreamConfig>): void {
@@ -1028,7 +1035,7 @@ export class StreamManager extends EventEmitter {
 
   private initializeQueues() {
     this.config.player.screens.forEach(screen => {
-      this.queues.set(screen.id, []);
+      this.queues.set(screen.screen, []);
     });
   }
 
@@ -1041,7 +1048,7 @@ export class StreamManager extends EventEmitter {
    */
   public getScreenInfo(screen: number) {
     // Get screen configuration
-    const screenConfig = this.config.player.screens.find(s => s.id === screen);
+    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
     if (!screenConfig) {
       throw new Error(`Screen ${screen} not found`);
     }
