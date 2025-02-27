@@ -40,7 +40,12 @@ export interface StreamError {
 }
 
 export interface StreamResponse {
+  /** Screen number the operation was performed on */
   screen: number;
+  /** Success or error message */
   message?: string;
+  /** Whether the operation was successful */
+  success: boolean;
+  /** Error details if operation failed */
   error?: string;
 } 

@@ -4,7 +4,7 @@
   "windowMaximized": false,
   "maxStreams": 4,
   "autoStart": true,
-  "force_player": true,
+  "force_player": false,
   "screens": [
     {
       "id": 1,

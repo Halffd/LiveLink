@@ -373,7 +373,8 @@ export class StreamManager extends EventEmitter {
     if (!screen) {
       return {
         screen: options.screen || 1,
-        message: 'No available screens'
+        message: 'No available screens',
+        success: false
       };
     }
 
@@ -381,7 +382,8 @@ export class StreamManager extends EventEmitter {
     if (!streamConfig) {
       return {
         screen,
-        message: `Invalid screen number: ${screen}`
+        message: `Invalid screen number: ${screen}`,
+        success: false
       };
     }
 

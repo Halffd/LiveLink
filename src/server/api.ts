@@ -21,8 +21,12 @@ logger.info('Database initialized', 'Server');
 
 // Auto-start streams
 logger.info('Auto-starting streams...', 'Server');
-await streamManager.autoStartStreams();
-logger.info('Auto-start complete', 'Server');
+try {
+  await streamManager.autoStartStreams();
+  logger.info('Auto-start complete', 'Server');
+} catch (error) {
+  logger.error('Error during auto-start', 'Server', error as Error);
+}
 
 // Middleware
 logger.debug('Setting up middleware...', 'Server');
@@ -54,11 +58,21 @@ app.use(appRouter.routes());
 app.use(appRouter.allowedMethods());
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server running on http://localhost:${PORT}`, 'Server');
   logger.info('Routes:', 'Server');
   apiRouter.stack.forEach(layer => {
     logger.info(`${layer.methods.join(',')} ${layer.path}`, 'Server');
+  });
+});
+
+// Handle server shutdown
+process.on('SIGINT', async () => {
+  logger.info('Received SIGINT. Shutting down gracefully...', 'Server');
+  await streamManager.cleanup();
+  server.close(() => {
+    logger.info('Server closed', 'Server');
+    process.exit(0);
   });
 });
 

@@ -343,7 +343,7 @@ router.post('/api/streams/start/:screen', async (ctx: Context) => {
     }
 
     const result = await streamManager.startStream({ url, screen });
-    ctx.body = { success: true, ...result };
+    ctx.body = result;
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };

@@ -30,6 +30,10 @@ local current_error_count = 0
 local stream_start_time = nil
 local is_stream_active = false
 
+-- Add this at the top of the file with other variables
+local active_process = nil
+local is_shutting_down = false
+
 -- Helper function to make HTTP requests with better error handling
 function http_request(url, method, headers, data)
     msg.debug(string.format("Making HTTP request to: %s [%s]", url, method or "GET"))
@@ -475,7 +479,7 @@ function refresh_stream()
     end
 end
 
--- Add this new function for playlist initialization
+-- Update initialize_playlist function
 function initialize_playlist()
     -- Return early if already initialized to prevent duplicate initialization
     if playlist_initialized then 
@@ -491,6 +495,16 @@ function initialize_playlist()
     
     msg.info("Initializing playlist for screen " .. screen)
     
+    -- Ensure any existing process is properly terminated
+    if active_process then
+        msg.info("Terminating existing process before initializing new playlist")
+        mp.commandv("quit")
+        active_process = nil
+    end
+    
+    -- Clear the current playlist first
+    mp.commandv("playlist-clear")
+    
     -- Fetch queue from API
     local response = http_request(API_URL .. "/streams/queue/" .. screen)
     if response and #response > 0 then
@@ -499,9 +513,6 @@ function initialize_playlist()
         -- Get watched streams to filter
         local watched = http_request(API_URL .. "/streams/watched")
         local watched_urls = watched or {}
-        
-        -- Clear the current playlist first
-        mp.commandv("playlist-clear")
         
         -- Add unwatched streams to playlist
         local added = 0
@@ -523,6 +534,10 @@ function initialize_playlist()
         
         msg.info(string.format("Added %d unwatched streams to playlist", added))
         playlist_initialized = true
+        
+        -- Set this process as active
+        active_process = true
+        
         return added > 0
     else
         msg.info("No streams found in queue")
@@ -626,8 +641,10 @@ mp.register_event("end-file", function(event)
     
     -- Add delay before playing next stream
     mp.add_timeout(STREAM_SWITCH_DELAY, function()
-        current_url = nil
-        play_next_stream()
+        if not is_shutting_down then
+            current_url = nil
+            play_next_stream()
+        end
     end)
 end)
 
@@ -836,6 +853,30 @@ mp.add_key_binding("Alt+k", "auto-start-screen-2", function()
 end)
 mp.add_key_binding("Alt+l", "auto-start-screen-1", function()
     auto_start_screen(1)
+end)
+
+-- Add shutdown handler
+mp.register_event("shutdown", function()
+    if not is_shutting_down then
+        is_shutting_down = true
+        msg.info("MPV shutting down, cleaning up...")
+        
+        -- Clear active process flag
+        active_process = nil
+        
+        -- Notify the server about shutdown
+        local data = utils.format_json({
+            screen = get_current_screen(),
+            type = "shutdown"
+        })
+        
+        http_request(
+            API_URL .. "/streams/shutdown",
+            "POST",
+            nil,
+            data
+        )
+    end
 end)
 
 -- Log initialization

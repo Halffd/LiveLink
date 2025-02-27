@@ -1,4 +1,10 @@
 {
-  "vo": "x11",      
-  "hwdec": "auto"
+  "vo": "gpu",
+  "gpu-context": "x11egl",
+  "gpu-api": "opengl",
+  "hwdec": "auto-safe",
+  "x11-name": "LiveLink",
+  "force-window": "immediate",
+  "no-terminal": true,
+  "msg-level": "all=v"
 } 

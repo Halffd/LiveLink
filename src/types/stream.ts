@@ -211,7 +211,7 @@ export interface StreamResponse {
   /** Success or error message */
   message?: string;
   /** Whether the operation was successful */
-  success?: boolean;
+  success: boolean;
   /** Error details if operation failed */
   error?: string;
 }
