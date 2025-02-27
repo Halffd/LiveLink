@@ -251,27 +251,13 @@ export class PlayerService {
     const args = [
       options.url,
       '--no-terminal',
-      `--script=${path.join(process.cwd(), 'scripts/livelink.lua')}`,
+      `--script=${       path.join(process.cwd(), 'scripts/livelink.lua')}`,
       `--script-opts=screen=${options.screen}`,
       `--input-ipc-server=/tmp/mpv-ipc-${options.screen}`,
       `--log-file=${path.join(this.BASE_LOG_DIR, `mpv-screen${options.screen}-${new Date().toISOString()}.log`)}`,
       '--force-window=yes',
       '--keep-open=yes',
-      '--idle=yes',
-      '--vo=gpu',
-      '--gpu-context=x11egl',
-      '--gpu-api=opengl',
-      '--hwdec=auto-safe',
-      '--x11-name=LiveLink',
-      '--force-window=immediate',
-      '--no-terminal',
-      '--msg-level=all=v',
-      '--no-config',
-      '--no-input-default-bindings',
-      '--no-input-terminal',
-      '--no-osc',
-      '--no-osd-bar',
-      '--cursor-autohide=no'
+      '--idle=yes'
     ];
 
     // Get screen configuration

@@ -41,6 +41,8 @@ export class StreamManager extends EventEmitter {
   private keyboardService: KeyboardService;
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
+  private updateInterval: NodeJS.Timeout | null = null;
+  private readonly QUEUE_UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
   private favoriteChannels: FavoriteChannels = {
     holodex: [],
     twitch: [],
@@ -88,10 +90,14 @@ export class StreamManager extends EventEmitter {
       }
     });
 
+    // Start continuous queue updates
+    this.startQueueUpdates();
+
     // Update cleanup handler
     this.cleanupHandler = () => {
       logger.info('Cleaning up stream processes...', 'StreamManager');
       this.isShuttingDown = true;
+      this.stopQueueUpdates();
       this.keyboardService.cleanup();
       for (const [screen] of this.streams) {
         this.stopStream(screen).catch(error => {
@@ -102,7 +108,6 @@ export class StreamManager extends EventEmitter {
           );
         });
       }
-      process.exit(0);
     };
 
     // Register cleanup handlers
@@ -1093,6 +1098,73 @@ export class StreamManager extends EventEmitter {
     if (timer) {
       clearTimeout(timer);
       this.streamRefreshTimers.delete(screen);
+    }
+  }
+
+  private async startQueueUpdates() {
+    if (this.updateInterval) {
+      return; // Already running
+    }
+
+    const updateQueues = async () => {
+      if (this.isShuttingDown) {
+        return;
+      }
+
+      logger.info('Updating stream queues...', 'StreamManager');
+      
+      // Get all enabled screens
+      const enabledScreens = this.config.streams
+        .filter(stream => stream.enabled)
+        .map(stream => stream.screen);
+
+      // Update queues for each screen
+      for (const screen of enabledScreens) {
+        try {
+          const activeStream = this.getActiveStreams().find(s => s.screen === screen);
+          if (!activeStream) {
+            await this.handleEmptyQueue(screen);
+          } else {
+            // If there's an active stream, just update the queue without starting new stream
+            const streams = await this.getLiveStreams();
+            const availableStreams = streams.filter(s => s.screen === screen);
+            if (availableStreams.length > 0) {
+              const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
+              if (unwatchedStreams.length > 0) {
+                queueService.setQueue(screen, unwatchedStreams);
+                logger.info(
+                  `Updated queue for screen ${screen} with ${unwatchedStreams.length} streams`,
+                  'StreamManager'
+                );
+              }
+            }
+          }
+        } catch (error) {
+          logger.error(
+            `Failed to update queue for screen ${screen}`,
+            'StreamManager',
+            error instanceof Error ? error : new Error(String(error))
+          );
+        }
+      }
+    };
+
+    // Initial update
+    await updateQueues();
+
+    // Set up interval for periodic updates
+    this.updateInterval = setInterval(async () => {
+      await updateQueues();
+    }, this.QUEUE_UPDATE_INTERVAL);
+
+    logger.info(`Queue updates started with ${this.QUEUE_UPDATE_INTERVAL / 60000} minute interval`, 'StreamManager');
+  }
+
+  private stopQueueUpdates() {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+      logger.info('Queue updates stopped', 'StreamManager');
     }
   }
 }
