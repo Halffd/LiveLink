@@ -69,8 +69,9 @@ export class HolodexService implements StreamService {
           this.client!.getLiveVideos({
             channel_id: channelId,
             status: 'live' as VideoStatus,
-            type: 'stream' as VideoType,
-            sort: 'live_viewers'
+            //type: 'live' as VideoType,
+            sort: 'live_viewers',
+            max_upcoming_hours: 0
           }).catch(error => {
             logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
             logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
@@ -147,7 +148,8 @@ export class HolodexService implements StreamService {
       const promises = this.favoriteChannels.map(channelId =>
         this.client!.getLiveVideos({ 
           channel_id: channelId,
-          status: 'live' as VideoStatus
+          status: 'live' as VideoStatus,
+          max_upcoming_hours: 0
         })
       );
 

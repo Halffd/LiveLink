@@ -248,27 +248,29 @@ export class PlayerService {
   }
 
   private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
+    const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
+    if (!screenConfig) {
+      throw new Error(`Invalid screen number: ${options.screen}`);
+    }
+
     const args = [
       options.url,
       '--no-terminal',
-      `--script=${       path.join(process.cwd(), 'scripts/livelink.lua')}`,
+      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
       `--script-opts=screen=${options.screen}`,
-      `--input-ipc-server=/tmp/mpv-ipc-${options.screen}`,
+      `--input-ipc-server=${this.ipcPaths.get(options.screen)}`,
       `--log-file=${path.join(this.BASE_LOG_DIR, `mpv-screen${options.screen}-${new Date().toISOString()}.log`)}`,
       '--force-window=yes',
       '--keep-open=yes',
       '--idle=yes'
     ];
 
-    // Get screen configuration
-    const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
-    if (screenConfig) {
-      if (screenConfig.windowWidth && screenConfig.windowHeight) {
-        args.push(`--geometry=${screenConfig.windowWidth}x${screenConfig.windowHeight}+${screenConfig.x || 0}+${screenConfig.y || 0}`);
-      }
-      if (screenConfig.windowMaximized) {
-        args.push('--window-maximized=yes');
-      }
+    // Add geometry settings
+    args.push(`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`);
+
+    // Add window maximized setting if specified
+    if (options.windowMaximized || screenConfig.windowMaximized) {
+      args.push('--window-maximized=yes');
     }
 
     return args;
@@ -514,14 +516,8 @@ export class PlayerService {
       const fullCommand = [command, ...args].join(' ');
       logger.info(`Full command: ${fullCommand}`, 'PlayerService');
 
-      // Start the process with xvfb-run
-      const xvfbArgs = [
-        '-a',  // Automatically get a free server number
-        '-s', `"-screen 0 ${screenConfig.width}x${screenConfig.height}x24"`,  // Set screen size and depth
-        command,
-        ...args
-      ];
-      const playerProcess = spawn('xvfb-run', xvfbArgs, spawnOptions);
+      // Use spawnOptions when spawning the process
+      const playerProcess = spawn(command, args, spawnOptions);
 
       // Add error handler for the process itself
       playerProcess.on('error', (error) => {
@@ -1356,6 +1352,7 @@ export class PlayerService {
 
   private async killExistingProcesses(screen: number): Promise<void> {
     try {
+      // Find MPV processes for this screen
       const pids = await new Promise<string[]>((resolve, reject) => {
         exec(`pgrep -f "mpv.*--script-opts=screen=${screen}"`, (error, stdout) => {
           if (error && error.code !== 1) { // code 1 means no processes found
@@ -1366,14 +1363,29 @@ export class PlayerService {
         });
       });
 
-      for (const pid of pids) {
+      // Kill each process
+      await Promise.all(pids.map(async (pid) => {
         try {
           process.kill(parseInt(pid), 'SIGINT');
           logger.info(`Killed process ${pid} for screen ${screen}`, 'PlayerService');
+          
+          // Force kill after 1 second if still running
+          await new Promise<void>((resolve) => {
+            setTimeout(() => {
+              try {
+                process.kill(parseInt(pid), 0); // Check if process exists
+                process.kill(parseInt(pid), 'SIGKILL');
+                logger.info(`Force killed process ${pid} for screen ${screen}`, 'PlayerService');
+              } catch {
+                // Process already gone
+              }
+              resolve();
+            }, 1000);
+          });
         } catch (error) {
           logger.warn(`Failed to kill process ${pid}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
         }
-      }
+      }));
     } catch (error) {
       logger.error(`Error killing existing processes for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
     }

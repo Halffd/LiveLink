@@ -288,6 +288,12 @@ export class StreamManager extends EventEmitter {
           logger.debug(`Stream ${stream.url} is already playing on another screen`, 'StreamManager');
           return false;
         }
+
+        // Only include streams that are actually live
+        if (stream.sourceStatus && stream.sourceStatus !== 'live') {
+          logger.debug(`Stream ${stream.url} is not live (status: ${stream.sourceStatus})`, 'StreamManager');
+          return false;
+        }
         
         return true;
       });
