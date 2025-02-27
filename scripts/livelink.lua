@@ -20,7 +20,7 @@ local last_refresh_time = os.time()
 local MIN_WATCH_TIME = 60 -- Minimum time to watch before marking as watched (seconds)
 local ERROR_RETRY_COUNT = 3 -- Number of times to retry on error
 local RETRY_DELAY = 5 -- Delay between retries in seconds
-local STREAM_SWITCH_DELAY = 2 -- Delay between switching streams in seconds
+local STREAM_SWITCH_DELAY = 1 -- Delay between switching streams in seconds
 
 -- Track state
 local marked_streams = {}
@@ -715,7 +715,7 @@ function play_next_stream()
     if not screen then return end
 
     msg.info("Attempting to play next stream")
-    
+    mp.osd_message("Attempting to play next stream", 2)
     -- Reset error count when moving to next stream
     current_error_count = 0
     
@@ -724,7 +724,7 @@ function play_next_stream()
     local playlist_count = mp.get_property_number("playlist-count") or 0
     
     msg.debug(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count))
-    
+    mp.osd_message(string.format("Current playlist position: %d/%d", playlist_pos + 1, playlist_count), 2)
     -- If we have more items in playlist, try to play next
     if playlist_count > 1 and playlist_pos < playlist_count - 1 then
         -- Add delay before playing next stream
@@ -794,12 +794,12 @@ mp.add_key_binding("ENTER", "playlist-play-selected", function()
 end)
 
 -- Add handler for playlist-next command
-mp.add_key_binding("PGDWN", "playlist-next-stream", function()
+mp.add_key_binding("END", "playlist-next-stream", function()
     play_next_stream()
 end)
 
 -- Add handler for playlist-prev command
-mp.add_key_binding("PGUP", "playlist-prev-stream", function()
+mp.add_key_binding("HOME", "playlist-prev-stream", function()
     -- Disable going backwards in playlist
     mp.osd_message("Cannot go back in playlist", 2)
 end)

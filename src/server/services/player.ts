@@ -64,6 +64,7 @@ export class PlayerService {
   private signalHandlersRegistered = false;
   private healthCheckIntervals: Map<number, NodeJS.Timeout> = new Map();
   private mpvPath = '';
+  private startupLocks: Map<number, boolean> = new Map();
 
   constructor() {
     this.events = new EventEmitter();
@@ -262,7 +263,8 @@ export class PlayerService {
       `--log-file=${path.join(this.BASE_LOG_DIR, `mpv-screen${options.screen}-${new Date().toISOString()}.log`)}`,
       '--force-window=yes',
       '--keep-open=yes',
-      '--idle=yes'
+      '--idle=yes',
+      `--volume=${options.volume !== undefined ? options.volume : (screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume)}`
     ];
 
     // Add geometry settings
@@ -277,6 +279,12 @@ export class PlayerService {
   }
 
   private getStreamlinkArgs(url: string, screen: number): string[] {
+    // Get screen config
+    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+    if (!screenConfig) {
+      throw new Error(`Invalid screen number: ${screen}`);
+    }
+
     // Start with base arguments
     const args: string[] = [
       url,          // URL must be first positional argument
@@ -317,33 +325,38 @@ export class PlayerService {
       // Handle http headers separately
       if (this.config.streamlink.http_header) {
         Object.entries(this.config.streamlink.http_header).forEach(([header, value]) => {
-          args.push(`--http-header`, `${header}=${value}`);  // Changed to use space instead of = for http-header
+          args.push(`--http-header`, `${header}=${value}`);
         });
       }
     }
 
-    // Get screen config from player config
-    const screenConfig = this.config.player.screens.find(s => s.id === screen);
-    if (!screenConfig) {
-      logger.error(`No screen config found for screen ${screen}`, 'PlayerService');
-      throw new Error(`Invalid screen configuration for screen ${screen}`);
-    }
-
-    // Build MPV player args as a single quoted string
+    // Build MPV player args
     const mpvArgs = [
       `--title=LiveLink-${screen}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-      `--volume=${screenConfig.volume}`,
+      `--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
       `--input-ipc-server=/tmp/mpv-ipc-${screen}`,
       `--log-file=${path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${Date.now()}.log`)}`,
       `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
       `--script-opts=screen=${screen}`,
+      `--force-window=yes`,
+      `--keep-open=yes`,
+      `--no-terminal`,
       screenConfig.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
-    ].join(' ');
+    ];
 
-    // Add player and player args as a single quoted string
-    args.push('--player', 'mpv');  // Changed to use space instead of =
-    args.push('--player-args', `"${mpvArgs}"`);  // Changed to use space instead of =
+    // Add MPV config settings
+    if (this.config.mpv) {
+      Object.entries(this.config.mpv).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && key !== 'priority') {
+          mpvArgs.push(`--${key}=${value}`);
+        }
+      });
+    }
+
+    // Add player and player args
+    args.push('--player', 'mpv');
+    args.push('--player-args', mpvArgs.join(' '));
 
     return args;
   }
@@ -363,115 +376,111 @@ export class PlayerService {
         };
     }
 
-    // Kill any existing processes for this screen
-    await this.killExistingProcesses(screen);
+    // Check if there's a startup in progress
+    if (this.startupLocks.get(screen)) {
+      logger.info(`Stream startup already in progress for screen ${screen}, waiting...`, 'PlayerService');
+      // Wait for a bit to allow the startup to complete
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return {
+        screen,
+        message: `Stream startup in progress for screen ${screen}`,
+        success: false
+      };
+    }
 
-    // Clear any existing stream data for this screen
-    this.streams.delete(screen);
-    this.streamRetries.delete(screen);
-    this.clearStreamRefresh(screen);
-    this.clearInactiveTimer(screen);
-
-    // Check if screen is disabled
-    if (this.disabledScreens.has(screen)) {
-      return {
-        screen,
-        message: `Screen ${screen} is disabled`,
-        error: `Screen ${screen} is disabled`,
-        success: false
-      };
-    }
-    
-    // Get screen configuration
-    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-    if (!screenConfig) {
-      return {
-        screen,
-        message: `Screen ${screen} configuration not found`,
-        error: `Screen ${screen} configuration not found`,
-        success: false
-      };
-    }
-    
-    // Determine which player to use based on screen configuration
-    // If screen has a specific playerType, use that, otherwise use global preferStreamlink setting
-    const useStreamlink = screenConfig.playerType 
-      ? screenConfig.playerType === 'streamlink'
-      : this.config.player.preferStreamlink;
-    
-    // Don't start new streams during shutdown
-    if (this.isShuttingDown) {
-      logger.info('Ignoring stream start request during shutdown', 'PlayerService');
-      return {
-        screen,
-        message: 'Server is shutting down',
-        success: false
-      };
-    }
+    // Set startup lock
+    this.startupLocks.set(screen, true);
 
     try {
-      // Clear the manually closed flag when starting a new stream
-      this.manuallyClosedScreens.delete(screen);
+      // Kill any existing processes for this screen
+      await this.killExistingProcesses(screen);
+
+      // Clear any existing stream data for this screen
+      this.streams.delete(screen);
+      this.streamRetries.delete(screen);
+      this.clearStreamRefresh(screen);
+      this.clearInactiveTimer(screen);
+
+      // Check if screen is disabled
+      if (this.disabledScreens.has(screen)) {
+        return {
+          screen,
+          message: `Screen ${screen} is disabled`,
+          error: `Screen ${screen} is disabled`,
+          success: false
+        };
+      }
       
-      // Check if there's already a player running for this screen
-      const existingStream = this.streams.get(screen);
-      if (existingStream?.process) {
-        if (useStreamlink) {
-          // For Streamlink streams, we need to restart the process with the new URL
-          logger.info(`Restarting Streamlink for new URL on screen ${screen}`, 'PlayerService');
-          await this.stopStream(screen);
-        } else {
-          // For direct MPV playback, we can just load the new URL
-          logger.info(`Player already exists for screen ${screen}, loading new URL`, 'PlayerService');
-          this.sendCommandToScreen(screen, `loadfile "${options.url}"`);
-          return {
-            screen: screen,
-            message: `Stream loaded on existing player on screen ${screen}`,
-            success: true
-          };
-        }
+      // Get screen configuration
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      if (!screenConfig) {
+        return {
+          screen,
+          message: `Screen ${screen} configuration not found`,
+          error: `Screen ${screen} configuration not found`,
+          success: false
+        };
+      }
+      
+      // Determine which player to use based on screen configuration
+      // If screen has a specific playerType, use that, otherwise use global preferStreamlink setting
+      const useStreamlink = screenConfig.playerType 
+        ? screenConfig.playerType === 'streamlink'
+        : this.config.player.preferStreamlink;
+      
+      // Don't start new streams during shutdown
+      if (this.isShuttingDown) {
+        logger.info('Ignoring stream start request during shutdown', 'PlayerService');
+        return {
+          screen,
+          message: 'Server is shutting down',
+          success: false
+        };
       }
 
-      // Stop existing stream if any (in case stopStream wasn't called above)
-      await this.stopStream(screen);
-
-      // Create log paths
-      const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${Date.now()}.log`);
-
-      let command = useStreamlink ? 'streamlink' : this.mpvPath;
-      let args: string[] = [];
-
-      if (useStreamlink) {
-        // For streamlink, we can't use about:blank, so use a special case
-        if (options.url === 'about:blank') {
-          // For placeholder, use MPV directly instead of streamlink
-          command = this.mpvPath;
-          args = this.getMpvArgs(options);
-          // Add idle=yes to start MPV in idle mode without a URL
-          if (!args.includes('--idle=yes')) {
-            args.push('--idle=yes');
+      try {
+        // Clear the manually closed flag when starting a new stream
+        this.manuallyClosedScreens.delete(screen);
+        
+        // Check if there's already a player running for this screen
+        const existingStream = this.streams.get(screen);
+        if (existingStream?.process) {
+          if (useStreamlink) {
+            // For Streamlink streams, we need to restart the process with the new URL
+            logger.info(`Restarting Streamlink for new URL on screen ${screen}`, 'PlayerService');
+            await this.stopStream(screen);
+          } else {
+            // For direct MPV playback, we can just load the new URL
+            logger.info(`Player already exists for screen ${screen}, loading new URL`, 'PlayerService');
+            this.sendCommandToScreen(screen, `loadfile "${options.url}"`);
+            return {
+              screen: screen,
+              message: `Stream loaded on existing player on screen ${screen}`,
+              success: true
+            };
           }
-          logger.info(`Starting ${command} in idle mode for placeholder`, 'PlayerService');
-        } else {
-          // Normal streamlink operation for real URLs
+        }
+
+        // Stop existing stream if any (in case stopStream wasn't called above)
+        await this.stopStream(screen);
+
+        // Create log paths
+        const mpvLogPath = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${Date.now()}.log`);
+
+        const command = useStreamlink ? 'streamlink' : this.mpvPath;
+        let args: string[] = [];
+
+        if (useStreamlink) {
+          // Normal streamlink operation for URLs
           args = this.getStreamlinkArgs(options.url, screen);
           logger.info(`Starting ${command} with streamlink for ${options.url.includes('twitch.tv') ? 'Twitch' : 'YouTube Live'} stream`, 'PlayerService');
-        }
-      } else {
-        // Start MPV directly
-        if (options.url === 'about:blank') {
-          // For placeholder, use MPV directly instead of streamlink
-          command = this.mpvPath;
-          args = this.getMpvArgs(options);
-          // Add idle=yes to start MPV in idle mode without a URL
-          args.push('--idle=yes');
         } else {
-          // Use the new startMpvProcess method
+          // Start MPV directly
           const playerProcess = await this.startMpvProcess(options);
           this.setupStreamHealthCheck(screen, playerProcess);
           this.streams.set(screen, {
             id: Date.now(),
-            screen,
+            screen: screen,
             url: options.url,
             quality: options.quality || 'best',
             status: 'playing',
@@ -486,263 +495,282 @@ export class PlayerService {
             success: true
           };
         }
-      }
 
-      logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
+        logger.info(`Logging MPV output to ${mpvLogPath}`, 'PlayerService');
 
-      const spawnOptions: SpawnOptions & { nice?: number } = {
-        nice: this.getProcessPriority(),
-        env: {
-          ...process.env,
-          MPV_HOME: undefined,
-          XDG_CONFIG_HOME: undefined,
-          DISPLAY: process.env.DISPLAY || ':0',
-          SDL_VIDEODRIVER: 'x11'  // Force SDL to use X11
-        },
-        shell: false  // Don't use shell to avoid signal handling issues
-      };
+        const spawnOptions: SpawnOptions & { nice?: number } = {
+          nice: this.getProcessPriority(),
+          env: {
+            ...process.env,
+            MPV_HOME: undefined,
+            XDG_CONFIG_HOME: undefined,
+            DISPLAY: process.env.DISPLAY || ':0',
+            SDL_VIDEODRIVER: 'x11'  // Force SDL to use X11
+          },
+          shell: false  // Don't use shell to avoid signal handling issues
+        };
 
-      // Clean up any existing IPC socket
-      const ipcPath = path.join('/tmp', `mpv-ipc-${screen}`);
-      try {
-        if (fs.existsSync(ipcPath)) {
-          fs.unlinkSync(ipcPath);
+        // Clean up any existing IPC socket
+        const ipcPath = path.join('/tmp', `mpv-ipc-${screen}`);
+        try {
+          if (fs.existsSync(ipcPath)) {
+            fs.unlinkSync(ipcPath);
+          }
+        } catch (error) {
+          logger.warn(`Failed to clean up IPC socket at ${ipcPath}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
         }
-      } catch (error) {
-        logger.warn(`Failed to clean up IPC socket at ${ipcPath}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
-      }
 
-      // Log the full command for debugging
-      const fullCommand = [command, ...args].join(' ');
-      logger.info(`Full command: ${fullCommand}`, 'PlayerService');
+        // Log the full command for debugging
+        const fullCommand = [command, ...args].join(' ');
+        logger.info(`Full command: ${fullCommand}`, 'PlayerService');
 
-      // Use spawnOptions when spawning the process
-      const playerProcess = spawn(command, args, spawnOptions);
+        // Use spawnOptions when spawning the process
+        const playerProcess = spawn(command, args, spawnOptions);
 
-      // Add error handler for the process itself
-      playerProcess.on('error', (error) => {
-        logger.error(
-          `Process error for screen ${screen}: ${error.message}`,
-          'PlayerService',
-          error
-        );
-        this.errorCallback?.({
-          screen: screen,
-          error: `Process error: ${error.message}`,
-          code: -2
-        });
-      });
-
-      // Add startup monitoring with improved error handling
-      let hasStarted = false;
-      let startupError: string | undefined = undefined;
-      const startupTimeout = setTimeout(() => {
-        if (!hasStarted && playerProcess.exitCode === null) {
-          startupError = 'Process failed to start properly within timeout';
+        // Add error handler for the process itself
+        playerProcess.on('error', (error) => {
           logger.error(
-            `Process for screen ${screen} failed to start properly within timeout`,
-            'PlayerService'
-          );
-          try {
-            playerProcess.kill('SIGKILL');
-          } catch {
-            // Process might already be gone
-          }
-        }
-      }, 10000); // 10 second timeout
-
-      // Handle process output with improved error detection
-      if (playerProcess.stdout) {
-        playerProcess.stdout.on('data', (data: Buffer) => {
-          try {
-            const output = data.toString('utf8').trim();
-            // Only log if it contains printable characters
-            if (output && /[\x20-\x7E]/.test(output)) {
-              // Check for common MPV startup errors
-              if (output.includes('Failed to initialize') || 
-                  output.includes('cannot open display') ||
-                  output.includes('Could not connect to X server') ||
-                  output.includes('failed to open display') ||
-                  output.includes('failed to initialize OpenGL') ||
-                  output.includes('failed to create window')) {
-                startupError = output;
-                logger.error(`MPV startup error: ${output}`, 'PlayerService');
-                try {
-                  playerProcess.kill('SIGKILL');
-                } catch {
-                  // Process might already be gone
-                }
-                return;
-              }
-              
-              // Mark as started only if we get valid output and no startup error
-              if (!startupError && !output.includes('error')) {
-                hasStarted = true;
-                logger.debug(`[${command}-${screen}-stdout] ${output}`, 'PlayerService');
-                this.outputCallback?.({
-                  screen: screen,
-                  data: output,
-                  type: 'stdout'
-                });
-              }
-            }
-          } catch (error: unknown) {
-            // Log error details for debugging
-            logger.debug(
-              `Received binary or invalid UTF-8 data on stdout for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
-              'PlayerService'
-            );
-          }
-        });
-      }
-
-      if (playerProcess.stderr) {
-        playerProcess.stderr.on('data', (data: Buffer) => {
-          try {
-            const output = data.toString('utf8').trim();
-            // Only log if it contains printable characters
-            if (output && /[\x20-\x7E]/.test(output)) {
-              // Check for critical errors in stderr
-              if (output.includes('Failed to initialize') || 
-                  output.includes('cannot open display') ||
-                  output.includes('Could not connect to X server')) {
-                startupError = output;
-                logger.error(`MPV startup error: ${output}`, 'PlayerService');
-                try {
-                  playerProcess.kill('SIGKILL');
-                } catch {
-                  // Process might already be gone
-                }
-                return;
-              }
-
-              logger.debug(`[${command}-${screen}-stderr] ${output}`, 'PlayerService');
-              this.errorCallback?.({
-                screen: screen,
-                error: output
-              });
-            }
-          } catch (error: unknown) {
-            // Log error details for debugging
-            logger.debug(
-              `Received binary or invalid UTF-8 data on stderr for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
-              'PlayerService'
-            );
-          }
-        });
-      }
-
-      // Handle process exit with improved error handling
-      playerProcess.on('exit', (code: number | null, signal: string | null) => {
-        clearTimeout(startupTimeout); // Clear the startup timeout
-        logger.info(`Process for screen ${screen} exited with code ${code}${signal ? ` (signal: ${signal})` : ''}`, 'PlayerService');
-        
-        // Clear health check on exit
-        this.clearHealthCheck(screen);
-        
-        if (!hasStarted || startupError) {
-          const errorMessage = startupError || `Process exited before properly starting (code: ${code}, signal: ${signal})`;
-          logger.error(
-            `${errorMessage}. Command: ${command} ${args.join(' ')}`,
-            'PlayerService'
+            `Process error for screen ${screen}: ${error.message}`,
+            'PlayerService',
+            error
           );
           this.errorCallback?.({
             screen: screen,
-            error: errorMessage,
-            code: -3
+            error: `Process error: ${error.message}`,
+            code: -2
           });
-          return;
-        }
+        });
 
-        // Handle normal exit
-        if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(screen)) {
-          // Add more detailed error logging
-          logger.error(
-            `Stream process crashed with code ${code} on screen ${screen}. ` +
-            `URL: ${options.url}, Quality: ${options.quality}`, 
-            'PlayerService'
-          );
-          
-          const retryCount = this.streamRetries.get(screen) || 0;
-          
-          if (retryCount < this.MAX_RETRIES) {
-            // Add exponential backoff
-            const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
-            this.streamRetries.set(screen, retryCount + 1);
-            
-            logger.info(
-              `Attempting retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s...`,
+        // Add startup monitoring with improved error handling
+        let hasStarted = false;
+        let startupError: string | undefined = undefined;
+        const startupTimeout = setTimeout(() => {
+          if (!hasStarted && playerProcess.exitCode === null) {
+            startupError = 'Process failed to start properly within timeout';
+            logger.error(
+              `Process for screen ${screen} failed to start properly within timeout`,
               'PlayerService'
             );
-            
-            setTimeout(async () => {
-              try {
-                // First try with same quality
-                await this.startStream(options);
-              } catch (error) {
-                // If that fails, try fallback quality
-                if (!await this.tryFallbackQuality(options)) {
-                  logger.error(
-                    `Failed to restart stream on screen ${screen} with all quality options`,
-                    'PlayerService',
-                    error instanceof Error ? error : new Error(String(error))
-                  );
+            try {
+              playerProcess.kill('SIGKILL');
+            } catch {
+              // Process might already be gone
+            }
+          }
+          // Clear startup lock on timeout
+          this.startupLocks.set(screen, false);
+        }, 10000); // 10 second timeout
+
+        // Handle process output with improved error detection
+        if (playerProcess.stdout) {
+          playerProcess.stdout.on('data', (data: Buffer) => {
+            try {
+              const output = data.toString('utf8').trim();
+              // Only log if it contains printable characters
+              if (output && /[\x20-\x7E]/.test(output)) {
+                // Check for common MPV startup errors
+                if (output.includes('Failed to initialize') || 
+                    output.includes('cannot open display') ||
+                    output.includes('Could not connect to X server') ||
+                    output.includes('failed to open display') ||
+                    output.includes('failed to initialize OpenGL') ||
+                    output.includes('failed to create window')) {
+                  startupError = output;
+                  logger.error(`MPV startup error: ${output}`, 'PlayerService');
+                  try {
+                    playerProcess.kill('SIGKILL');
+                  } catch {
+                    // Process might already be gone
+                  }
+                  // Clear startup lock on error
+                  this.startupLocks.set(screen, false);
+                  return;
+                }
+                
+                // Mark as started only if we get valid output and no startup error
+                if (!startupError && !output.includes('error')) {
+                  hasStarted = true;
+                  // Clear startup lock on successful start
+                  this.startupLocks.set(screen, false);
+                  logger.debug(`[${command}-${screen}-stdout] ${output}`, 'PlayerService');
+                  this.outputCallback?.({
+                    screen: screen,
+                    data: output,
+                    type: 'stdout'
+                  });
                 }
               }
-            }, delay);
-          } else {
-            logger.error(
-              `Max retries (${this.MAX_RETRIES}) reached for screen ${screen}. ` +
-              'Attempting to fetch new stream from queue...',
-              'PlayerService'
-            );
-            this.streamRetries.delete(screen);
-            
-            // Try to get a new stream from the queue
-            this.errorCallback?.({
-              screen: screen,
-              error: 'Max retries reached, fetching new stream',
-              code: -1
-            });
-          }
+            } catch (error: unknown) {
+              // Log error details for debugging
+              logger.debug(
+                `Received binary or invalid UTF-8 data on stdout for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
+                'PlayerService'
+              );
+            }
+          });
         }
 
-        // Clean up
-        this.streams.delete(screen);
-      });
+        if (playerProcess.stderr) {
+          playerProcess.stderr.on('data', (data: Buffer) => {
+            try {
+              const output = data.toString('utf8').trim();
+              // Only log if it contains printable characters
+              if (output && /[\x20-\x7E]/.test(output)) {
+                // Check for critical errors in stderr
+                if (output.includes('Failed to initialize') || 
+                    output.includes('cannot open display') ||
+                    output.includes('Could not connect to X server')) {
+                  startupError = output;
+                  logger.error(`MPV startup error: ${output}`, 'PlayerService');
+                  try {
+                    playerProcess.kill('SIGKILL');
+                  } catch {
+                    // Process might already be gone
+                  }
+                  // Clear startup lock on error
+                  this.startupLocks.set(screen, false);
+                  return;
+                }
 
-      // Store stream information
-      const instance: StreamInstance = {
-        id: screen,
-        screen: screen,
-        process: playerProcess,
-        url: options.url,
-        quality: options.quality || 'best',
-        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
-        status: 'playing',
-        volume: screenConfig.volume || this.config.player.defaultVolume
-      };
+                logger.debug(`[${command}-${screen}-stderr] ${output}`, 'PlayerService');
+                this.errorCallback?.({
+                  screen: screen,
+                  error: output
+                });
+              }
+            } catch (error: unknown) {
+              // Log error details for debugging
+              logger.debug(
+                `Received binary or invalid UTF-8 data on stderr for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
+                'PlayerService'
+              );
+            }
+          });
+        }
 
-      this.streams.set(screen, instance);
+        // Handle process exit with improved error handling
+        playerProcess.on('exit', (code: number | null, signal: string | null) => {
+          clearTimeout(startupTimeout); // Clear the startup timeout
+          logger.info(`Process for screen ${screen} exited with code ${code}${signal ? ` (signal: ${signal})` : ''}`, 'PlayerService');
+          
+          // Clear health check on exit
+          this.clearHealthCheck(screen);
+          
+          if (!hasStarted || startupError) {
+            const errorMessage = startupError || `Process exited before properly starting (code: ${code}, signal: ${signal})`;
+            logger.error(
+              `${errorMessage}. Command: ${command} ${args.join(' ')}`,
+              'PlayerService'
+            );
+            this.errorCallback?.({
+              screen: screen,
+              error: errorMessage,
+              code: -3
+            });
+            return;
+          }
 
-      // Set up stream refresh timer
-      this.setupStreamRefresh(screen, options);
+          // Handle normal exit
+          if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(screen)) {
+            // Add more detailed error logging
+            logger.error(
+              `Stream process crashed with code ${code} on screen ${screen}. ` +
+              `URL: ${options.url}, Quality: ${options.quality}`, 
+              'PlayerService'
+            );
+            
+            const retryCount = this.streamRetries.get(screen) || 0;
+            
+            if (retryCount < this.MAX_RETRIES) {
+              // Add exponential backoff
+              const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
+              this.streamRetries.set(screen, retryCount + 1);
+              
+              logger.info(
+                `Attempting retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s...`,
+                'PlayerService'
+              );
+              
+              setTimeout(async () => {
+                try {
+                  // First try with same quality
+                  await this.startStream(options);
+                } catch (error) {
+                  // If that fails, try fallback quality
+                  if (!await this.tryFallbackQuality(options)) {
+                    logger.error(
+                      `Failed to restart stream on screen ${screen} with all quality options`,
+                      'PlayerService',
+                      error instanceof Error ? error : new Error(String(error))
+                    );
+                  }
+                }
+              }, delay);
+            } else {
+              logger.error(
+                `Max retries (${this.MAX_RETRIES}) reached for screen ${screen}. ` +
+                'Attempting to fetch new stream from queue...',
+                'PlayerService'
+              );
+              this.streamRetries.delete(screen);
+              
+              // Try to get a new stream from the queue
+              this.errorCallback?.({
+                screen: screen,
+                error: 'Max retries reached, fetching new stream',
+                code: -1
+              });
+            }
+          }
 
-      // Set up inactive timer
-      this.setupInactiveTimer(screen);
+          // Clean up
+          this.streams.delete(screen);
+        });
 
-      // Store stream start time
-      this.streamStartTimes.set(screen, Date.now());
+        // Store stream information
+        const instance: StreamInstance = {
+          id: screen,
+          screen: screen,
+          process: playerProcess,
+          url: options.url,
+          quality: options.quality || 'best',
+          platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
+          status: 'playing',
+          volume: screenConfig.volume || this.config.player.defaultVolume
+        };
 
-      // Set up stream health monitoring
-      this.setupStreamHealthCheck(screen, playerProcess);
+        this.streams.set(screen, instance);
 
-      return {
-        screen: screen,
-        message: `Stream started on screen ${screen}`,
-        success: true
-      };
+        // Set up stream refresh timer
+        this.setupStreamRefresh(screen, options);
+
+        // Set up inactive timer
+        this.setupInactiveTimer(screen);
+
+        // Store stream start time
+        this.streamStartTimes.set(screen, Date.now());
+
+        // Set up stream health monitoring
+        this.setupStreamHealthCheck(screen, playerProcess);
+
+        return {
+          screen: screen,
+          message: `Stream started on screen ${screen}`,
+          success: true
+        };
+      } catch (error) {
+        // Clear startup lock on error
+        this.startupLocks.set(screen, false);
+        logger.error(`Failed to start stream: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+        return {
+          success: false,
+          screen: options.screen || 1,
+          message: `Failed to start stream: ${error instanceof Error ? error.message : String(error)}`
+        };
+      }
     } catch (error) {
+      // Clear startup lock on error
+      this.startupLocks.set(screen, false);
       logger.error(`Failed to start stream: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
       return {
         success: false,
@@ -1303,18 +1331,53 @@ export class PlayerService {
         
         logger.info(`Starting player for screen ${screen.screen}`, 'PlayerService');
         try {
-            // Start the player and wait for it to be ready
-            const startResult = await this.startStream({
-                url: 'about:blank',
-                screen: screen.screen,
-                quality: screen.quality || this.config.player.defaultQuality,
-                volume: screen.volume !== undefined ? screen.volume : this.config.player.defaultVolume,
-                windowMaximized: screen.windowMaximized !== undefined ? screen.windowMaximized : this.config.player.windowMaximized
+            // Start MPV directly in idle mode
+            const args = [
+                '--idle=yes',
+                '--force-window=yes',
+                '--keep-open=yes',
+                '--no-terminal',
+                `--title=LiveLink-${screen.screen}`,
+                `--geometry=${screen.width}x${screen.height}+${screen.x}+${screen.y}`,
+                `--volume=${screen.volume !== undefined ? screen.volume : this.config.player.defaultVolume}`,
+                `--input-ipc-server=/tmp/mpv-ipc-${screen.screen}`,
+                `--log-file=${path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen.screen}-${Date.now()}.log`)}`,
+                `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
+                `--script-opts=screen=${screen.screen}`,
+                screen.windowMaximized ? '--window-maximized=yes' : '--window-maximized=no'
+            ];
+
+            // Add MPV config settings
+            if (this.config.mpv) {
+                Object.entries(this.config.mpv).forEach(([key, value]) => {
+                    if (value !== null && value !== undefined && key !== 'priority') {
+                        args.push(`--${key}=${value}`);
+                    }
+                });
+            }
+
+            const playerProcess = spawn(this.mpvPath, args, {
+                env: {
+                    ...process.env,
+                    MPV_HOME: undefined,
+                    XDG_CONFIG_HOME: undefined,
+                    DISPLAY: process.env.DISPLAY || ':0',
+                    SDL_VIDEODRIVER: 'x11'
+                },
+                shell: false
             });
 
-            if (!startResult.success) {
-                throw new Error(startResult.error || 'Failed to start player');
-            }
+            this.setupStreamHealthCheck(screen.screen, playerProcess);
+            this.streams.set(screen.screen, {
+                id: Date.now(),
+                screen: screen.screen,
+                url: '',
+                quality: screen.quality || this.config.player.defaultQuality,
+                status: 'stopped',
+                volume: screen.volume !== undefined ? screen.volume : this.config.player.defaultVolume,
+                process: playerProcess,
+                platform: 'twitch'  // Default to twitch as placeholder
+            });
 
             // Wait for the player to be ready
             await new Promise<void>((resolve, reject) => {
@@ -1351,6 +1414,12 @@ export class PlayerService {
   }
 
   private async killExistingProcesses(screen: number): Promise<void> {
+    // Don't kill if there's a startup in progress
+    if (this.startupLocks.get(screen)) {
+      logger.info(`Stream startup in progress for screen ${screen}, skipping process kill`, 'PlayerService');
+      return;
+    }
+
     try {
       // Find MPV processes for this screen
       const pids = await new Promise<string[]>((resolve, reject) => {

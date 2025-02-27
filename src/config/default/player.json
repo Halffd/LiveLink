@@ -1,6 +1,6 @@
 {
   "defaultQuality": "best",
-  "defaultVolume": 50,
+  "defaultVolume": 0,
   "windowMaximized": false,
   "maxStreams": 4,
   "autoStart": true,
@@ -31,7 +31,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
-      "playerType": "streamlink ",
+      "playerType": "mpv",
       "primary": false
     }
   ]
