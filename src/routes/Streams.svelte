@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { onMount, onDestroy } from 'svelte';
     import type { Stream, StreamConfig } from '../types/stream.js';
     import { api } from '$lib/api';
     import PlayerControls from '../components/PlayerControls.svelte';
@@ -14,6 +14,9 @@
 
     const qualities = ['best', 'high', 'medium', 'low'];
 
+    // Change the interval type
+    let pollInterval: ReturnType<typeof setInterval>;
+
     const fetchStreams = async () => {
         try {
             const [activeStreams, configs] = await Promise.all([
@@ -23,6 +26,7 @@
             streams = activeStreams;
             screenConfigs = configs;
         } catch (err) {
+            console.error('Error fetching streams:', err);
             error = err instanceof Error ? err.message : 'Failed to fetch streams';
             setTimeout(() => error = null, 3000);
         }
@@ -43,8 +47,11 @@
     const stopStream = async (screen: number) => {
         try {
             await api.stopStream(screen);
-            await fetchStreams();
+            // Remove stream from local state immediately
+            streams = streams.filter(s => s.screen !== screen);
+            await fetchStreams(); // Refresh all streams
         } catch (err) {
+            console.error('Error stopping stream:', err);
             error = err instanceof Error ? err.message : 'Failed to stop stream';
             setTimeout(() => error = null, 3000);
         }
@@ -85,7 +92,17 @@
         }
     };
 
-    onMount(fetchStreams);
+    onMount(() => {
+        fetchStreams();
+        // Poll for updates every 5 seconds
+        pollInterval = setInterval(fetchStreams, 5000);
+    });
+
+    onDestroy(() => {
+        if (pollInterval) {
+            clearInterval(pollInterval);
+        }
+    });
 </script>
 
 <div class="container-fluid py-4">

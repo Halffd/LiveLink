@@ -240,39 +240,7 @@ export class StreamManager extends EventEmitter {
       
       // Get new streams
       const streams = await this.getLiveStreams();
-      
-      // Log detailed information about the streams fetched
       logger.info(`Fetched ${streams.length} total streams`, 'StreamManager');
-      
-      if (streams.length === 0) {
-        logger.warn('No streams found. Check API keys and stream configuration.', 'StreamManager');
-        
-        // Check API keys
-        if (!process.env.HOLODEX_API_KEY) {
-          logger.error('HOLODEX_API_KEY is not set in environment variables', 'StreamManager');
-        }
-        
-        if (!process.env.TWITCH_CLIENT_ID || !process.env.TWITCH_CLIENT_SECRET) {
-          logger.error('TWITCH_CLIENT_ID or TWITCH_CLIENT_SECRET is not set in environment variables', 'StreamManager');
-        }
-        
-        // Check stream configuration
-        if (!streamConfig.sources || streamConfig.sources.length === 0) {
-          logger.error(`No sources configured for screen ${screen}`, 'StreamManager');
-        } else {
-          const enabledSources = streamConfig.sources.filter(s => s.enabled);
-          if (enabledSources.length === 0) {
-            logger.error(`No enabled sources for screen ${screen}`, 'StreamManager');
-          } else {
-            logger.info(`Enabled sources for screen ${screen}: ${enabledSources.map(s => `${s.type}:${s.subtype || 'other'}`).join(', ')}`, 'StreamManager');
-          }
-        }
-        
-        return;
-      }
-      
-      // Log all streams with their screen assignments
-      logger.debug(`Stream assignments: ${streams.map(s => `${s.url} -> screen ${s.screen}`).join(', ')}`, 'StreamManager');
       
       const availableStreams = streams.filter(stream => {
         // Filter streams for this screen
@@ -337,20 +305,18 @@ export class StreamManager extends EventEmitter {
           }
         } else {
           logger.info(`No unwatched streams available for screen ${screen}`, 'StreamManager');
+          queueService.clearQueue(screen);
         }
       } else {
         logger.info(`No available streams for screen ${screen}`, 'StreamManager');
+        queueService.clearQueue(screen);
       }
     } catch (error) {
       logger.error(
-        'Failed to handle empty queue', 
+        `Failed to handle empty queue for screen ${screen}`,
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
-      // Retry after interval
-      setTimeout(() => {
-        this.handleEmptyQueue(screen);
-      }, this.RETRY_INTERVAL);
     }
   }
 
@@ -1171,6 +1137,12 @@ export class StreamManager extends EventEmitter {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
       logger.info('Queue updates stopped', 'StreamManager');
+    }
+  }
+
+  handleLuaMessage(screen: number, type: string, data: unknown) {
+    if (typeof data === 'object' && data !== null) {
+      this.playerService.handleLuaMessage(screen, type, data as Record<string, unknown>);
     }
   }
 }

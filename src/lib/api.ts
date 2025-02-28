@@ -238,6 +238,14 @@ class ApiClient {
   setCaching(enabled: boolean): void {
     this.useCaching = enabled;
   }
+
+  async getStreamStatus(screen: number) {
+    const response = await fetch(`${this.baseUrl}/streams/${screen}/status`);
+    if (!response.ok) {
+      throw new Error('Failed to get stream status');
+    }
+    return response.json();
+  }
 }
 
 export const api = new ApiClient(); 

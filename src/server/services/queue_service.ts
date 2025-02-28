@@ -14,6 +14,7 @@ class QueueService extends EventEmitter {
 
   constructor() {
     super();
+    logger.info('QueueService initialized', 'QueueService');
   }
 
   // Queue Management
@@ -23,26 +24,46 @@ class QueueService extends EventEmitter {
       return;
     }
 
-    this.queues.set(screen, queue);
+    // Filter out any null or undefined entries
+    const validQueue = queue.filter(item => item && item.url);
     
-    logger.debug(`Set queue for screen ${screen}. Queue size: ${queue.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(queue)}`, 'QueueService');
+    this.queues.set(screen, validQueue);
     
-    if (queue.length === 0) {
+    logger.info(`Set queue for screen ${screen}. Queue size: ${validQueue.length}`, 'QueueService');
+    logger.debug(`Queue contents: ${JSON.stringify(validQueue)}`, 'QueueService');
+    
+    if (validQueue.length === 0) {
+      logger.info(`Queue for screen ${screen} is empty, emitting all:watched event`, 'QueueService');
       this.emit('all:watched', screen);
     } else {
-      this.emit('queue:updated', screen, queue);
+      logger.info(`Queue for screen ${screen} updated with ${validQueue.length} items`, 'QueueService');
+      this.emit('queue:updated', screen, validQueue);
     }
   }
 
   public getQueue(screen: number): StreamSource[] {
-    return this.queues.get(screen) || [];
+    const queue = this.queues.get(screen) || [];
+    logger.debug(`Getting queue for screen ${screen}. Queue size: ${queue.length}`, 'QueueService');
+    return queue;
+  }
+
+  public addToQueue(screen: number, source: StreamSource): void {
+    if (!source || !source.url) {
+      logger.warn(`Invalid stream source provided for screen ${screen}`, 'QueueService');
+      return;
+    }
+
+    const queue = this.getQueue(screen);
+    queue.push(source);
+    this.setQueue(screen, queue);
+    logger.info(`Added stream ${source.url} to queue for screen ${screen}`, 'QueueService');
   }
 
   public clearQueue(screen: number): void {
     this.queues.set(screen, []);
     logger.info(`Cleared queue for screen ${screen}`, 'QueueService');
     this.emit('queue:updated', screen, []);
+    this.emit('queue:empty', screen);
   }
 
   public clearAllQueues(): void {
@@ -53,7 +74,9 @@ class QueueService extends EventEmitter {
   // Stream Management
   public getNextStream(screen: number): StreamSource | undefined {
     const queue = this.queues.get(screen) || [];
-    return queue[0];
+    const nextStream = queue[0];
+    logger.debug(`Getting next stream for screen ${screen}. Next stream: ${nextStream?.url || 'none'}`, 'QueueService');
+    return nextStream;
   }
 
   public removeFromQueue(screen: number, index: number): void {
@@ -69,8 +92,8 @@ class QueueService extends EventEmitter {
     const removedItem = queue.splice(index, 1)[0];
     this.queues.set(screen, queue);
     
-    logger.debug(`Removed item at index ${index} from queue for screen ${screen}. New queue size: ${queue.length}`, 'QueueService');
-    logger.debug(`Removed item: ${JSON.stringify(removedItem)}`, 'QueueService');
+    logger.info(`Removed stream ${removedItem.url} from queue for screen ${screen}`, 'QueueService');
+    logger.debug(`Queue size after removal: ${queue.length}`, 'QueueService');
     
     // Emit queue updated event
     this.emit('queue:updated', screen, queue);

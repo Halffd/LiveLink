@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '$lib/api';
   import type { Stream } from '../types/stream.js';
+  import { onMount, onDestroy } from 'svelte';
 
   let { stream } = $props<{
     stream: Stream;
@@ -9,27 +10,43 @@
   let volume = $state(stream.volume || 50);
   let seeking = $state(false);
   let error = $state<string | null>(null);
+  let isPaused = $state(stream.playerStatus === 'paused');
 
-  async function handleVolumeChange(event: Event) {
+  let updateInterval: ReturnType<typeof setInterval>;
+
+  const handleVolumeChange = async (event: Event) => {
     const target = event.target as HTMLInputElement;
     const newVolume = parseInt(target.value);
     try {
       await api.setVolume(stream.screen, newVolume);
       volume = newVolume;
     } catch (err) {
+      console.error('Error setting volume:', err);
       error = err instanceof Error ? err.message : 'Failed to set volume';
       setTimeout(() => error = null, 3000);
     }
-  }
+  };
 
-  async function togglePause() {
+  const togglePause = async () => {
     try {
       await api.togglePause(stream.screen);
+      isPaused = !isPaused;
     } catch (err) {
+      console.error('Error toggling pause:', err);
       error = err instanceof Error ? err.message : 'Failed to toggle pause';
       setTimeout(() => error = null, 3000);
     }
-  }
+  };
+
+  const updateStreamStatus = async () => {
+    try {
+      const status = await api.getStreamStatus(stream.screen);
+      isPaused = status.playerStatus === 'paused';
+      volume = status.volume || volume;
+    } catch (err) {
+      console.error('Error updating stream status:', err);
+    }
+  };
 
   async function handleSeek(seconds: number) {
     if (seeking) return;
@@ -52,6 +69,17 @@
       setTimeout(() => error = null, 3000);
     }
   }
+
+  onMount(() => {
+    updateStreamStatus();
+    updateInterval = setInterval(updateStreamStatus, 2000);
+  });
+
+  onDestroy(() => {
+    if (updateInterval) {
+      clearInterval(updateInterval);
+    }
+  });
 </script>
 
 <div class="card card-dark mb-4">
@@ -71,9 +99,10 @@
       <button
         class="btn btn-outline-light"
         on:click={togglePause}
-        title="Play/Pause"
+        title={isPaused ? 'Play' : 'Pause'}
+        aria-label={isPaused ? 'Play' : 'Pause'}
       >
-        <i class="bi bi-play-fill"></i>
+        <i class="bi {isPaused ? 'bi-play-fill' : 'bi-pause-fill'}"></i>
       </button>
 
       <div class="d-flex gap-2">

@@ -3,8 +3,15 @@
   "gpu-context": "x11egl",
   "gpu-api": "opengl",
   "hwdec": "auto-safe",
-  "x11-name": "LiveLink",
-  "force-window": "immediate",
-  "no-terminal": true,
-  "msg-level": "all=v"
+  "input-default-bindings": "no",
+  "input-vo-keyboard": "yes",
+  "input-ipc-server": "${HOME}/.livelink/mpv-ipc-${SCREEN}",
+  "msg-level": "all=debug",
+  "osc": "no",
+  "osd-duration": 2000,
+  "osd-font-size": 32,
+  "force-window": "yes",
+  "keep-open": "always",
+  "terminal": "yes",
+  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log"
 } 

@@ -705,4 +705,23 @@ router.post('/api/streams/close-all', async (ctx: Context) => {
   }
 });
 
+// Add after other player routes
+router.post('/api/log', async (ctx: Context) => {
+  try {
+    const { screen, type, data } = ctx.request.body as { screen: number; type: string; data: unknown };
+    
+    if (typeof screen !== 'number' || !type) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid message format' };
+      return;
+    }
+
+    streamManager.handleLuaMessage(screen, type, data);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
 export const apiRouter = router; 
