@@ -7,20 +7,21 @@
 -- - Stream info display
 -- - Auto-refresh capability
 
-local utils = require 'mp.utils'
-local msg = require 'mp.msg'
+-- Required modules
+local utils = require('mp.utils')
+local msg = require('mp.msg')
+local options = require('mp.options')
 
 -- Configuration
 local API_URL = "http://localhost:3001/api"
-local current_screen = nil
-local current_url = nil
 local info_display_time = 10 -- How long to show info overlay (seconds)
 local REFRESH_INTERVAL = 30 * 60 -- 30 minutes in seconds
 local last_refresh_time = os.time()
 local MIN_WATCH_TIME = 60 -- Minimum time to watch before marking as watched (seconds)
 local ERROR_RETRY_COUNT = 3 -- Number of times to retry on error
 local RETRY_DELAY = 2 -- Delay between retries in seconds (reduced from 5)
-local STREAM_SWITCH_DELAY = 0.5 -- Delay between switching streams in seconds (reduced from 1)
+local STREAM_SWITCH_DELAY = 1.0 -- Delay between switching streams in seconds (reduced from 1)
+local WATCHED_CHECK_INTERVAL = 60 -- Check every minute
 
 -- Track state
 local marked_streams = {}
@@ -32,22 +33,63 @@ local is_stream_active = false
 local active_process = nil
 local is_shutting_down = false
 local key_bindings_registered = false
+local current_url = nil
+local current_screen = nil
 
 -- Add process state tracking
 local process_state = {
     starting = false,
     shutting_down = false,
-    last_health_check = os.time(),
-    error_count = 0
+    error_count = 0,
+    last_health_check = os.time()
 }
 
 -- Get script options
-local options = {
-    screen = mp.get_opt("screen")  -- Use mp.get_opt instead of mp.get_script_opts()
+local script_opts = {
+    screen = 1  -- Default screen number
 }
 
--- Log script options for debugging
-msg.debug("Script options received: " .. utils.format_json(options))
+-- Read options
+options.read_options(script_opts, "livelink")
+
+-- Override with command line option if present
+local screen_opt = mp.get_opt("screen")
+if screen_opt then
+    script_opts.screen = tonumber(screen_opt) or 1
+end
+
+-- Initialize screen number once
+current_screen = script_opts.screen
+msg.info(string.format("LiveLink MPV script initialized"))
+msg.info(string.format("Screen number set to: %d", current_screen))
+
+-- Add safer API endpoint handling
+local API = {
+    streams = {
+        playlist = API_URL .. "/streams/playlist",
+        progress = API_URL .. "/streams/progress",
+        watched = API_URL .. "/streams/watched",
+        queue = function(screen) return API_URL .. "/streams/queue/" .. screen end,
+        autostart = API_URL .. "/streams/autostart",
+        restart = API_URL .. "/streams/restart",
+        shutdown = API_URL .. "/streams/shutdown"
+    }
+}
+
+-- Get screen number from script options or socket path
+function get_current_screen()
+    return current_screen
+end
+
+-- Add safer API request function
+function api_request(endpoint, method, data)
+    if not endpoint then return nil end
+    
+    local headers = "Content-Type: application/json"
+    local json_data = data and utils.format_json(data) or nil
+    
+    return http_request(endpoint, method, headers, json_data)
+end
 
 -- Helper function to send messages to node console with better error handling
 function send_to_node(message_type, data)
@@ -71,7 +113,7 @@ function send_to_node(message_type, data)
     local success = http_request(
         API_URL .. "/log",
         "POST",
-        nil,
+        "Content-Type: application/json",
         message
     )
 
@@ -80,27 +122,25 @@ end
 
 -- Helper function to log with node console and fallback to mpv log
 function log_to_node(level, message)
-    -- Ensure we have valid parameters
+    if not level or not message then return end
+    
+    -- Validate level
     if type(level) ~= "string" or type(message) ~= "string" then
-        msg.error("Invalid parameters to log_to_node")
+        msg[level](message)
         return
     end
     
-    -- Ensure we have a valid screen number
-    local screen = current_screen
-    if not screen or type(screen) ~= "number" or screen < 1 then
-        screen = 1
-        msg.warn("Invalid screen number in log_to_node, using default: 1")
-    end
-
-    -- Send log message to server
-    local success, error = mp.command_native({
-        name = "script-message-to",
-        args = {"livelink", "log", level, message}
+    -- Log to mpv first
+    msg[level](message)
+    
+    -- Then try to send to node using send_to_node
+    local success = send_to_node("log", {
+        level = level,
+        message = message
     })
     
     if not success then
-        msg.error(string.format("Failed to send log message: %s", error or "unknown error"))
+        msg.warn("Failed to send log message to node")
     end
 end
 
@@ -116,95 +156,53 @@ end
 
 -- Helper function to make HTTP requests with better error handling
 function http_request(url, method, headers, data)
-    -- Validate input parameters
-    if not url or type(url) ~= "string" then
-        msg.error("Invalid URL for HTTP request")
-        return nil
-    end
+    if not url then return nil end
     
     method = method or "GET"
-    if type(method) ~= "string" then
-        msg.error("Invalid HTTP method")
-        return nil
+    
+    -- Build curl command with proper argument handling
+    local args = {
+        'curl', '-s',
+        '-X', method,
+        url
+    }
+    
+    if headers then
+        table.insert(args, '-H')
+        table.insert(args, headers)
     end
     
-    msg.debug(string.format("Making HTTP request to: %s [%s]", url, method))
-    
-    -- Build curl command with proper escaping
-    local curl_cmd = string.format(
-        'curl -s -X %s %s %s %s',
-        method,
-        string.format("%q", url),
-        headers and string.format("-H %q", headers) or "",
-        data and string.format("-d %q", data) or ""
-    )
-    
-    -- Execute with error handling
-    local success, curl, err = pcall(io.popen, curl_cmd)
-    if not success or not curl then
-        msg.error(string.format("Failed to execute curl: %s", err or "unknown error"))
-        return nil
+    if data then
+        table.insert(args, '-d')
+        table.insert(args, data)
     end
     
-    local response = curl:read('*all')
-    local close_success, exit_type, exit_code = curl:close()
-    
-    if not close_success then
-        msg.error(string.format("HTTP request failed with exit code: %s", exit_code))
-        return nil
-    end
-    
-    if response and response ~= "" then
-        local success, parsed = pcall(utils.parse_json, response)
-        if not success or not parsed then
-            msg.error("Failed to parse JSON response")
-            msg.debug("Raw response: " .. response)
-            return nil
-        end
-        return parsed
-    end
-    
-    return nil
-end
-
--- Get screen number from script options or socket path
-function get_current_screen()
-    -- First try to get screen from script options
-    local screen_opt = mp.get_opt("screen")
-    if screen_opt then
-        -- Convert to number and validate
-        local screen_num = tonumber(screen_opt)
-        if screen_num and screen_num > 0 then
-            log_to_node("info", string.format("Using screen number %d from script options", screen_num))
-            return screen_num
-        else
-            log_to_node("warn", string.format("Invalid screen number in script options: %s", screen_opt))
-        end
-    end
-
-    -- Fallback to socket path
-    local socket_path = mp.get_property("input-ipc-server")
-    if socket_path then
-        -- Extract screen number from socket path
-        local screen_str = string.match(socket_path, "mpv%-ipc%-(%d+)$")
-        if screen_str then
-            local screen_num = tonumber(screen_str)
-            if screen_num and screen_num > 0 then
-                log_to_node("info", string.format("Using screen number %d from socket path", screen_num))
-                return screen_num
+    local success, result = pcall(function()
+        local response = mp.command_native({
+            name = "subprocess",
+            playback_only = false,
+            capture_stdout = true,
+            args = args
+        })
+        
+        if response.status == 0 and response.stdout then
+            local parsed = utils.parse_json(response.stdout)
+            if parsed then
+                return parsed
             else
-                log_to_node("warn", string.format("Invalid screen number in socket path: %s", screen_str))
+                msg.warn("Failed to parse JSON response")
+                return nil
             end
-        else
-            log_to_node("warn", "Could not extract screen number from socket path: " .. socket_path)
         end
-    else
-        log_to_node("warn", "No socket path available")
+        return nil
+    end)
+    
+    if not success then
+        msg.error("HTTP request failed: " .. (result or "unknown error"))
+        return nil
     end
-
-    -- Final fallback to default screen
-    log_to_node("warn", "Using default screen number 1")
-    return 1
+    
+    return result
 end
 
 -- Helper function to check if a value exists in a table
@@ -228,10 +226,10 @@ function get_next_unwatched()
 
     msg.info("Fetching next unwatched stream for screen " .. screen)
     
-    local response = http_request(API_URL .. "/streams/queue/" .. screen)
+    local response = http_request(API.streams.queue(screen))
     if response then
         -- Get watched streams
-        local watched = http_request(API_URL .. "/streams/watched")
+        local watched = http_request(API.streams.watched)
         local watched_urls = watched or {}
         
         msg.debug(string.format("Found %d streams in queue", #response))
@@ -329,7 +327,7 @@ function handle_end_of_playlist()
     
     -- Request update from server
     local response = http_request(
-        API_URL .. "/streams/autostart",
+        API.streams.autostart,
         "POST",
         nil,
         utils.format_json({ screen = screen })
@@ -361,12 +359,7 @@ function mark_current_watched()
             screen = screen
         })
         
-        http_request(
-            API_URL .. "/streams/watched",
-            "POST",
-            nil,
-            data
-        )
+        http_request(API.streams.watched, "POST", nil, data)
         
         -- Remove current item from playlist after marking as watched
         remove_current_from_playlist()
@@ -451,9 +444,9 @@ function show_stream_info()
 
     -- Get all relevant information
     local active = http_request(API_URL .. "/streams/active")
-    local queue = http_request(API_URL .. "/streams/queue/" .. screen)
+    local queue = http_request(API.streams.queue(screen))
     local config = http_request(API_URL .. "/screens/" .. screen)
-    local watched = http_request(API_URL .. "/streams/watched")
+    local watched = http_request(API.streams.watched)
 
     -- Get current playlist information
     local playlist_count = mp.get_property_number("playlist-count") or 0
@@ -544,7 +537,7 @@ end
 function clear_watched()
     msg.info("Clearing watched streams history")
     
-    local response = http_request(API_URL .. "/streams/watched", "DELETE")
+    local response = http_request(API.streams.watched, "DELETE")
     if response then
         msg.info("Watched streams history cleared")
         mp.osd_message("Cleared watched streams history", 3)
@@ -567,118 +560,169 @@ function refresh_stream()
     end
 end
 
--- Update initialize_playlist function
+-- Initialize playlist with better error handling
 function initialize_playlist()
-    -- Return early if already initialized to prevent duplicate initialization
-    if playlist_initialized then 
-        log_to_node("debug", "Playlist already initialized, skipping")
-        return true 
+    if playlist_initialized then
+        return
     end
-    
-    local screen = get_current_screen()
-    if not screen then 
-        log_to_node("error", "Cannot initialize playlist: screen number unknown")
-        return false 
+
+    local current_url = mp.get_property("path")
+    if not current_url then
+        msg.warn("No URL available for playlist initialization")
+        return
     end
-    
-    log_to_node("info", string.format("Initializing playlist for screen %d", screen))
-    
-    -- Clean up old logs before starting new playlist
-    local log_dirs = {
-        "/home/all/repos/LiveLink/logs/mpv",
-        "/home/all/repos/LiveLink/logs/streamlink"
+
+    -- Create initial playlist
+    local playlist = {
+        {
+            url = current_url,
+            title = mp.get_property("media-title") or current_url
+        }
     }
-    
-    for _, dir in ipairs(log_dirs) do
-        cleanup_old_logs(dir)
-    end
-    
-    -- Clear the current playlist first
-    mp.commandv("playlist-clear")
-    
-    -- Fetch queue from API
-    local response = http_request(API_URL .. "/streams/queue/" .. screen)
-    if response and #response > 0 then
-        log_to_node("info", string.format("Found %d streams in queue", #response))
+
+    -- Send playlist update to server with proper error handling
+    local success, err = pcall(function()
+        local data = utils.format_json({
+            screen = script_opts.screen,
+            playlist = playlist
+        })
         
-        -- Get watched streams to filter
-        local watched = http_request(API_URL .. "/streams/watched")
-        local watched_urls = watched or {}
-        
-        -- Add unwatched streams to playlist
-        local added = 0
-        for _, stream in ipairs(response) do
-            if not has_value(watched_urls, stream.url) then
-                -- Normalize URL if needed
-                local url = stream.url
-                if url:match("twitch.tv/") and not url:match("^https://") then
-                    url = "https://twitch.tv/" .. url:match("twitch.tv/(.+)")
-                elseif url:match("youtube.com/") and not url:match("^https://") then
-                    url = "https://youtube.com/" .. url:match("youtube.com/(.+)")
-                end
-                
-                log_to_node("debug", string.format("Adding to playlist: %s", url))
-                mp.commandv("loadfile", url, "append")
-                added = added + 1
-            else
-                log_to_node("debug", string.format("Skipping watched stream: %s", stream.url))
-            end
+        if not data then
+            error("Failed to format playlist data")
         end
-        
-        log_to_node("info", string.format("Added %d unwatched streams to playlist", added))
-        
-        if added > 0 then
-            -- Start playing the first item if not already playing
-            local path = mp.get_property("path")
-            if not path then
-                log_to_node("info", "Starting playback of first playlist item")
-                mp.commandv("playlist-play-index", "0")
-            end
-            
-            playlist_initialized = true
-            return true
-        else
-            log_to_node("warn", "No unwatched streams found in queue")
-            -- Request new streams from server
-            handle_end_of_playlist()
-            return false
+
+        local response = http_request(
+            API.streams.playlist,
+            "POST",
+            "Content-Type: application/json",
+            data
+        )
+
+        if not response then
+            error("Failed to send playlist update")
         end
-    else
-        log_to_node("warn", "No streams found in queue")
-        -- Request new streams from server
-        handle_end_of_playlist()
-        playlist_initialized = false  -- Keep false to allow retrying
-        return false
+    end)
+
+    if not success then
+        msg.error("Failed to initialize playlist: " .. (err or "unknown error"))
+        return
     end
+
+    playlist_initialized = true
+    msg.info("Playlist initialized successfully")
 end
 
--- Update the playlist position observer
-mp.observe_property("playlist-pos", "number", function(name, value)
-    if value == nil then return end
-    
-    local url = mp.get_property("path")
-    if not url then return end
-    
-    msg.info(string.format("Playlist position changed to %d: %s", value, url))
-    
-    -- Initialize playlist if needed
-    if not playlist_initialized then
-        initialize_playlist()
-    end
-    
-    -- Check if this URL is already playing on another screen
-    local is_duplicate, other_screen = check_url_duplicate(url)
-    if is_duplicate then
-        msg.warn(string.format("URL already playing on screen %d, skipping", other_screen))
-        if not manual_navigation then
-            -- Only auto-skip if not manually navigating
-            play_next_stream()
+-- Add safer property observers
+function observe_properties()
+    -- Observe playlist position changes
+    mp.observe_property("playlist-pos", "number", function(_, pos)
+        if pos then
+            initialize_playlist()
         end
+    end)
+    
+    -- Observe playback time for progress updates
+    mp.observe_property("time-pos", "number", function(_, time)
+        if time then
+            local duration = mp.get_property_number("duration")
+            if duration then
+                local remaining = duration - time
+                local data = utils.format_json({
+                    screen = script_opts.screen,
+                    position = time,
+                    duration = duration,
+                    remaining = remaining
+                })
+                
+                if data then
+                    http_request(API.streams.progress, "POST", "Content-Type: application/json", data)
+                end
+            end
+        end
+    end)
+end
+
+-- Initialize script
+function init()
+    -- Initialize screen number
+    if not script_opts.screen then
+        msg.error("Screen number not set")
         return
     end
     
-    -- Update stream info for the new position
-    update_screen_info()
+    -- Log initialization
+    msg.info(string.format("Initializing LiveLink for screen %d", script_opts.screen))
+    
+    -- Setup key bindings if not already done
+    if not key_bindings_registered then
+        -- Register key bindings
+        mp.add_key_binding("F2", "show-stream-info", show_stream_info)
+        mp.add_key_binding("F5", "refresh-stream", refresh_stream)
+        mp.add_key_binding("Ctrl+F5", "clear-watched", clear_watched)
+        mp.add_key_binding("PGDWN", "playlist-next-stream", next_stream)
+        mp.add_key_binding("PGUP", "playlist-prev-stream", prev_stream)
+        mp.add_key_binding("Alt+k", "auto-start-screen-2", function() auto_start_screen(2) end)
+        mp.add_key_binding("Alt+l", "auto-start-screen-1", function() auto_start_screen(1) end)
+        
+        -- Log key bindings
+        local bindings = {
+            "F2 -> show-stream-info",
+            "F5 -> refresh-stream",
+            "Ctrl+F5 -> clear-watched",
+            "PGDWN -> playlist-next-stream",
+            "PGUP -> playlist-prev-stream",
+            "Alt+k -> auto-start-screen-2",
+            "Alt+l -> auto-start-screen-1"
+        }
+        
+        for _, binding in ipairs(bindings) do
+            msg.debug("Registered key binding: " .. binding)
+        end
+        
+        key_bindings_registered = true
+    end
+    
+    -- Initialize playlist observer
+    mp.observe_property("playlist", "native", function(_, playlist)
+        if playlist then
+            initialize_playlist()
+        end
+    end)
+    
+    -- Initialize path observer
+    mp.observe_property("path", "string", function(_, path)
+        if path and path ~= current_url then
+            current_url = path
+            initialize_playlist()
+        end
+    end)
+    
+    -- Initialize time observer for watched status
+    mp.observe_property("time-pos", "number", function(_, time)
+        if time and not manual_navigation then
+            check_watched_status(time)
+        end
+    end)
+    
+    msg.info(string.format("Successfully initialized screen number: %d", script_opts.screen))
+end
+
+-- Register script message handlers
+mp.register_script_message("log", function(level, message)
+    log_to_node(level, message)
+end)
+
+-- Start initialization when player is ready
+mp.register_event("file-loaded", function()
+    if not is_shutting_down then
+        init()
+    end
+end)
+
+-- Cleanup on exit
+mp.register_event("shutdown", function()
+    is_shutting_down = true
+    msg.debug("Exiting...")
 end)
 
 -- Update playlist navigation handlers
@@ -705,16 +749,11 @@ end)
 function play_next_stream()
     local screen = get_current_screen()
     if not screen then return end
-
     log_to_node("info", "Requesting next stream from API")
-    
+    mp.osd_message("Requesting next stream from API", 1)
     -- Request next stream from API
-    local response = http_request(
-        API_URL .. "/streams/next/" .. screen,
-        "POST",
-        nil,
-        utils.format_json({ screen = screen })
-    )
+    local response = http_request(API.streams.queue(screen), "POST", nil, utils.format_json({ screen = screen }))
+    mp.osd_message("Requesting url: " .. response.url, 4)
     
     if response and response.url then
         log_to_node("info", string.format("Playing next stream: %s", response.url))
@@ -790,7 +829,7 @@ function cleanup_old_logs(directory)
     end
     
     -- Validate directory exists
-    local stat = mp.utils.file_info(directory)
+    local stat = utils.file_info(directory)
     if not stat or not stat.is_dir then
         msg.error(string.format("Invalid log directory: %s", directory))
         return
@@ -829,7 +868,7 @@ function get_log_filename(prefix, screen)
     local log_dir = "/home/all/repos/LiveLink/logs/" .. prefix
     
     -- Ensure log directory exists
-    local stat = mp.utils.file_info(log_dir)
+    local stat = utils.file_info(log_dir)
     if not stat or not stat.is_dir then
         -- Try to create directory
         local success = safe_execute(string.format("mkdir -p %q", log_dir))
@@ -843,96 +882,6 @@ function get_log_filename(prefix, screen)
         log_dir, prefix, screen, timestamp)
 end
 
--- Register key bindings with proper options and error handling
-function setup_key_bindings()
-    if key_bindings_registered then
-        msg.debug("Key bindings already registered")
-        return
-    end
-    
-    -- Unregister existing bindings first
-    mp.remove_key_binding("show-stream-info")
-    mp.remove_key_binding("refresh-stream")
-    mp.remove_key_binding("clear-watched")
-    mp.remove_key_binding("playlist-next-stream")
-    mp.remove_key_binding("playlist-prev-stream")
-    mp.remove_key_binding("auto-start-screen-2")
-    mp.remove_key_binding("auto-start-screen-1")
-
-    -- Register direct key bindings with error handling
-    local bindings = {
-        { key = "F2", name = "show-stream-info", fn = show_stream_info },
-        { key = "F5", name = "refresh-stream", fn = refresh_stream },
-        { key = "Ctrl+F5", name = "clear-watched", fn = clear_watched },
-        { key = "PGDWN", name = "playlist-next-stream", fn = play_next_stream },
-        { key = "PGUP", name = "playlist-prev-stream", fn = function()
-            local pos = mp.get_property_number("playlist-pos") or 0
-            if pos > 0 then
-                mp.commandv("playlist-prev")
-                mp.osd_message("Playing previous stream", 2)
-            else
-                mp.osd_message("Already at start of playlist", 2)
-            end
-        end },
-        { key = "Alt+k", name = "auto-start-screen-2", fn = function() auto_start_screen(2) end },
-        { key = "Alt+l", name = "auto-start-screen-1", fn = function() auto_start_screen(1) end }
-    }
-
-    for _, binding in ipairs(bindings) do
-        -- Add error handling wrapper to each function
-        local wrapped_fn = function()
-            local screen = get_current_screen()
-            if not screen then
-                msg.error(string.format("Cannot execute %s: screen number unknown", binding.name))
-                mp.osd_message(string.format("Error: Screen number unknown", 3))
-        return
-            end
-            binding.fn()
-        end
-
-        mp.add_forced_key_binding(binding.key, binding.name, wrapped_fn, { repeatable = false })
-        msg.debug(string.format("Registered key binding: %s -> %s", binding.key, binding.name))
-    end
-
-    key_bindings_registered = true
-    log_to_node("info", "Key bindings registered successfully")
-end
-
--- Update on_load hook to ensure key bindings are set up
-mp.add_hook("on_load", 50, function()
-    local url = mp.get_property("path")
-    if not url then return end
-    
-    -- Reset process state
-    process_state.starting = false
-    process_state.error_count = 0
-    process_state.last_health_check = os.time()
-    
-    log_to_node("info", string.format("Loading URL: %s", url))
-    
-    -- Clean up old logs
-    local log_dirs = {
-        "/home/all/repos/LiveLink/logs/mpv",
-        "/home/all/repos/LiveLink/logs/streamlink"
-    }
-    
-    for _, dir in ipairs(log_dirs) do
-        cleanup_old_logs(dir)
-    end
-    
-    -- Setup key bindings if not already set
-    if not key_bindings_registered then
-        setup_key_bindings()
-    end
-    
-    -- Check if this URL is already playing on another screen
-    local is_duplicate, other_screen = check_url_duplicate(url)
-    if is_duplicate then
-        log_to_node("warn", string.format("URL already playing on screen %d, skipping", other_screen))
-        play_next_stream()
-    end
-end)
-
 -- Function to auto-start streams on a specific screen
 function auto_start_screen(screen)
     msg.info(string.format("Auto-starting streams on screen %d", screen))
@@ -941,12 +890,7 @@ function auto_start_screen(screen)
         screen = screen
     })
     
-    local response = http_request(
-        API_URL .. "/streams/autostart",
-        "POST",
-        nil,
-        data
-    )
+    local response = http_request(API.streams.autostart, "POST", nil, data)
     
     if response then
         mp.osd_message(string.format("Auto-starting streams on screen %d", screen), 3)
@@ -961,11 +905,9 @@ function check_process_health()
         local pid = mp.get_property_number("pid")
         if not pid then
             process_state.error_count = process_state.error_count + 1
-            log_to_node("warn", string.format("Process health check failed (%d/%d)", 
-                process_state.error_count, ERROR_RETRY_COUNT))
             
             if process_state.error_count >= ERROR_RETRY_COUNT then
-                log_to_node("error", "Process appears to be unresponsive, requesting restart")
+                show_error("Process appears to be unresponsive", 10)
                 request_restart()
             end
         else
@@ -991,12 +933,7 @@ function request_restart()
             type = "restart"
         })
         
-        local response = http_request(
-            API_URL .. "/streams/restart",
-            "POST",
-            nil,
-            data
-        )
+        local response = http_request(API.streams.restart, "POST", nil, data)
         
         if response then
             log_to_node("info", "Restart request sent successfully")
@@ -1030,18 +967,17 @@ mp.register_event("shutdown", function()
                 error_count = process_state.error_count
             })
             
-            http_request(
-                API_URL .. "/streams/shutdown",
-                "POST",
-                nil,
-                data
-            )
+            http_request(API.streams.shutdown, "POST", nil, data)
         end
     end
 end)
 
 -- Add end-file event handler with improved logging
 mp.register_event("end-file", function(event)
+    if event.error then
+        show_error(string.format("Playback error: %s", event.error))
+    end
+    
     -- Log the event with more details
     log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
     log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
@@ -1086,7 +1022,7 @@ end
 -- Add playlist control functions
 function add_to_playlist(url)
     if not url or type(url) ~= "string" then
-        log_to_node("error", "Invalid URL for playlist addition")
+        show_error("Invalid URL for playlist")
         return false
     end
 
@@ -1098,7 +1034,7 @@ function add_to_playlist(url)
         log_to_node("info", string.format("Added %s to playlist", url))
         return true
     else
-        log_to_node("error", string.format("Failed to add %s to playlist: %s", url, err))
+        show_error(string.format("Failed to add %s to playlist", url))
         return false
     end
 end
@@ -1125,13 +1061,13 @@ end
 
 function play_playlist_index(index)
     if not index or type(index) ~= "number" then
-        log_to_node("error", "Invalid playlist index")
+        show_error("Invalid playlist index")
         return false
     end
 
     local playlist_count = mp.get_property_number("playlist-count")
     if not playlist_count or index >= playlist_count then
-        log_to_node("error", string.format("Invalid index %d for playlist of size %d", 
+        show_error(string.format("Invalid index %d (playlist size: %d)", 
             index, playlist_count or 0))
         return false
     end
@@ -1144,7 +1080,7 @@ function play_playlist_index(index)
         log_to_node("info", string.format("Playing playlist index %d", index))
         return true
     else
-        log_to_node("error", string.format("Failed to play index %d: %s", index, err))
+        show_error(string.format("Failed to play index %d", index))
         return false
     end
 end
@@ -1226,58 +1162,50 @@ mp.observe_property("playlist-count", "number", function(_, count)
                 data = playlist
             })
             
-            http_request(
-                API_URL .. "/streams/playlist",
-                "POST",
-                nil,
-                data
-            )
+            http_request(API.streams.playlist, "POST", nil, data)
         end
     end
 end)
 
 -- Add queue loading and management functions
-function load_queue_from_server()
-    local screen = get_current_screen()
-    if not screen then
-        log_to_node("error", "Cannot load queue: screen number not available")
+function load_queue()
+    if not script_opts.screen then
+        show_error("Cannot load queue: screen number not set")
         return false
     end
-
-    -- Request queue from server
-    local response = http_request(
-        API_URL .. "/streams/queue/" .. screen,
-        "GET"
-    )
-
+    
+    local response = http_request(API.streams.queue(script_opts.screen), "GET")
     if not response then
-        log_to_node("error", "Failed to fetch queue from server")
+        show_error("Failed to load queue from server")
         return false
     end
-
-    -- Clear existing playlist first
-    local success, err = pcall(function()
+    
+    -- Clear existing playlist
+    local success = pcall(function()
         mp.commandv("playlist-clear")
     end)
-
+    
     if not success then
-        log_to_node("error", string.format("Failed to clear playlist: %s", err))
+        show_error("Failed to clear playlist")
         return false
     end
-
+    
     -- Add each queue item to playlist
-    local added_count = 0
+    local added = 0
     for _, item in ipairs(response) do
         if item.url then
-            local add_success = add_to_playlist(item.url)
-            if add_success then
-                added_count = added_count + 1
+            success = pcall(function()
+                mp.commandv("loadfile", item.url, "append")
+            end)
+            
+            if success then
+                added = added + 1
             end
         end
     end
-
-    log_to_node("info", string.format("Loaded %d items from queue", added_count))
-    return true
+    
+    log_to_node("info", string.format("Loaded %d items from queue", added))
+    return added > 0
 end
 
 function remove_watched_streams()
@@ -1300,10 +1228,7 @@ function remove_watched_streams()
         local filename = mp.get_property(string.format("playlist/%d/filename", i))
         if filename then
             -- Check if URL is in watched list
-            local response = http_request(
-                API_URL .. "/streams/watched",
-                "GET"
-            )
+            local response = http_request(API.streams.watched, "GET")
             
             if response and response[filename] then
                 table.insert(watched_indices, 1, i)  -- Insert at beginning for reverse order
@@ -1337,17 +1262,56 @@ mp.register_event("file-loaded", function()
     -- Only load queue if this is the first file
     if mp.get_property_number("playlist-pos") == 0 then
         log_to_node("info", "First file loaded, initializing queue...")
-        load_queue_from_server()
+        load_queue()
     end
 end)
 
 -- Add periodic check for watched streams
-local WATCHED_CHECK_INTERVAL = 60  -- Check every minute
 mp.add_periodic_timer(WATCHED_CHECK_INTERVAL, function()
     remove_watched_streams()
 end)
 
 -- Add command handler for manual queue reload
 mp.register_script_message("reload-queue", function()
-    load_queue_from_server()
+    load_queue()
 end)
+
+-- Add error display function with better formatting
+function show_error(message, duration)
+    if not message then return end
+    duration = duration or 5
+    
+    -- Log the error
+    msg.error(message)
+    
+    -- Show error on OSD with better formatting
+    local osd_message = string.format("{\\an7}{\\c&H0000FF&}Error: %s", message)
+    mp.osd_message(osd_message, duration)
+    
+    -- Try to send to node
+    log_to_node("error", message)
+end
+
+-- Update initialization error handling
+mp.register_event("start-file", function()
+    local screen = get_current_screen()
+    if not screen then
+        show_error("Failed to initialize: screen number not available", 10)
+        return
+    end
+    
+    -- Check for required properties
+    local path = mp.get_property("path")
+    if not path then
+        show_error("Failed to initialize: no media loaded", 10)
+        return
+    end
+    
+    -- Initialize playlist if needed
+    if mp.get_property_number("playlist-count", 0) == 0 then
+        if not load_queue() then
+            show_error("Failed to load initial queue", 10)
+        end
+    end
+end)
+play_next_stream()
