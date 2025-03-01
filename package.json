@@ -93,6 +93,7 @@
 		"vitest": "^3.0.0"
 	},
 	"dependencies": {
+		"-": "^0.0.1",
 		"@inlang/paraglide-sveltekit": "^0.15.5",
 		"@koa/cors": "^5.0.0",
 		"@twurple/api": "^7.0.0",

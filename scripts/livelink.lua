@@ -733,6 +733,10 @@ mp.add_key_binding("PGDWN", "playlist-next-stream", function()
     play_next_stream()
 end)
 
+-- Add handler for playlist-next command
+mp.add_key_binding("END", "playlist-next-stream", function()
+    play_next_stream()
+end)
 -- Add handler for playlist-prev command
 mp.add_key_binding("PGUP", "playlist-prev-stream", function()
     local pos = mp.get_property_number("playlist-pos") or 0
@@ -1002,11 +1006,9 @@ log_to_node("info", "LiveLink MPV script initialized")
 local screen = get_current_screen()
 if screen then
     log_to_node("info", string.format("Running on screen %d", screen))
-    -- Log MPV version and key bindings
+    -- Log MPV version
     local mpv_version = mp.get_property("mpv-version")
     log_to_node("info", string.format("MPV version: %s", mpv_version))
-    -- Setup initial key bindings
-    setup_key_bindings()
 else
     log_to_node("warn", "Could not determine screen number")
 end
@@ -1184,7 +1186,7 @@ function load_queue()
     local success = pcall(function()
         mp.commandv("playlist-clear")
     end)
-    
+
     if not success then
         show_error("Failed to clear playlist")
         return false
@@ -1314,4 +1316,3 @@ mp.register_event("start-file", function()
         end
     end
 end)
-play_next_stream()
