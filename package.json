@@ -6,7 +6,7 @@
 		"build": "tsc && vite build",
 		"build:server": "rm -rf dist && mkdir -p dist/{config/default,cli} && cp -r config/* dist/config/default/ && tsc -p tsconfig.server.json && echo '{\"type\":\"module\"}' > dist/package.json && chmod +x dist/cli/livelink.js",
 		"preview": "vite preview",
-		"server": "npm run build:server && node dist/server/api.js",
+		"server": "rm -rf logs && npm run build:server && node dist/server/api.js",
 		"dev:all": "concurrently \"npm run dev\" \"npm run tsc:watch\" \"nodemon --watch dist/server --exec node dist/server/api.js\"",
 		"dev:server": "npm run build:server && node dist/server/api.js",
 		"start": "node dist/server/api.js",

@@ -560,7 +560,109 @@ function refresh_stream()
     end
 end
 
--- Initialize playlist with better error handling
+-- Add check_watched_status function
+function check_watched_status(time)
+    if not time then return end
+    
+    local url = mp.get_property("path")
+    if not url then return end
+    
+    -- Get duration if available
+    local duration = mp.get_property_number("duration")
+    if not duration then return end
+    
+    -- Calculate watch percentage
+    local watch_percent = (time / duration) * 100
+    
+    -- Mark as watched if:
+    -- 1. Watched more than minimum time (60 seconds by default)
+    -- 2. Watched more than 80% of the video
+    if time >= MIN_WATCH_TIME or watch_percent >= 80 then
+        if not has_value(marked_streams, url) then
+            -- Send watched status to server
+            local data = utils.format_json({
+                url = url,
+                screen = get_current_screen()
+            })
+            
+            if data then
+                http_request(API.streams.watched, "POST", "Content-Type: application/json", data)
+                table.insert(marked_streams, url)
+                log_to_node("info", string.format("Marked stream as watched: %s", url))
+            end
+        end
+    end
+end
+
+-- Add error recovery function
+function handle_playback_error(error)
+    msg.error(string.format("Playback error: %s", error))
+    
+    -- Get current URL and screen
+    local url = mp.get_property("path")
+    local screen = get_current_screen()
+    
+    if not url or not screen then
+        msg.error("Cannot handle error: missing URL or screen number")
+        return
+    end
+    
+    -- Log error to server
+    log_to_node("error", string.format("Playback error for %s: %s", url, error))
+    
+    -- Remove failed stream from playlist
+    remove_current_from_playlist()
+    
+    -- Get next stream from queue
+    local response = http_request(API.streams.queue(screen), "POST", nil, utils.format_json({ screen = screen }))
+    
+    if response and response.url then
+        msg.info(string.format("Loading next stream from queue: %s", response.url))
+        mp.commandv("loadfile", response.url)
+    else
+        msg.info("No next stream available, requesting new streams")
+        -- Request new streams from server
+        local autostart_response = http_request(
+            API.streams.autostart,
+            "POST",
+            nil,
+            utils.format_json({ screen = screen })
+        )
+        
+        if not autostart_response then
+            msg.error("Failed to request new streams")
+            mp.osd_message("Failed to load next stream", 3)
+        end
+    end
+end
+
+-- Update end-file event handler
+mp.register_event("end-file", function(event)
+    if event.error then
+        handle_playback_error(event.error)
+        return
+    end
+    
+    -- Log the event with more details
+    log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
+    log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
+    
+    -- Mark current stream as watched before moving to next
+    mark_current_watched()
+    
+    -- Only handle automatic navigation if not in manual mode
+    if not manual_navigation then
+        log_to_node("info", "Auto-navigating to next stream")
+        -- Add a small delay before playing next stream
+        mp.add_timeout(STREAM_SWITCH_DELAY, function()
+            play_next_stream()
+        end)
+    else
+        log_to_node("info", "Manual navigation mode - not auto-playing next stream")
+    end
+end)
+
+-- Update initialize_playlist function
 function initialize_playlist()
     if playlist_initialized then
         return
@@ -572,19 +674,43 @@ function initialize_playlist()
         return
     end
 
-    -- Create initial playlist
-    local playlist = {
-        {
-            url = current_url,
-            title = mp.get_property("media-title") or current_url
+    -- Create initial playlist with better error handling
+    local playlist = {}
+    local playlist_count = mp.get_property_number("playlist-count") or 0
+    
+    -- If no playlist items, try to get from queue
+    if playlist_count == 0 then
+        local screen = get_current_screen()
+        if screen then
+            local response = http_request(API.streams.queue(screen), "GET")
+            if response then
+                -- Add queue items to playlist
+                for _, item in ipairs(response) do
+                    if item.url then
+                        mp.commandv("loadfile", item.url, "append")
+                    end
+                end
+                -- Update playlist count
+                playlist_count = mp.get_property_number("playlist-count") or 0
+            end
+        end
+    end
+    
+    for i = 0, playlist_count - 1 do
+        local item = {
+            filename = mp.get_property(string.format("playlist/%d/filename", i)),
+            title = mp.get_property(string.format("playlist/%d/title", i)),
+            current = (i == mp.get_property_number("playlist-pos"))
         }
-    }
+        table.insert(playlist, item)
+    end
 
     -- Send playlist update to server with proper error handling
     local success, err = pcall(function()
         local data = utils.format_json({
-            screen = script_opts.screen,
-            playlist = playlist
+            screen = get_current_screen(),
+            data = playlist,
+            type = "playlist"
         })
         
         if not data then
@@ -973,31 +1099,6 @@ mp.register_event("shutdown", function()
             
             http_request(API.streams.shutdown, "POST", nil, data)
         end
-    end
-end)
-
--- Add end-file event handler with improved logging
-mp.register_event("end-file", function(event)
-    if event.error then
-        show_error(string.format("Playback error: %s", event.error))
-    end
-    
-    -- Log the event with more details
-    log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
-    log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
-    
-    -- Mark current stream as watched before moving to next
-    mark_current_watched()
-    
-    -- Only handle automatic navigation if not in manual mode
-    if not manual_navigation then
-        log_to_node("info", "Auto-navigating to next stream")
-        -- Add a small delay before playing next stream
-        mp.add_timeout(STREAM_SWITCH_DELAY, function()
-            play_next_stream()
-        end)
-    else
-        log_to_node("info", "Manual navigation mode - not auto-playing next stream")
     end
 end)
 

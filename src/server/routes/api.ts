@@ -724,4 +724,31 @@ router.post('/api/log', async (ctx: Context) => {
   }
 });
 
+// Update playlist endpoint
+router.post('/api/streams/playlist', async (ctx: Context) => {
+  try {
+    const { screen, data } = ctx.request.body as { 
+      screen: number; 
+      data: Array<{
+        filename: string;
+        title?: string;
+        current: boolean;
+      }>;
+    };
+
+    if (!screen || !Array.isArray(data)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid playlist data' };
+      return;
+    }
+
+    // Update playlist in stream manager
+    streamManager.handlePlaylistUpdate(screen, data);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
 export const apiRouter = router; 

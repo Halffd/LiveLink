@@ -1145,6 +1145,66 @@ export class StreamManager extends EventEmitter {
       this.playerService.handleLuaMessage(screen, type, data as Record<string, unknown>);
     }
   }
+
+  public handlePlaylistUpdate(screen: number, playlist: Array<{ filename: string; title?: string; current: boolean; }>): void {
+    // Get or create stream instance
+    let stream = this.streams.get(screen);
+    
+    // If no stream exists but we have playlist data, create a new stream instance
+    if (!stream && playlist.length > 0) {
+      const currentItem = playlist.find(item => item.current);
+      if (currentItem) {
+        // Get screen configuration
+        const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+        if (!screenConfig) {
+          logger.warn(`No screen configuration found for screen ${screen}`, 'StreamManager');
+          return;
+        }
+
+        // Create new stream instance
+        stream = {
+          id: Date.now(),
+          screen,
+          url: currentItem.filename,
+          title: currentItem.title,
+          quality: screenConfig.quality || this.config.player.defaultQuality,
+          status: 'playing',
+          platform: currentItem.filename.includes('youtube.com') ? 'youtube' : 'twitch',
+          volume: screenConfig.volume || this.config.player.defaultVolume,
+          process: null // Process will be attached when available
+        };
+        this.streams.set(screen, stream);
+        logger.info(`Created new stream instance for screen ${screen}`, 'StreamManager');
+      }
+    }
+
+    if (!stream) {
+      logger.warn(`No active stream found for screen ${screen} during playlist update`, 'StreamManager');
+      return;
+    }
+
+    // Update the stream's playlist
+    stream.playlist = playlist.map(item => ({
+      id: Date.now(),
+      screen,
+      url: item.filename,
+      title: item.title,
+      quality: stream.quality,
+      status: item.current ? 'playing' : 'stopped',
+      platform: item.filename.includes('youtube.com') ? 'youtube' : 'twitch',
+      volume: stream.volume,
+      process: item.current ? stream.process : null
+    }));
+
+    // Log the update
+    logger.debug(
+      `Updated playlist for screen ${screen} with ${playlist.length} items`,
+      'StreamManager'
+    );
+
+    // Emit playlist update event
+    this.emit('playlistUpdate', screen, stream.playlist);
+  }
 }
 
 // Create singleton instance
