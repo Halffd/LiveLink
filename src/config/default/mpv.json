@@ -10,8 +10,8 @@
   "osc": "no",
   "osd-duration": 2000,
   "osd-font-size": 32,
-  "force-window": "yes",
-  "keep-open": "always",
-  "terminal": "yes",
-  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log"
+  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log",
+  "default_args": [
+    "--no-border"
+  ]
 } 

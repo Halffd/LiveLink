@@ -5,5 +5,12 @@
     "twitch_disable_ads": true,
     "twitch_low_latency": true,
     "twitch_disable_reruns": true
-  }
+  },
+  "default_args": [
+    "--twitch-disable-hosting=true",
+    "--twitch-disable-ads=true",
+    "--ringbuffer-size=128M",
+    "--player-no-close",
+    "--player-continuous-http"
+  ]
 } 

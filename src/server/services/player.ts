@@ -9,6 +9,10 @@ import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
 
+// Load static configs
+const mpvConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config', 'mpv.json'), 'utf-8'));
+const streamlinkConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config', 'streamlink.json'), 'utf-8'));
+
 export class PlayerService {
   private readonly BASE_LOG_DIR: string;
   private readonly MAX_RETRIES = 5;
@@ -456,33 +460,20 @@ export class PlayerService {
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`) : `/tmp/mpv-ipc-${options.screen}`;
     this.ipcPaths.set(options.screen, ipcPath);
 
-    return [
+    // Dynamic arguments that depend on runtime values
+    const dynamicArgs = [
       options.url,
-      '--no-terminal',
-      '--no-config',
-      '--no-input-default-bindings',
-      '--input-vo-keyboard=no',
-      '--no-osc',
-      '--no-osd-bar',
-      '--osd-duration=1000',
-      '--no-audio-display',
-      '--hwdec=auto-safe',
-      '--vo=gpu',
-      '--gpu-context=x11egl',
-      '--gpu-api=opengl',
       `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
       `--script-opts=screen=${options.screen}`,
       `--input-ipc-server=${ipcPath}`,
       `--log-file=${logFile}`,
-      '--force-window=yes',
-      '--keep-open=yes',
-      '--idle=yes',
       `--volume=${options.volume !== undefined ? options.volume : (screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume)}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-      '--no-border',
-      '--ontop',
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
+
+    // Combine static and dynamic arguments
+    return [...mpvConfig.default_args, ...dynamicArgs];
   }
 
   private getStreamlinkArgs(url: string, screen: number): string[] {
@@ -510,13 +501,9 @@ export class PlayerService {
 
     // Return streamlink arguments with proper formatting
     return [
-      '--twitch-disable-hosting',
-      '--twitch-disable-ads',
-      '--ringbuffer-size=128M',
-      '--player', this.mpvPath,
-      '--player-args', playerArgs,
-      '--player-no-close',
-      '--player-continuous-http',
+      ...streamlinkConfig.default_args,
+      `--player=${this.mpvPath}`,
+      `--player-args="${playerArgs}"`,
       url,
       'best'
     ];
