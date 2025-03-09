@@ -241,12 +241,86 @@ export class PlayerService {
     logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
     logger.debug(`Streamlink command: streamlink ${args.join(' ')}`, 'PlayerService');
 
+    // Check if there's already a process for this screen
+    const existingStream = this.streams.get(options.screen);
+    if (existingStream?.process) {
+      try {
+        existingStream.process.kill('SIGTERM');
+        await new Promise<void>((resolve) => {
+          const timeout = setTimeout(() => {
+            try {
+              existingStream.process?.kill('SIGKILL');
+            } catch {
+              // Process might already be gone
+            }
+            resolve();
+          }, this.SHUTDOWN_TIMEOUT);
+
+          existingStream.process?.once('exit', () => {
+            clearTimeout(timeout);
+            resolve();
+          });
+        });
+      } catch (error) {
+        logger.warn(
+          `Error stopping existing process on screen ${options.screen}`,
+          'PlayerService',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
+    }
+
+    // Clear any existing state
+    this.clearMonitoring(options.screen);
+    this.streams.delete(options.screen);
+
+    // Start new process
     const process = spawn('streamlink', args, {
       env,
       stdio: ['ignore', 'pipe', 'pipe']
     });
 
+    // Set up process handlers
     this.setupProcessHandlers(process, options.screen);
+
+    // Wait for streamlink to initialize
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('Streamlink startup timeout'));
+      }, this.STARTUP_TIMEOUT);
+
+      const onData = (data: Buffer) => {
+        const output = data.toString();
+        if (output.includes('Available streams:')) {
+          cleanup();
+          resolve();
+        }
+      };
+
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+
+      const onExit = (code: number | null) => {
+        cleanup();
+        if (code !== null && code !== 0) {
+          reject(new Error(`Streamlink exited with code ${code}`));
+        }
+      };
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        process.stdout?.removeListener('data', onData);
+        process.removeListener('error', onError);
+        process.removeListener('exit', onExit);
+      };
+
+      process.stdout?.on('data', onData);
+      process.on('error', onError);
+      process.on('exit', onExit);
+    });
+
     return process;
   }
 
@@ -334,8 +408,22 @@ export class PlayerService {
     // Remove stream instance
     this.streams.delete(screen);
 
+    // Don't retry or trigger next stream if manually closed
+    if (this.manuallyClosedScreens.has(screen)) {
+      logger.info(`Screen ${screen} was manually closed, not starting next stream`, 'PlayerService');
+      this.streamRetries.delete(screen); // Reset retry counter for manually closed screens
+      return;
+    }
+
     // Handle non-zero exit
-    if (code !== 0 && code !== null && !this.manuallyClosedScreens.has(screen)) {
+    if (code !== 0 && code !== null) {
+      // Handle SIGINT (130) separately - don't retry
+      if (code === 130) {
+        logger.info(`Stream on screen ${screen} was interrupted`, 'PlayerService');
+        this.streamRetries.delete(screen);
+        return;
+      }
+
       const retryCount = this.streamRetries.get(screen) || 0;
       if (retryCount < this.MAX_RETRIES) {
         const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
@@ -360,6 +448,15 @@ export class PlayerService {
           code: -1
         });
       }
+    } else {
+      // Stream ended normally or player closed, reset retry counter and trigger next stream
+      this.streamRetries.delete(screen);
+      logger.info(`Stream ended normally on screen ${screen}, triggering next stream`, 'PlayerService');
+      this.errorCallback?.({
+        screen,
+        error: 'Stream ended',
+        code: 0
+      });
     }
   }
 
@@ -483,29 +580,39 @@ export class PlayerService {
     }
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const logFile = path.join(this.BASE_LOG_DIR, 'streamlink', `streamlink-screen${screen}-${timestamp}.log`);
+    const logFile = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${timestamp}.log`);
     const homedir = process.env.HOME || process.env.USERPROFILE;
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${screen}`) : `/tmp/mpv-ipc-${screen}`;
 
     // Format MPV player arguments - only the essential ones that streamlink doesn't handle
     const playerArgs = [
       `--title=LiveLink-${screen}`,
-      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
-      `--script-opts=screen=${screen}`,
-      `--input-ipc-server=${ipcPath}`,
-      `--log-file=${logFile}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
+      `--input-ipc-server=${ipcPath}`,
+      `--log-file=${logFile}`,
+      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
+      `--script-opts=screen=${screen}`,
       screenConfig.windowMaximized ? '--window-maximized=yes' : ''
     ].filter(Boolean).join(' ');
 
+    // Convert streamlink config options to command line arguments
+    const streamlinkArgs = Object.entries(streamlinkConfig.options)
+      .map(([key, value]): string | undefined => {
+        if (typeof value === 'boolean') {
+          return value ? `--${key}` : undefined;
+        }
+        return `--${key}=${value}`;
+      })
+      .filter((arg): arg is string => arg !== undefined);
+
     // Return streamlink arguments with proper formatting
     return [
-      ...streamlinkConfig.default_args,
-      `--player=${this.mpvPath}`,
-      `--player-args="${playerArgs}"`,
       url,
-      'best'
+      'best',
+      ...streamlinkArgs,
+      `--player=${this.mpvPath}`,
+      `--player-args="${playerArgs}"`
     ];
   }
 

@@ -84,9 +84,29 @@ export class StreamManager extends EventEmitter {
 
     logger.info('Stream manager initialized', 'StreamManager');
 
+    // Handle stream end events
     this.playerService.onStreamError(async (data) => {
-      if (!this.playerService.isRetrying(data.screen) && !this.isShuttingDown) {
+      // Don't handle retrying streams or during shutdown
+      if (this.playerService.isRetrying(data.screen) || this.isShuttingDown) {
+        return;
+      }
+
+      // Check if this was a normal end (code 0) or error
+      if (data.code === 0) {
+        logger.info(`Stream ended normally on screen ${data.screen}, starting next stream`, 'StreamManager');
         await this.handleStreamEnd(data.screen);
+      } else {
+        logger.error(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
+        // For error cases, also try to start next stream after a delay
+        setTimeout(() => {
+          this.handleStreamEnd(data.screen).catch(error => {
+            logger.error(
+              `Failed to start next stream on screen ${data.screen}`,
+              'StreamManager',
+              error instanceof Error ? error : new Error(String(error))
+            );
+          });
+        }, 5000); // 5 second delay for error cases
       }
     });
 
