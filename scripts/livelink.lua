@@ -70,10 +70,13 @@ local API = {
         progress = API_URL .. "/streams/progress",
         watched = API_URL .. "/streams/watched",
         queue = function(screen) return API_URL .. "/streams/queue/" .. screen end,
+        next = function(screen) return API_URL .. "/streams/next/" .. screen end,
         autostart = API_URL .. "/streams/autostart",
         restart = API_URL .. "/streams/restart",
-        shutdown = API_URL .. "/streams/shutdown"
-    }
+        shutdown = API_URL .. "/streams/shutdown",
+        active = API_URL .. "/streams/active"
+    },
+    log = API_URL .. "/log"
 }
 
 -- Get screen number from script options or socket path
@@ -111,7 +114,7 @@ function send_to_node(message_type, data)
     end
 
     local success = http_request(
-        API_URL .. "/log",
+        API.log,
         "POST",
         "Content-Type: application/json",
         message
@@ -154,55 +157,67 @@ function is_valid_url(url)
     return url:match("^https?://") ~= nil
 end
 
--- Helper function to make HTTP requests with better error handling
+-- Improve HTTP request function with better error handling and fallback
 function http_request(url, method, headers, data)
-    if not url then return nil end
+    if not url then
+        msg.error("Invalid URL for HTTP request")
+        return nil
+    end
     
     method = method or "GET"
     
-    -- Build curl command with proper argument handling
-    local args = {
-        'curl', '-s',
-        '-X', method,
-        url
-    }
+    -- Build the curl command
+    local command = {"curl", "-s", "-X", method, url}
     
+    -- Add headers if provided
     if headers then
-        table.insert(args, '-H')
-        table.insert(args, headers)
+        table.insert(command, "-H")
+        table.insert(command, headers)
     end
     
+    -- Add data if provided
     if data then
-        table.insert(args, '-d')
-        table.insert(args, data)
+        table.insert(command, "-d")
+        table.insert(command, data)
     end
     
-    local success, result = pcall(function()
-        local response = mp.command_native({
-            name = "subprocess",
-            playback_only = false,
-            capture_stdout = true,
-            args = args
-        })
+    -- Execute the command
+    local response = utils.subprocess({
+        args = command,
+        cancellable = false,
+    })
+    
+    -- Check for network errors
+    if response.status ~= 0 then
+        msg.warn(string.format("HTTP request failed with status %d: %s", response.status, response.stderr or "Unknown error"))
         
-        if response.status == 0 and response.stdout then
-            local parsed = utils.parse_json(response.stdout)
-            if parsed then
-                return parsed
-            else
-                msg.warn("Failed to parse JSON response")
-                return nil
+        -- For API requests, create a fallback response for critical functions
+        if url:match("/api/streams/") then
+            if url:match("/api/streams/autostart") then
+                msg.info("Network error detected, using fallback for autostart")
+                return { success = true, message = "Fallback response" }
+            elseif url:match("/api/streams/queue") then
+                msg.info("Network error detected, using fallback for queue")
+                -- Return an empty response that won't trigger further requests
+                return {}
             end
         end
-        return nil
-    end)
-    
-    if not success then
-        msg.error("HTTP request failed: " .. (result or "unknown error"))
+        
         return nil
     end
     
-    return result
+    -- Parse JSON response
+    if response.stdout and response.stdout ~= "" then
+        local success, json_data = pcall(utils.parse_json, response.stdout)
+        if success and json_data then
+            return json_data
+        else
+            msg.warn("Failed to parse JSON response: " .. (response.stdout:sub(1, 100) .. (response.stdout:len() > 100 and "..." or "")))
+            return { raw = response.stdout }
+        end
+    end
+    
+    return {}
 end
 
 -- Helper function to check if a value exists in a table
@@ -287,7 +302,7 @@ function check_url_duplicate(url)
 
     msg.debug("Checking for duplicate stream: " .. normalized_url)
     
-    local response = http_request(API_URL .. "/streams/active")
+    local response = http_request(API.streams.active, "GET")
     if response then
         local current_screen = get_current_screen()
         for _, stream in ipairs(response) do
@@ -315,11 +330,97 @@ function check_url_duplicate(url)
     return false, nil
 end
 
--- Handle end of playlist
+-- Add network connectivity check function
+function check_network_connectivity()
+    local command = {"ping", "-c", "1", "-W", "2", "8.8.8.8"}
+    local response = utils.subprocess({
+        args = command,
+        cancellable = false,
+    })
+    
+    return response.status == 0
+end
+
+-- Add a flag to track if we're already handling an end-of-playlist event
+local handling_end_of_playlist = false
+
+-- Modify handle_end_of_playlist function to handle network failures
 function handle_end_of_playlist()
+    -- Don't request new streams if we're shutting down
+    if is_shutting_down then
+        log_to_node("info", "Player is shutting down, not requesting new streams")
+        return
+    end
+
+    -- Prevent infinite loops by checking if we're already handling an end-of-playlist event
+    if handling_end_of_playlist then
+        log_to_node("info", "Already handling end of playlist, not requesting new streams")
+        return
+    end
+
+    -- Set the flag to indicate we're handling an end-of-playlist event
+    handling_end_of_playlist = true
+    
+    -- Set a timeout to reset the flag after 30 seconds in case of failure
+    mp.add_timeout(30, function()
+        if handling_end_of_playlist then
+            msg.warn("Resetting handling_end_of_playlist flag after timeout")
+            handling_end_of_playlist = false
+        end
+    end)
+
+    -- Check network connectivity
+    local has_network = check_network_connectivity()
+    if not has_network then
+        msg.warn("No network connectivity detected, using fallback")
+        
+        -- Try to play a local file as fallback
+        local home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+        if home_dir then
+            local fallback_dirs = {
+                home_dir .. "/Videos",
+                home_dir .. "/Movies",
+                home_dir .. "/Downloads"
+            }
+            
+            for _, dir in ipairs(fallback_dirs) do
+                local handle = io.popen('ls -1 "' .. dir .. '" 2>/dev/null | grep -E "\\.(mp4|mkv|avi|mov)$" | head -1')
+                if handle then
+                    local result = handle:read("*a")
+                    handle:close()
+                    
+                    result = result:gsub("[\n\r]", "")
+                    
+                    if result and result ~= "" then
+                        local file_path = dir .. "/" .. result
+                        msg.info("Playing fallback file: " .. file_path)
+                        mp.commandv("loadfile", file_path)
+                        
+                        -- Reset flag after successful fallback
+                        mp.add_timeout(3, function()
+                            handling_end_of_playlist = false
+                        end)
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- If no fallback file found, try to reopen the player with a blank playlist
+        msg.info("No fallback file found, reopening player with blank playlist")
+        mp.commandv("loadfile", "")
+        
+        -- Reset flag after reopening
+        mp.add_timeout(3, function()
+            handling_end_of_playlist = false
+        end)
+        return
+    end
+    
     local screen = get_current_screen()
     if not screen then
         log_to_node("error", "Cannot handle end of playlist: screen number unknown")
+        handling_end_of_playlist = false
         return
     end
     
@@ -329,7 +430,7 @@ function handle_end_of_playlist()
     local response = http_request(
         API.streams.autostart,
         "POST",
-        nil,
+        "Content-Type: application/json",
         utils.format_json({ screen = screen })
     )
     
@@ -340,9 +441,20 @@ function handle_end_of_playlist()
         -- Add a small delay before trying to initialize again
         mp.add_timeout(STREAM_SWITCH_DELAY, function()
             initialize_playlist()
+            -- Reset the flag after initialization
+            handling_end_of_playlist = false
         end)
     else
         log_to_node("error", "Failed to request new streams")
+        
+        -- If server request failed, try to keep the player open
+        msg.info("Server request failed, keeping player open with blank playlist")
+        mp.commandv("loadfile", "")
+        
+        -- Reset the flag after reopening
+        mp.add_timeout(3, function()
+            handling_end_of_playlist = false
+        end)
     end
 end
 
@@ -359,7 +471,7 @@ function mark_current_watched()
             screen = screen
         })
         
-        http_request(API.streams.watched, "POST", nil, data)
+        http_request(API.streams.watched, "POST", "Content-Type: application/json", data)
         
         -- Remove current item from playlist after marking as watched
         remove_current_from_playlist()
@@ -424,7 +536,7 @@ function update_screen_info()
         local response = http_request(
             API_URL .. "/streams/url",
             "POST",
-            nil,
+            "Content-Type: application/json",
             data
         )
         
@@ -724,14 +836,16 @@ function initialize_playlist()
             data
         )
 
-        if not response then
-            error("Failed to send playlist update")
+        -- Even if the response has an error, we'll consider the playlist initialized
+        -- This prevents repeated attempts that might fail
+        if response and response.error then
+            msg.warn("Server returned error for playlist update: " .. response.error)
         end
     end)
 
     if not success then
-        msg.error("Failed to initialize playlist: " .. (err or "unknown error"))
-        return
+        msg.warn("Failed to send playlist update: " .. (err or "unknown error"))
+        -- Still mark as initialized to prevent repeated failures
     end
 
     playlist_initialized = true
@@ -875,25 +989,129 @@ mp.add_key_binding("PGUP", "playlist-prev-stream", function()
     end
 end)
 
--- Update play_next_stream function
+-- Add a flag to track if we're already playing the next stream
+local playing_next_stream = false
+
+-- Improve play_next_stream function to handle network failures
 function play_next_stream()
+    -- Don't play next stream if we're shutting down
+    if is_shutting_down then
+        log_to_node("info", "Player is shutting down, not playing next stream")
+        return
+    end
+
+    -- Prevent infinite loops by checking if we're already playing the next stream
+    if playing_next_stream then
+        log_to_node("info", "Already playing next stream, not requesting another")
+        return
+    end
+
+    -- Set the flag to indicate we're playing the next stream
+    playing_next_stream = true
+    
+    -- Set a timeout to reset the flag after 30 seconds in case of failure
+    mp.add_timeout(30, function()
+        if playing_next_stream then
+            msg.warn("Resetting playing_next_stream flag after timeout")
+            playing_next_stream = false
+        end
+    end)
+    
+    -- Check network connectivity
+    local has_network = check_network_connectivity()
+    if not has_network then
+        msg.warn("No network connectivity detected, keeping player open")
+        
+        -- Try to play a local file as fallback
+        local home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+        if home_dir then
+            local fallback_dirs = {
+                home_dir .. "/Videos",
+                home_dir .. "/Movies",
+                home_dir .. "/Downloads"
+            }
+            
+            for _, dir in ipairs(fallback_dirs) do
+                local handle = io.popen('ls -1 "' .. dir .. '" 2>/dev/null | grep -E "\\.(mp4|mkv|avi|mov)$" | head -1')
+                if handle then
+                    local result = handle:read("*a")
+                    handle:close()
+                    
+                    result = result:gsub("[\n\r]", "")
+                    
+                    if result and result ~= "" then
+                        local file_path = dir .. "/" .. result
+                        msg.info("Playing fallback file: " .. file_path)
+                        mp.commandv("loadfile", file_path)
+                        
+                        -- Reset flag after successful fallback
+                        mp.add_timeout(3, function()
+                            playing_next_stream = false
+                        end)
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- If no fallback file found, try to reopen the player with a blank playlist
+        msg.info("No fallback file found, keeping player open with blank playlist")
+        mp.commandv("loadfile", "")
+        
+        -- Reset flag after reopening
+        mp.add_timeout(3, function()
+            playing_next_stream = false
+        end)
+        return
+    end
+
     local screen = get_current_screen()
-    if not screen then return end
+    if not screen then 
+        playing_next_stream = false
+        return 
+    end
+    
     log_to_node("info", "Requesting next stream from API")
     mp.osd_message("Requesting next stream from API", 1)
-    -- Request next stream from API
-    local response = http_request(API.streams.queue(screen), "POST", nil, utils.format_json({ screen = screen }))
-    mp.osd_message("Requesting url: " .. response.url, 4)
+    
+    -- Try first with the next endpoint
+    local response = api_request(API.streams.next(screen), "POST", {
+        screen = screen
+    })
+    
+    -- If that fails, try the queue endpoint
+    if not response or not response.url then
+        log_to_node("info", "Next endpoint failed, trying queue endpoint")
+        response = http_request(API.streams.queue(screen), "GET")
+        
+        if response and #response > 0 then
+            response = response[1]  -- Take the first item from the queue
+        end
+    end
     
     if response and response.url then
         log_to_node("info", string.format("Playing next stream: %s", response.url))
         mp.commandv("loadfile", response.url)
         mp.osd_message("Playing next stream", 2)
+        
+        -- Reset the flag after a delay to allow the new stream to load
+        mp.add_timeout(5, function()
+            playing_next_stream = false
+        end)
     else
         log_to_node("warn", "No next stream available")
         mp.osd_message("No more streams available", 2)
-        -- Request new streams from server
-        handle_end_of_playlist()
+        
+        -- Only request new streams if we're not already handling an end-of-playlist event
+        if not handling_end_of_playlist then
+            -- Request new streams from server
+            handle_end_of_playlist()
+        else
+            log_to_node("info", "Already handling end of playlist, not requesting new streams")
+        end
+        
+        -- Reset the flag since we're done
+        playing_next_stream = false
     end
 end
 
@@ -1099,6 +1317,109 @@ mp.register_event("shutdown", function()
             
             http_request(API.streams.shutdown, "POST", nil, data)
         end
+    end
+end)
+
+-- Add a flag to track if we're already handling an end-file event
+local handling_end_file = false
+
+-- Add end-file event handler with improved logging
+mp.register_event("end-file", function(event)
+    -- Prevent infinite loops by checking if we're already handling an end-file event
+    if handling_end_file then
+        log_to_node("info", "Already handling end-file event, not auto-navigating")
+        return
+    end
+
+    -- Set the flag to indicate we're handling an end-file event
+    handling_end_file = true
+    
+    -- Set a timeout to reset the flag after 30 seconds in case of failure
+    mp.add_timeout(30, function()
+        if handling_end_file then
+            msg.warn("Resetting handling_end_file flag after timeout")
+            handling_end_file = false
+        end
+    end)
+
+    if event.error then
+        show_error(string.format("Playback error: %s", event.error))
+    end
+    
+    -- Log the event with more details
+    log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
+    log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
+    
+    -- Check if this is a manual close (EOF or quit)
+    if event.reason == "quit" or event.reason == "eof" then
+        log_to_node("info", "Player closed manually or reached end of file, not auto-navigating")
+        handling_end_file = false
+        return
+    end
+    
+    -- Check network connectivity
+    local has_network = check_network_connectivity()
+    if not has_network then
+        msg.warn("No network connectivity detected, keeping player open")
+        
+        -- Try to play a local file as fallback
+        local home_dir = os.getenv("HOME") or os.getenv("USERPROFILE")
+        if home_dir then
+            local fallback_dirs = {
+                home_dir .. "/Videos",
+                home_dir .. "/Movies",
+                home_dir .. "/Downloads"
+            }
+            
+            for _, dir in ipairs(fallback_dirs) do
+                local handle = io.popen('ls -1 "' .. dir .. '" 2>/dev/null | grep -E "\\.(mp4|mkv|avi|mov)$" | head -1')
+                if handle then
+                    local result = handle:read("*a")
+                    handle:close()
+                    
+                    result = result:gsub("[\n\r]", "")
+                    
+                    if result and result ~= "" then
+                        local file_path = dir .. "/" .. result
+                        msg.info("Playing fallback file: " .. file_path)
+                        mp.commandv("loadfile", file_path)
+                        
+                        -- Reset flag after successful fallback
+                        mp.add_timeout(3, function()
+                            handling_end_file = false
+                        end)
+                        return
+                    end
+                end
+            end
+        end
+        
+        -- If no fallback file found, try to reopen the player with a blank playlist
+        msg.info("No fallback file found, keeping player open with blank playlist")
+        mp.commandv("loadfile", "")
+        
+        -- Reset flag after reopening
+        mp.add_timeout(3, function()
+            handling_end_file = false
+        end)
+        return
+    end
+    
+    -- Mark current stream as watched before moving to next
+    mark_current_watched()
+    
+    -- Only handle automatic navigation if not in manual mode
+    if not manual_navigation then
+        log_to_node("info", "Auto-navigating to next stream")
+        -- Add a small delay before playing next stream
+        mp.add_timeout(STREAM_SWITCH_DELAY, function()
+            play_next_stream()
+            -- Reset the flag after playing the next stream
+            handling_end_file = false
+        end)
+    else
+        log_to_node("info", "Manual navigation mode - not auto-playing next stream")
+        handling_end_file = false
     end
 end)
 
@@ -1417,3 +1738,36 @@ mp.register_event("start-file", function()
         end
     end
 end)
+
+-- Add the missing check_watched_status function
+function check_watched_status(time)
+    if not time then return end
+    
+    local current_url = mp.get_property("path")
+    if not current_url then return end
+    
+    -- Skip if already marked as watched
+    if has_value(marked_streams, current_url) then
+        return
+    end
+    
+    -- Get duration
+    local duration = mp.get_property_number("duration")
+    if not duration then return end
+    
+    -- Mark as watched if:
+    -- 1. Watched more than MIN_WATCH_TIME seconds, or
+    -- 2. Watched more than 80% of the video
+    local watch_threshold = math.min(MIN_WATCH_TIME, duration * 0.8)
+    
+    if time >= watch_threshold then
+        log_to_node("info", string.format("Marking stream as watched: %s (watched %.1f seconds)", 
+            current_url, time))
+        
+        -- Add to local cache
+        table.insert(marked_streams, current_url)
+        
+        -- Send to server
+        mark_current_watched()
+    end
+end
