@@ -557,6 +557,14 @@ export class PlayerService {
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`) : `/tmp/mpv-ipc-${options.screen}`;
     this.ipcPaths.set(options.screen, ipcPath);
 
+    // Convert mpvConfig object to arguments array
+    const staticArgs = Object.entries(mpvConfig).map(([key, value]) => {
+      if (typeof value === 'boolean') {
+        return value ? `--${key}` : undefined;
+      }
+      return `--${key}=${value}`;
+    }).filter((arg): arg is string => arg !== undefined);
+
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
       options.url,
@@ -570,7 +578,7 @@ export class PlayerService {
     ];
 
     // Combine static and dynamic arguments
-    return [...mpvConfig.default_args, ...dynamicArgs];
+    return [...staticArgs, ...dynamicArgs];
   }
 
   private getStreamlinkArgs(url: string, screen: number): string[] {
