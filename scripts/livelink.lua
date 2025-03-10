@@ -1342,16 +1342,12 @@ mp.register_event("end-file", function(event)
         end
     end)
 
-    if event.error then
-        show_error(string.format("Playback error: %s", event.error))
-    end
-    
     -- Log the event with more details
     log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
     log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
     
-    -- Check if this is a manual close (EOF or quit)
-    if event.reason == "quit" or event.reason == "eof" then
+    -- Check if this is a manual close (EOF, quit, or error code 4)
+    if event.reason == "quit" or event.reason == "eof" or (event.error and event.error:match("code 4")) then
         log_to_node("info", "Player closed manually or reached end of file, not auto-navigating")
         handling_end_file = false
         return

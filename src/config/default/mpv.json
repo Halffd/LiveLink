@@ -6,16 +6,5 @@
   "input-default-bindings": "no",
   "input-vo-keyboard": "yes",
   "input-ipc-server": "${HOME}/.livelink/mpv-ipc-${SCREEN}",
-  "msg-level": "all=debug",
-  "osc": "no",
-  "osd-duration": 2000,
-  "osd-font-size": 32,
-  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log",
-  "cache": "yes",
-  "cache-secs": 30,
-  "demuxer-max-bytes": "123400KiB",
-  "demuxer-readahead-secs": 30,
-  "force-seekable": "yes",
-  "keep-open": "yes",
-  "reset-on-next-file": "all"
+  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log"
 } 
