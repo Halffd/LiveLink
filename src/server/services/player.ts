@@ -313,7 +313,7 @@ export class PlayerService {
         clearTimeout(timeout);
         process.stdout?.removeListener('data', onData);
         process.removeListener('error', onError);
-        process.removeListener('exit', onExit);
+        process.on('exit', onExit);
       };
 
       process.stdout?.on('data', onData);
@@ -592,7 +592,7 @@ export class PlayerService {
     const homedir = process.env.HOME || process.env.USERPROFILE;
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${screen}`) : `/tmp/mpv-ipc-${screen}`;
 
-    // Format MPV player arguments - only the essential ones that streamlink doesn't handle
+    // Format MPV player arguments with proper screen geometry
     const playerArgs = [
       `--title=LiveLink-${screen}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
