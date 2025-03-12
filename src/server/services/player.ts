@@ -203,32 +203,6 @@ export class PlayerService {
       // Setup monitoring
       this.setupStreamMonitoring(screen, process, options);
 
-      // Run the window positioning script after a short delay
-      setTimeout(() => {
-        try {
-          // Use the correct path with our custom __dirname variable
-          const scriptPath = path.resolve(__dirname, '../../../scripts', 'position_windows.sh');
-          exec(scriptPath, (error, stdout, stderr) => {
-            if (error) {
-              logger.error(`Failed to run window positioning script: ${error.message}`, 'PlayerService');
-                return;
-              }
-            if (stdout) {
-              logger.debug(`Window positioning script output: ${stdout}`, 'PlayerService');
-            }
-            if (stderr) {
-              logger.warn(`Window positioning script error: ${stderr}`, 'PlayerService');
-            }
-          });
-              } catch (error) {
-                  logger.error(
-            'Failed to run window positioning script',
-                    'PlayerService',
-                    error instanceof Error ? error : new Error(String(error))
-                  );
-                }
-      }, 3000); // Wait 3 seconds for the window to fully initialize
-
       return {
         screen,
         message: `Stream started on screen ${screen}`,
@@ -257,7 +231,10 @@ export class PlayerService {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     env.SCREEN = options.screen.toString();
     env.DATE = timestamp;
-    env.TITLE = `LiveLink-${options.screen}`;
+    const streamTitle = options.title || 'Unknown Title';
+    const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
+    const startTime = options.startTime ? new Date(options.startTime).toLocaleTimeString() : 'Unknown time';
+    env.TITLE = `${streamTitle} - ${viewerCount} - ${startTime} - Screen ${options.screen}`;
     env.STREAM_URL = options.url;
 
     logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
@@ -616,7 +593,7 @@ export class PlayerService {
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--screen=${x11Screen}`,
       `--fs-screen=${x11Screen}`,
-      `--title=LiveLink-${options.screen}`,
+      `--title=${options.title || 'Unknown Title'} - ${options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers'} - ${options.startTime ? new Date(options.startTime).toLocaleTimeString() : 'Unknown time'} - Screen ${options.screen}`,
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
 
@@ -654,10 +631,6 @@ export class PlayerService {
       // IPC and logging
       `--input-ipc-server=${ipcPath}`,
       `--log-file=${logFile}`,
-      
-      // Scripts and options
-      `--script=${path.resolve(__dirname, '../../../scripts', 'livelink.lua')}`,
-      `--script-opts=screen=${screen}`
     ].filter(Boolean);
 
     // Convert streamlink config options to command line arguments

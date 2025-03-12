@@ -805,10 +805,14 @@ function initialize_playlist()
         end
     end
     
+    local player_title = mp.get_property("media-title") or "Unknown Title"
+    local viewers = mp.get_property_number("metadata/by-key/viewers") or 0
+    local time = os.date("%Y-%m-%d %H:%M:%S")
+
     for i = 0, playlist_count - 1 do
         local item = {
             filename = mp.get_property(string.format("playlist/%d/filename", i)),
-            title = mp.get_property(string.format("playlist/%d/title", i)),
+            title = string.format("%s | %s | %d viewers | %s | Screen %d", player_title, mp.get_property(string.format("playlist/%d/title", i)) or "No Title", viewers, time, get_current_screen()),
             current = (i == mp.get_property_number("playlist-pos"))
         }
         table.insert(playlist, item)
@@ -942,6 +946,15 @@ function init()
     end)
     
     msg.info(string.format("Successfully initialized screen number: %d", script_opts.screen))
+
+    -- Display player information on startup
+    local player_title = mp.get_property("media-title") or "Unknown Title"
+    local viewers = mp.get_property_number("metadata/by-key/viewers") or 0
+    local time = os.date("%Y-%m-%d %H:%M:%S")
+    local screen = script_opts.screen
+    local startup_info = string.format("Player: %s | Viewers: %d | Time: %s | Screen: %d", player_title, viewers, time, screen)
+    msg.info("Startup Info: " .. startup_info)
+    mp.osd_message(startup_info, 5)
 end
 
 -- Register script message handlers

@@ -200,6 +200,12 @@ export interface StreamOptions {
   windowMaximized?: boolean;
   /** Additional player arguments */
   playerArgs?: string[];
+  /** Title of the stream */
+  title?: string;
+  /** Current viewer count */
+  viewerCount?: number;
+  /** Start time of the stream */
+  startTime?: string | number;
 }
 
 /**
