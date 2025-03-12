@@ -3,8 +3,6 @@
   "gpu-context": "x11egl",
   "gpu-api": "opengl",
   "hwdec": "auto-safe",
-  "input-default-bindings": "no",
-  "input-vo-keyboard": "yes",
   "input-ipc-server": "${HOME}/.livelink/mpv-ipc-${SCREEN}",
   "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log"
 } 

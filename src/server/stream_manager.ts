@@ -176,19 +176,15 @@ export class StreamManager extends EventEmitter {
   }
 
   private async handleStreamEnd(screen: number): Promise<void> {
-    logger.info(`Stream on screen ${screen} ended, finding next stream...`);
-    
-    // Add a small delay to prevent rapid restarts
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Try to get next stream from current queue
-    const nextStream = queueService.getNextStream(screen);
-    if (nextStream) {
-      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-      if (!screenConfig) {
-        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
-        return;
+    try {
+      // Get next stream from queue
+      const nextStream = queueService.getNextStream(screen);
+      if (!nextStream) {
+        logger.info(`No next stream in queue for screen ${screen}, fetching new streams`, 'StreamManager');
+        return this.handleEmptyQueue(screen);
       }
+
+      logger.info(`Next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
 
       // Check if this stream is already playing on a higher priority screen
       const activeStreams = this.getActiveStreams();
@@ -196,7 +192,9 @@ export class StreamManager extends EventEmitter {
         s.url === nextStream.url && s.screen < screen
       );
 
-      if (isStreamActive) {
+      // Always play favorite streams, even if they're playing on another screen
+      const isFavorite = nextStream.priority !== undefined && nextStream.priority < 900;
+      if (isStreamActive && !isFavorite) {
         logger.info(
           `Stream ${nextStream.url} is already playing on a higher priority screen, skipping`,
           'StreamManager'
@@ -206,63 +204,51 @@ export class StreamManager extends EventEmitter {
         return this.handleStreamEnd(screen);
       }
 
-      logger.info(`Starting next stream from queue: ${nextStream.url} on screen ${screen}`, 'StreamManager');
-      
-      // Remove the stream from the queue before starting it
-      queueService.removeFromQueue(screen, 0);
-      
+      // Get screen configuration
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      if (!screenConfig) {
+        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        return;
+      }
+
       // Start the stream
+      logger.info(`Starting stream ${nextStream.url} on screen ${screen}`, 'StreamManager');
       await this.startStream({
         url: nextStream.url,
-        screen: screen,
+        screen,
         quality: screenConfig.quality || this.config.player.defaultQuality,
         windowMaximized: screenConfig.windowMaximized,
         volume: screenConfig.volume
       });
-      
-      // Mark the stream as watched
-      queueService.markStreamAsWatched(nextStream.url);
-      
-      return;
-    }
 
-    // If no next stream, try to fetch new streams
-    await this.handleEmptyQueue(screen);
+      // Mark as watched and remove from queue
+      queueService.markStreamAsWatched(nextStream.url);
+      queueService.removeFromQueue(screen, 0);
+    } catch (error) {
+      logger.error(
+        `Failed to handle stream end for screen ${screen}`,
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      // Try to handle empty queue as a fallback
+      return this.handleEmptyQueue(screen);
+    }
   }
 
   private async handleEmptyQueue(screen: number) {
     try {
-      // Validate screen number
+      // Get screen configuration
       const screenConfig = this.config.player.screens.find(s => s.screen === screen);
       if (!screenConfig) {
-        logger.error(`Invalid screen number: ${screen}. Available screens: ${this.config.player.screens.map(s => s.screen).join(', ')}`, 'StreamManager');
+        logger.warn(`Invalid screen number: ${screen}`, 'StreamManager');
         return;
       }
 
-      // Find the stream configuration for this screen
-      const streamConfig = this.config.streams.find(s => s.screen === screen);
-      if (!streamConfig) {
-        logger.error(`No stream configuration found for screen ${screen}`, 'StreamManager');
-        return;
-      }
-
-      if (!streamConfig.enabled) {
-        logger.warn(`Stream configuration for screen ${screen} is disabled`, 'StreamManager');
-        return;
-      }
-
-      logger.info(`Handling empty queue for screen ${screen}`, 'StreamManager');
-
-      // Add a small delay to prevent rapid fetching
-      await new Promise(resolve => setTimeout(resolve, 5000));
-    
-      logger.info(`Attempting to fetch new streams for screen ${screen}`, 'StreamManager');
+      // Get all streams
+      const allStreams = await this.getLiveStreams();
       
-      // Get new streams
-      const streams = await this.getLiveStreams();
-      logger.info(`Fetched ${streams.length} total streams`, 'StreamManager');
-      
-      const availableStreams = streams.filter(stream => {
+      // Filter streams for this screen
+      const availableStreams = allStreams.filter(stream => {
         // Filter streams for this screen
         if (stream.screen !== screen) {
           logger.debug(`Stream ${stream.url} is assigned to screen ${stream.screen}, not ${screen}`, 'StreamManager');
@@ -289,16 +275,39 @@ export class StreamManager extends EventEmitter {
       logger.info(`Found ${availableStreams.length} streams for screen ${screen}`, 'StreamManager');
 
       if (availableStreams.length > 0) {
-        // Sort by priority
-        availableStreams.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+        // Sort by priority - already done in getLiveStreams, but ensure it's maintained
+        const sortedStreams = [...availableStreams].sort((a, b) => {
+          // First by priority
+          const priorityDiff = (a.priority || 999) - (b.priority || 999);
+          if (priorityDiff !== 0) return priorityDiff;
+          
+          // Then by viewer count
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
+        });
         
-        // Filter unwatched streams
-        const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
+        // First, get all favorite streams (they have higher priority < 900)
+        const favoriteStreams = sortedStreams.filter(stream => 
+          stream.priority !== undefined && stream.priority < 900
+        );
         
-        logger.info(`Found ${unwatchedStreams.length} unwatched streams for screen ${screen}`, 'StreamManager');
+        // Then get unwatched non-favorite streams
+        const unwatchedNonFavorites = sortedStreams.filter(stream => {
+          // Skip favorites as they're already included
+          if (stream.priority !== undefined && stream.priority < 900) {
+            return false;
+          }
+          // Filter out watched streams
+          return !queueService.isStreamWatched(stream.url);
+        });
         
-        if (unwatchedStreams.length > 0) {
-          const [firstStream, ...remainingStreams] = unwatchedStreams;
+        // Combine favorites and unwatched non-favorites
+        const combinedStreams = [...favoriteStreams, ...unwatchedNonFavorites];
+        
+        logger.info(`Found ${favoriteStreams.length} favorite streams and ${unwatchedNonFavorites.length} unwatched non-favorite streams for screen ${screen}`, 'StreamManager');
+        logger.info(`Combined ${combinedStreams.length} total streams for screen ${screen}`, 'StreamManager');
+        
+        if (combinedStreams.length > 0) {
+          const [firstStream, ...remainingStreams] = combinedStreams;
           
           logger.info(`Starting stream ${firstStream.url} on screen ${screen}`, 'StreamManager');
           
@@ -539,6 +548,13 @@ export class StreamManager extends EventEmitter {
                   String(streams.length),
                   String(screenNumber)
                 );
+                
+                // For favorites, assign a higher priority based on source priority
+                // This ensures favorites are always prioritized over other sources
+                const basePriority = source.priority || 999;
+                streams.forEach(s => {
+                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
+                });
               } else if (source.subtype === 'organization' && source.name) {
                 streams = await this.holodexService.getLiveStreams({
                   organization: source.name,
@@ -546,33 +562,18 @@ export class StreamManager extends EventEmitter {
                   sort: 'start_scheduled'  // Sort by scheduled start time
                 });
               }
-
-              // Additional sorting for Holodex streams
-              streams.sort((a, b) => {
-                // First by live status (live streams first)
-                if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
-                if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
-                
-                // Then by viewer count for live streams
-                if (a.sourceStatus === 'live' && b.sourceStatus === 'live') {
-                  return (b.viewerCount || 0) - (a.viewerCount || 0);
-                }
-                
-                // Then by scheduled start time
-                const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
-                const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
-                return aTime - bTime;
-              });
-
             } else if (source.type === 'twitch') {
               if (source.subtype === 'favorites') {
                 streams = await this.twitchService.getStreams({
                   channels: this.favoriteChannels.twitch,
-                  limit,
-                  sort: 'viewers'  // Sort by viewer count
+                  limit
                 });
-                // Ensure favorites are always at the top
-                streams.forEach(s => s.priority = (source.priority || 999) - 1);
+                
+                // For favorites, assign a higher priority based on source priority
+                const basePriority = source.priority || 999;
+                streams.forEach(s => {
+                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
+                });
               } else if (source.tags?.includes('vtuber')) {
                 streams = await this.twitchService.getVTuberStreams(limit);
                 // Sort VTuber streams by viewer count
@@ -584,6 +585,12 @@ export class StreamManager extends EventEmitter {
                   channels: this.favoriteChannels.youtube,
                   limit
                 });
+                
+                // For favorites, assign a higher priority based on source priority
+                const basePriority = source.priority || 999;
+                streams.forEach(s => {
+                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
+                });
               }
             }
 
@@ -592,7 +599,8 @@ export class StreamManager extends EventEmitter {
               ...stream,
               screen: screenNumber,
               sourceName: `${source.type}:${source.subtype || 'other'}`,
-              priority: stream.priority || source.priority || 999
+              // Only set priority if not already set (favorites already have priority)
+              priority: stream.priority !== undefined ? stream.priority : source.priority || 999
             }));
 
             results.push(...streamsWithMetadata);
@@ -609,11 +617,15 @@ export class StreamManager extends EventEmitter {
 
       // Final sorting of all streams
       results.sort((a, b) => {
-        // First by priority
+        // First by priority (lower number = higher priority)
         const priorityDiff = (a.priority || 999) - (b.priority || 999);
         if (priorityDiff !== 0) return priorityDiff;
 
-        // Then by viewer count
+        // For streams with same priority, sort by live status
+        if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
+        if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
+
+        // For streams with same priority and live status, sort by viewer count
         return (b.viewerCount || 0) - (a.viewerCount || 0);
       });
 

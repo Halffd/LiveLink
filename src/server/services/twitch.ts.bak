@@ -3,6 +3,8 @@ import { RefreshingAuthProvider } from '@twurple/auth';
 import type { TwitchAuth } from '../db/database.js';
 import type { StreamSource, StreamService } from '../../types/stream.js';
 import { logger } from './logger.js';
+import { db } from '../db/database.js';
+import { env } from '../../config/env.js';
 
 interface GetTwitchStreamsOptions {
   channels?: string[];
@@ -10,6 +12,13 @@ interface GetTwitchStreamsOptions {
   sort?: 'viewers' | 'started_at';
   tags?: string[];
   language?: string;
+}
+
+interface GetStreamsOptions {
+  limit?: number;
+  tags?: string[];
+  language?: string;
+  channels?: string[];
 }
 
 export class TwitchService implements StreamService {
@@ -45,89 +54,45 @@ export class TwitchService implements StreamService {
     try {
       const limit = options.limit || 25;
       const channels = options.channels || [];
-      let results: StreamSource[] = [];
       
-      // If we have more than 100 channels, we need to batch the requests
-      if (channels.length > 100) {
-        logger.info(`Batching ${channels.length} channels into multiple requests (max 100 per request)`, 'TwitchService');
-        
-        // Process channels in batches of 100
-        for (let i = 0; i < channels.length; i += 100) {
-          const batchChannels = channels.slice(i, i + 100);
-          logger.debug(`Processing batch ${Math.floor(i/100) + 1} with ${batchChannels.length} channels`, 'TwitchService');
-          
-          const batchStreams = await this.client.streams.getStreams({
-            userName: batchChannels,
-            language: options.language
-          });
-          
-          // Convert to StreamSource format and add to results
-          const batchResults = batchStreams.data.map(stream => ({
-            url: `https://twitch.tv/${stream.userName}`,
-            title: stream.title,
-            platform: 'twitch' as const,
-            viewerCount: stream.viewers,
-            startTime: stream.startDate.getTime(),
-            sourceStatus: 'live' as const,
-            channelId: stream.userName.toLowerCase() // Add channelId for sorting
-          }));
-          
-          results = [...results, ...batchResults];
-          
-          // If we've reached the desired limit, stop processing batches
-          if (limit && results.length >= limit) {
-            results = results.slice(0, limit);
-            break;
-          }
-        }
-      } else {
-        // Original logic for <= 100 channels
-        const streams = await this.client.streams.getStreams({
-          limit,
-          userName: channels,
-          language: options.language
-        });
+      const streams = await this.client.streams.getStreams({
+        limit,
+        userName: channels,
+        language: options.language
+      });
 
-        // Convert to StreamSource format
-        results = streams.data.map(stream => ({
-          url: `https://twitch.tv/${stream.userName}`,
-          title: stream.title,
-          platform: 'twitch' as const,
-          viewerCount: stream.viewers,
-          startTime: stream.startDate.getTime(),
-          sourceStatus: 'live' as const,
-          channelId: stream.userName.toLowerCase() // Add channelId for sorting
-        }));
-      }
+      // Convert to StreamSource format
+      const results = streams.data.map(stream => ({
+        url: `https://twitch.tv/${stream.userName}`,
+        title: stream.title,
+        platform: 'twitch' as const,
+        viewerCount: stream.viewers,
+        startTime: stream.startDate.getTime(),
+        sourceStatus: 'live' as const,
+        channelId: stream.userId,
+        channelName: stream.userName
+      }));
 
       // If these are favorite channels, preserve their original order
       if (channels && channels.length > 0) {
-        // Create a map of channel IDs to their original position in the favorites array
+        // Create a map of channel names to their original position in the favorites array
         const channelOrderMap = new Map<string, number>();
-        channels.forEach((channelId, index) => {
-          channelOrderMap.set(channelId.toLowerCase(), index);
+        channels.forEach((channelName, index) => {
+          channelOrderMap.set(channelName.toLowerCase(), index);
         });
         
         // Sort streams by their channel's position in the favorites array
         results.sort((a, b) => {
-          const aOrder = a.channelId ? channelOrderMap.get(a.channelId) ?? 999 : 999;
-          const bOrder = b.channelId ? channelOrderMap.get(b.channelId) ?? 999 : 999;
-          
-          // First sort by channel order (favorites order)
-          if (aOrder !== bOrder) {
-            return aOrder - bOrder;
-          }
-          
-          // Then by viewer count for streams from the same channel
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          const aOrder = a.channelName ? channelOrderMap.get(a.channelName.toLowerCase()) ?? 999 : 999;
+          const bOrder = b.channelName ? channelOrderMap.get(b.channelName.toLowerCase()) ?? 999 : 999;
+          return aOrder - bOrder;
         });
-      }
-      // Sort by viewers if requested (for non-favorite channels)
+      } 
+      // Sort by viewers if requested (only for non-favorite streams)
       else if (options.sort === 'viewers') {
         results.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
       }
 
-      logger.info(`Found ${results.length} Twitch streams`, 'TwitchService');
       return results;
     } catch (error) {
       logger.error(

@@ -8,10 +8,15 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+// Get the directory name equivalent to __dirname in CommonJS
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Load static configs
-const mpvConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config', 'mpv.json'), 'utf-8'));
-const streamlinkConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config', 'streamlink.json'), 'utf-8'));
+const mpvConfig = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../config', 'mpv.json'), 'utf-8'));
+const streamlinkConfig = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../config', 'streamlink.json'), 'utf-8'));
 
 export class PlayerService {
   private readonly BASE_LOG_DIR: string;
@@ -50,25 +55,25 @@ export class PlayerService {
   private initializeDirectories(): void {
     try {
       // Create log directories
-      const logDirs = ['mpv', 'streamlink'].map(dir => path.join(this.BASE_LOG_DIR, dir));
-      logDirs.forEach(dir => {
-        if (!fs.existsSync(dir)) {
-          fs.mkdirSync(dir, { recursive: true });
-        }
-      });
+    const logDirs = ['mpv', 'streamlink'].map(dir => path.join(this.BASE_LOG_DIR, dir));
+    logDirs.forEach(dir => {
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    });
 
       // Create .livelink directory
-      const homedir = process.env.HOME || process.env.USERPROFILE;
-      if (homedir) {
-        const livelinkDir = path.join(homedir, '.livelink');
-        if (!fs.existsSync(livelinkDir)) {
-          fs.mkdirSync(livelinkDir, { recursive: true });
-        }
+    const homedir = process.env.HOME || process.env.USERPROFILE;
+    if (homedir) {
+      const livelinkDir = path.join(homedir, '.livelink');
+      if (!fs.existsSync(livelinkDir)) {
+        fs.mkdirSync(livelinkDir, { recursive: true });
       }
+    }
 
       // Clean old logs
-      this.clearOldLogs(path.join(this.BASE_LOG_DIR, 'mpv'));
-      this.clearOldLogs(path.join(this.BASE_LOG_DIR, 'streamlink'));
+    this.clearOldLogs(path.join(this.BASE_LOG_DIR, 'mpv'));
+    this.clearOldLogs(path.join(this.BASE_LOG_DIR, 'streamlink'));
     } catch (err) {
       logger.error('Failed to initialize directories', 'PlayerService', err instanceof Error ? err : new Error(String(err)));
     }
@@ -76,26 +81,26 @@ export class PlayerService {
 
   private clearOldLogs(directory: string): void {
     try {
-      if (!fs.existsSync(directory)) return;
-
+        if (!fs.existsSync(directory)) return;
+      
       const files = fs.readdirSync(directory);
       const now = Date.now();
       const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days
-
+      
       for (const file of files) {
-        if (!file.endsWith('.log')) continue;
-
+            if (!file.endsWith('.log')) continue;
+            
         const filePath = path.join(directory, file);
-        const stats = fs.statSync(filePath);
-        const age = now - stats.mtime.getTime();
+          const stats = fs.statSync(filePath);
+            const age = now - stats.mtime.getTime();
 
-        if (age > maxAge) {
-          fs.unlinkSync(filePath);
-          logger.debug(`Deleted old log file: ${filePath}`, 'PlayerService');
+            if (age > maxAge) {
+            fs.unlinkSync(filePath);
+            logger.debug(`Deleted old log file: ${filePath}`, 'PlayerService');
+          }
         }
-      }
     } catch (error) {
-      logger.error(`Failed to clean old logs in ${directory}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
+        logger.error(`Failed to clean old logs in ${directory}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -121,16 +126,16 @@ export class PlayerService {
 
   async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
     const { screen } = options;
-
+    
     // Check maximum streams limit
     const activeStreams = Array.from(this.streams.values()).filter(s => s.process !== null);
     if (activeStreams.length >= this.config.player.maxStreams) {
-      return {
-        screen,
-        message: `Maximum number of streams (${this.config.player.maxStreams}) reached`,
-        error: `Maximum number of streams (${this.config.player.maxStreams}) reached`,
-        success: false
-      };
+        return {
+            screen,
+            message: `Maximum number of streams (${this.config.player.maxStreams}) reached`,
+            error: `Maximum number of streams (${this.config.player.maxStreams}) reached`,
+            success: false
+        };
     }
 
     // Check startup lock
@@ -151,10 +156,10 @@ export class PlayerService {
     try {
       // Stop existing stream if any
       await this.stopStream(screen);
-
-      // Get screen configuration
-      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-      if (!screenConfig) {
+    
+    // Get screen configuration
+    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+    if (!screenConfig) {
         throw new Error(`Invalid screen number: ${screen}`);
       }
 
@@ -164,13 +169,13 @@ export class PlayerService {
       }
 
       // Don't start during shutdown
-      if (this.isShuttingDown) {
+    if (this.isShuttingDown) {
         throw new Error('Server is shutting down');
       }
 
       // Clear manually closed flag
       this.manuallyClosedScreens.delete(screen);
-
+      
       // Determine player type
       const useStreamlink = screenConfig.playerType === 'streamlink' || 
         (!screenConfig.playerType && this.config.player.preferStreamlink);
@@ -182,14 +187,14 @@ export class PlayerService {
 
       // Create stream instance
       const instance: StreamInstance = {
-        id: Date.now(),
+            id: Date.now(),
         screen,
-        url: options.url,
-        quality: options.quality || 'best',
-        status: 'playing',
+            url: options.url,
+            quality: options.quality || 'best',
+            status: 'playing',
         volume: options.volume || screenConfig.volume || this.config.player.defaultVolume,
         process,
-        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
+            platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
       };
 
       // Store stream instance
@@ -197,6 +202,32 @@ export class PlayerService {
 
       // Setup monitoring
       this.setupStreamMonitoring(screen, process, options);
+
+      // Run the window positioning script after a short delay
+      setTimeout(() => {
+        try {
+          // Use the correct path with our custom __dirname variable
+          const scriptPath = path.resolve(__dirname, '../../../scripts', 'position_windows.sh');
+          exec(scriptPath, (error, stdout, stderr) => {
+            if (error) {
+              logger.error(`Failed to run window positioning script: ${error.message}`, 'PlayerService');
+                return;
+              }
+            if (stdout) {
+              logger.debug(`Window positioning script output: ${stdout}`, 'PlayerService');
+            }
+            if (stderr) {
+              logger.warn(`Window positioning script error: ${stderr}`, 'PlayerService');
+            }
+          });
+              } catch (error) {
+                  logger.error(
+            'Failed to run window positioning script',
+                    'PlayerService',
+                    error instanceof Error ? error : new Error(String(error))
+                  );
+                }
+      }, 3000); // Wait 3 seconds for the window to fully initialize
 
       return {
         screen,
@@ -206,7 +237,7 @@ export class PlayerService {
 
     } catch (error) {
       logger.error(`Failed to start stream on screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
-      return {
+        return {
         screen,
         message: error instanceof Error ? error.message : String(error),
         success: false
@@ -221,6 +252,13 @@ export class PlayerService {
   private async startMpvProcess(options: StreamOptions & { screen: number }): Promise<ChildProcess> {
     const args = this.getMpvArgs(options);
     const env = this.getProcessEnv();
+
+    // Add screen-specific environment variables
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    env.SCREEN = options.screen.toString();
+    env.DATE = timestamp;
+    env.TITLE = `LiveLink-${options.screen}`;
+    env.STREAM_URL = options.url;
 
     logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
     logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
@@ -246,21 +284,21 @@ export class PlayerService {
     if (existingStream?.process) {
       try {
         existingStream.process.kill('SIGTERM');
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
-            try {
+                await new Promise<void>((resolve) => {
+                    const timeout = setTimeout(() => {
+                        try {
               existingStream.process?.kill('SIGKILL');
-            } catch {
-              // Process might already be gone
-            }
-            resolve();
+                        } catch {
+                            // Process might already be gone
+                        }
+                        resolve();
           }, this.SHUTDOWN_TIMEOUT);
 
           existingStream.process?.once('exit', () => {
-            clearTimeout(timeout);
-            resolve();
-          });
-        });
+                        clearTimeout(timeout);
+                        resolve();
+                    });
+                });
       } catch (error) {
         logger.warn(
           `Error stopping existing process on screen ${options.screen}`,
@@ -432,8 +470,8 @@ export class PlayerService {
         logger.info(`Stream crashed on screen ${screen}, retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s`, 'PlayerService');
         
         setTimeout(() => {
-          const stream = this.streams.get(screen);
-          if (stream) {
+      const stream = this.streams.get(screen);
+      if (stream) {
             this.restartStream(screen, stream).catch(error => {
               logger.error(`Failed to restart stream on screen ${screen}`, 'PlayerService', error);
             });
@@ -450,10 +488,10 @@ export class PlayerService {
       }
     } else {
       // Stream ended normally or player closed, reset retry counter and trigger next stream
-      this.streamRetries.delete(screen);
+    this.streamRetries.delete(screen);
       logger.info(`Stream ended normally on screen ${screen}, triggering next stream`, 'PlayerService');
       this.errorCallback?.({
-        screen,
+              screen,
         error: 'Stream ended',
         code: 0
       });
@@ -518,7 +556,7 @@ export class PlayerService {
               }, this.SHUTDOWN_TIMEOUT);
             })
           ]);
-        } catch (error) {
+    } catch (error) {
           logger.warn(`Error stopping process on screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
         }
       }
@@ -532,17 +570,17 @@ export class PlayerService {
       if (ipcPath && fs.existsSync(ipcPath)) {
         try {
           fs.unlinkSync(ipcPath);
-        } catch (error) {
+      } catch (error) {
           logger.warn(`Failed to remove IPC socket for screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
         }
       }
       this.ipcPaths.delete(screen);
 
-      return true;
-    } catch (error) {
+        return true;
+      } catch (error) {
       logger.error(`Failed to stop stream on screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
-      return false;
-    }
+        return false;
+      }
   }
 
   private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
@@ -565,15 +603,20 @@ export class PlayerService {
       return `--${key}=${value}`;
     }).filter((arg): arg is string => arg !== undefined);
 
+    // Determine which X11 screen to use (0 for primary, 1 for secondary, etc.)
+    // This is based on the screen configuration - screen 1 is typically primary
+    const x11Screen = screenConfig.primary ? 0 : 1;
+
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
       options.url,
-      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
-      `--script-opts=screen=${options.screen}`,
       `--input-ipc-server=${ipcPath}`,
       `--log-file=${logFile}`,
       `--volume=${options.volume !== undefined ? options.volume : (screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume)}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+      `--screen=${x11Screen}`,
+      `--fs-screen=${x11Screen}`,
+      `--title=LiveLink-${options.screen}`,
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
 
@@ -593,11 +636,16 @@ export class PlayerService {
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${screen}`) : `/tmp/mpv-ipc-${screen}`;
     this.ipcPaths.set(screen, ipcPath);
 
+    // Determine which X11 screen to use (0 for primary, 1 for secondary, etc.)
+    const x11Screen = screenConfig.primary ? 0 : 1;
+
     // Build MPV player arguments in a more organized way
     const mpvArgs = [
       // Basic window setup
       `--title=LiveLink-${screen}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+      `--screen=${x11Screen}`,
+      `--fs-screen=${x11Screen}`,
       screenConfig.windowMaximized ? '--window-maximized=yes' : '',
       
       // Audio settings
@@ -608,7 +656,7 @@ export class PlayerService {
       `--log-file=${logFile}`,
       
       // Scripts and options
-      `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
+      `--script=${path.resolve(__dirname, '../../../scripts', 'livelink.lua')}`,
       `--script-opts=screen=${screen}`
     ].filter(Boolean);
 
@@ -636,12 +684,15 @@ export class PlayerService {
   }
 
   private getProcessEnv(): NodeJS.ProcessEnv {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    
     return {
-      ...process.env,
-      MPV_HOME: undefined,
-      XDG_CONFIG_HOME: undefined,
-      DISPLAY: process.env.DISPLAY || ':0',
-      SDL_VIDEODRIVER: 'x11'
+                    ...process.env,
+                    MPV_HOME: undefined,
+                    XDG_CONFIG_HOME: undefined,
+                    DISPLAY: process.env.DISPLAY || ':0',
+      SDL_VIDEODRIVER: 'x11',
+      DATE: timestamp
     };
   }
 
@@ -755,10 +806,10 @@ export class PlayerService {
             windowMaximized: screen.windowMaximized !== undefined ? screen.windowMaximized : this.config.player.windowMaximized
           });
           logger.info(`Started player for screen ${screen.screen}`, 'PlayerService');
-        } catch (error) {
+    } catch (error) {
           logger.error(`Failed to start player for screen ${screen.screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
         }
       }
     }
   }
-}
+} 

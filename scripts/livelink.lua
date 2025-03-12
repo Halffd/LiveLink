@@ -157,7 +157,7 @@ function is_valid_url(url)
     return url:match("^https?://") ~= nil
 end
 
--- Improve HTTP request function with better error handling and fallback
+-- Improve HTTP request function with better error handling and retry logic
 function http_request(url, method, headers, data)
     if not url then
         msg.error("Invalid URL for HTTP request")
@@ -181,28 +181,25 @@ function http_request(url, method, headers, data)
         table.insert(command, data)
     end
     
-    -- Execute the command
-    local response = utils.subprocess({
-        args = command,
-        cancellable = false,
-    })
-    
-    -- Check for network errors
-    if response.status ~= 0 then
-        msg.warn(string.format("HTTP request failed with status %d: %s", response.status, response.stderr or "Unknown error"))
+    -- Execute the command with retry logic
+    local response
+    for attempt = 1, ERROR_RETRY_COUNT do
+        response = utils.subprocess({
+            args = command,
+            cancellable = false,
+        })
         
-        -- For API requests, create a fallback response for critical functions
-        if url:match("/api/streams/") then
-            if url:match("/api/streams/autostart") then
-                msg.info("Network error detected, using fallback for autostart")
-                return { success = true, message = "Fallback response" }
-            elseif url:match("/api/streams/queue") then
-                msg.info("Network error detected, using fallback for queue")
-                -- Return an empty response that won't trigger further requests
-                return {}
-            end
+        if response.status == 0 then
+            break
         end
         
+        msg.warn(string.format("HTTP request failed with status %d: %s", response.status, response.stderr or "Unknown error"))
+        msg.info(string.format("Retrying HTTP request (%d/%d)...", attempt, ERROR_RETRY_COUNT))
+        utils.sleep(RETRY_DELAY)
+    end
+    
+    if response.status ~= 0 then
+        msg.error(string.format("HTTP request failed after %d attempts", ERROR_RETRY_COUNT))
         return nil
     end
     
@@ -956,6 +953,10 @@ end)
 mp.register_event("file-loaded", function()
     if not is_shutting_down then
         init()
+        -- Update window title when file is loaded
+        update_window_title()
+        -- Register title observers
+        register_title_observers()
     end
 end)
 
@@ -1104,8 +1105,8 @@ function play_next_stream()
         
         -- Only request new streams if we're not already handling an end-of-playlist event
         if not handling_end_of_playlist then
-            -- Request new streams from server
-            handle_end_of_playlist()
+        -- Request new streams from server
+        handle_end_of_playlist()
         else
             log_to_node("info", "Already handling end of playlist, not requesting new streams")
         end
@@ -1341,7 +1342,7 @@ mp.register_event("end-file", function(event)
             handling_end_file = false
         end
     end)
-
+    
     -- Log the event with more details
     log_to_node("info", string.format("Playback ended with reason: %s", event.reason))
     log_to_node("debug", string.format("Current URL: %s", mp.get_property("path") or "none"))
@@ -1766,4 +1767,101 @@ function check_watched_status(time)
         -- Send to server
         mark_current_watched()
     end
+end
+
+-- Update window title with current stream title and handle environment variables
+function update_window_title()
+    local screen = get_current_screen()
+    if not screen then return end
+    
+    -- Try different properties to get the best title
+    local title = mp.get_property("media-title") or 
+                 mp.get_property("filename") or 
+                 mp.get_property("path")
+                 
+    if title then
+        -- Clean up the title (remove URL parameters, etc.)
+        title = title:gsub("^https?://[^/]+/", "")  -- Remove domain
+        title = title:gsub("%?.*$", "")             -- Remove URL parameters
+        title = title:gsub("&.*$", "")              -- Remove ampersand and following
+        title = title:gsub("%.%w+$", "")            -- Remove file extension
+        title = title:gsub("_", " ")                -- Replace underscores with spaces
+        title = title:gsub("-", " ")                -- Replace hyphens with spaces
+        
+        -- Keep the LiveLink-X prefix for window positioning script
+        local window_title = string.format("LiveLink-%d - %s", screen, title)
+        mp.command(string.format("set window-title \"%s\"", window_title))
+        log_to_node("debug", string.format("Updated window title to: %s", window_title))
+    end
+end
+
+-- Register observers for properties that might contain the title
+function register_title_observers()
+    -- Update title when media-title changes
+    mp.observe_property("media-title", "string", function(_, title)
+        if title then
+            update_window_title()
+        end
+    end)
+    
+    -- Also observe filename as fallback
+    mp.observe_property("filename", "string", function(_, filename)
+        if filename then
+            update_window_title()
+        end
+    end)
+    
+    -- Observe metadata changes
+    mp.observe_property("metadata", "native", function(_, metadata)
+        if metadata then
+            update_window_title()
+        end
+    end)
+end
+
+-- Helper function to expand environment variables in strings
+function expand_env_vars(str)
+    if not str then return str end
+    
+    -- Replace ${VAR} or $VAR with the environment variable value
+    local result = str:gsub("%${([%w_]+)}", os.getenv)
+    result = result:gsub("%$([%w_]+)", os.getenv)
+    
+    -- Replace ${SCREEN} with the current screen number
+    result = result:gsub("%${SCREEN}", tostring(get_current_screen()))
+    result = result:gsub("%$SCREEN", tostring(get_current_screen()))
+    
+    -- Replace ${DATE} with current date in ISO format
+    local date_str = os.date("%Y-%m-%d-%H-%M-%S")
+    result = result:gsub("%${DATE}", date_str)
+    result = result:gsub("%$DATE", date_str)
+    
+    return result
+end
+
+-- Helper function to handle file paths with environment variables
+function get_log_file_path()
+    local screen = get_current_screen()
+    if not screen then return nil end
+    
+    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    if not home then return nil end
+    
+    local date_str = os.date("%Y-%m-%d-%H-%M-%S")
+    local log_path = home .. "/.livelink/logs/mpv/mpv-screen" .. screen .. "-" .. date_str .. ".log"
+    
+    return log_path
+end
+
+-- Get IPC socket path with environment variables expanded
+function get_ipc_path()
+    local screen = get_current_screen()
+    if not screen then return nil end
+    
+    local home = os.getenv("HOME") or os.getenv("USERPROFILE")
+    if not home then 
+        return "/tmp/mpv-ipc-" .. screen
+    end
+    
+    return home .. "/.livelink/mpv-ipc-" .. screen
 end

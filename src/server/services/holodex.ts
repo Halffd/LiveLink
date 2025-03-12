@@ -1,19 +1,11 @@
 import { 
   HolodexApiClient,
   type VideoStatus,
-  type Video,
-  type VideosParam,
-  type VideoType
+  type Video
 } from 'holodex.js';
 import type { StreamSource, Config } from '../../types/stream.js';
 import { logger } from './logger.js';
 import type { StreamService } from '../../types/stream.js';
-
-interface GetStreamsOptions {
-  organization?: string;
-  limit?: number;
-  channels?: string[];
-}
 
 interface GetLiveStreamsOptions {
   channels?: string[];
@@ -51,7 +43,7 @@ export class HolodexService implements StreamService {
         return [];
       }
 
-      const params: Record<string, any> = {
+      const params: Record<string, string | number> = {
         limit: options.limit || 25,
         sort: options.sort || 'available_at',
         order: 'asc'
@@ -69,7 +61,6 @@ export class HolodexService implements StreamService {
           this.client!.getLiveVideos({
             channel_id: channelId,
             status: 'live' as VideoStatus,
-            //type: 'live' as VideoType,
             sort: 'live_viewers',
             max_upcoming_hours: 0
           }).catch(error => {
@@ -103,37 +94,75 @@ export class HolodexService implements StreamService {
         })))}`, 'HolodexService');
       }
 
-      // Additional sorting for Holodex streams
-      videos.sort((a, b) => {
-        // First by live status (live streams first)
-        if (a.status === 'live' && b.status !== 'live') return -1;
-        if (a.status !== 'live' && b.status === 'live') return 1;
-        
-        // Then by viewer count for live streams
-        if (a.status === 'live' && b.status === 'live') {
-          return (b.liveViewers || 0) - (a.liveViewers || 0);
-        }
-        
-        // Then by scheduled start time
-        const aTime = a.actualStart ? new Date(a.actualStart).getTime() : 0;
-        const bTime = b.actualStart ? new Date(b.actualStart).getTime() : 0;
-        return aTime - bTime;
-      });
+      // Filter out channels that should be excluded
+      const filteredVideos = videos.filter(video => !this.isChannelFiltered(video));
+      
+      // Convert to StreamSource format
+      const streamSources = filteredVideos.map(video => ({
+        url: `https://youtube.com/watch?v=${video.videoId}`,
+        title: video.title,
+        platform: 'youtube' as const,
+        viewerCount: video.liveViewers,
+        thumbnail: video.channel?.avatarUrl,
+        startTime: video.actualStart ? new Date(video.actualStart).getTime() : undefined,
+        sourceStatus: video.status === 'live' ? 'live' as const : 
+                     video.status === 'upcoming' ? 'upcoming' as const : 'ended' as const,
+        channelId: video.channel?.channelId,
+        organization: video.channel?.organization
+      }));
 
-      return videos
-        .filter(video => !this.isChannelFiltered(video))
-        .map(video => ({
-          url: `https://youtube.com/watch?v=${video.videoId}`,
-          title: video.title,
-          platform: 'youtube' as const,
-          viewerCount: video.liveViewers,
-          thumbnail: video.channel?.avatarUrl,
-          startTime: video.actualStart ? new Date(video.actualStart).getTime() : undefined,
-          sourceStatus: video.status === 'live' ? 'live' : 
-                       video.status === 'upcoming' ? 'upcoming' : 'ended',
-          channelId: video.channel?.channelId,
-          organization: video.channel?.organization
-        }));
+      // If these are favorite channels, preserve their original order
+      if (channels && channels.length > 0) {
+        // Create a map of channel IDs to their original position in the favorites array
+        const channelOrderMap = new Map<string, number>();
+        channels.forEach((channelId, index) => {
+          channelOrderMap.set(channelId, index);
+        });
+        
+        // Sort streams by their channel's position in the favorites array
+        streamSources.sort((a, b) => {
+          const aOrder = a.channelId ? channelOrderMap.get(a.channelId) ?? 999 : 999;
+          const bOrder = b.channelId ? channelOrderMap.get(b.channelId) ?? 999 : 999;
+          
+          // First sort by channel order (favorites order)
+          if (aOrder !== bOrder) {
+            return aOrder - bOrder;
+          }
+          
+          // For streams from the same channel, sort by live status
+          if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
+          if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
+          
+          // Then by viewer count for live streams from the same channel
+          if (a.sourceStatus === 'live' && b.sourceStatus === 'live') {
+            return (b.viewerCount || 0) - (a.viewerCount || 0);
+          }
+          
+          // Then by start time
+          const aTime = a.startTime || 0;
+          const bTime = b.startTime || 0;
+          return aTime - bTime;
+        });
+      } else {
+        // For non-favorite streams, use the original sorting logic
+        streamSources.sort((a, b) => {
+          // First by live status (live streams first)
+          if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
+          if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
+          
+          // Then by viewer count for live streams
+          if (a.sourceStatus === 'live' && b.sourceStatus === 'live') {
+            return (b.viewerCount || 0) - (a.viewerCount || 0);
+          }
+          
+          // Then by scheduled start time
+          const aTime = a.startTime || 0;
+          const bTime = b.startTime || 0;
+          return aTime - bTime;
+        });
+      }
+
+      return streamSources;
     } catch (error) {
       logger.error('Failed to fetch Holodex live streams', 'HolodexService');
       logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');

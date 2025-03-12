@@ -141,7 +141,19 @@ class QueueService extends EventEmitter {
 
   // Add method to filter unwatched streams
   public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
-    return streams.filter(stream => !this.isStreamWatched(stream.url));
+    return streams.filter(stream => {
+      // Always include favorite streams (they have higher priority < 900)
+      if (stream.priority !== undefined && stream.priority < 900) {
+        logger.debug(`QueueService: Including favorite stream ${stream.url} with priority ${stream.priority} in filtered streams`, 'QueueService');
+        return true;
+      }
+      // Filter out watched streams
+      const isWatched = this.isStreamWatched(stream.url);
+      if (isWatched) {
+        logger.debug(`QueueService: Filtering out watched stream ${stream.url}`, 'QueueService');
+      }
+      return !isWatched;
+    });
   }
 }
 
