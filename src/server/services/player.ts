@@ -591,18 +591,26 @@ export class PlayerService {
     const logFile = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${timestamp}.log`);
     const homedir = process.env.HOME || process.env.USERPROFILE;
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${screen}`) : `/tmp/mpv-ipc-${screen}`;
+    this.ipcPaths.set(screen, ipcPath);
 
-    // Format MPV player arguments with proper screen geometry
-    const playerArgs = [
+    // Build MPV player arguments in a more organized way
+    const mpvArgs = [
+      // Basic window setup
       `--title=LiveLink-${screen}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+      screenConfig.windowMaximized ? '--window-maximized=yes' : '',
+      
+      // Audio settings
       `--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
+      
+      // IPC and logging
       `--input-ipc-server=${ipcPath}`,
       `--log-file=${logFile}`,
+      
+      // Scripts and options
       `--script=${path.join(process.cwd(), 'scripts', 'livelink.lua')}`,
-      `--script-opts=screen=${screen}`,
-      screenConfig.windowMaximized ? '--window-maximized=yes' : ''
-    ].filter(Boolean).join(' ');
+      `--script-opts=screen=${screen}`
+    ].filter(Boolean);
 
     // Convert streamlink config options to command line arguments
     const streamlinkArgs = Object.entries(streamlinkConfig.options)
@@ -614,13 +622,16 @@ export class PlayerService {
       })
       .filter((arg): arg is string => arg !== undefined);
 
-    // Return streamlink arguments with proper formatting
+    // Return streamlink arguments in proper order:
+    // 1. URL and quality
+    // 2. Streamlink-specific options
+    // 3. Player command and args
     return [
       url,
       'best',
       ...streamlinkArgs,
       `--player=${this.mpvPath}`,
-      `--player-args="${playerArgs}"`
+      `--player-args="${mpvArgs.join(' ')}"`
     ];
   }
 
