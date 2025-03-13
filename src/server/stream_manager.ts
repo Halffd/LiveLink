@@ -93,7 +93,16 @@ export class StreamManager extends EventEmitter {
 
       // Check if this was a normal end (code 0) or error
       if (data.code === 0) {
-        logger.info(`Stream ended normally on screen ${data.screen}, starting next stream`, 'StreamManager');
+        // Check if the error message indicates a user-initiated exit
+        const isUserExit = data.error === 'Stream ended by user' || data.error === 'Stream ended';
+        
+        if (isUserExit) {
+          logger.info(`Stream on screen ${data.screen} was ended by user, starting next stream`, 'StreamManager');
+        } else {
+          logger.info(`Stream ended normally on screen ${data.screen}, starting next stream`, 'StreamManager');
+        }
+        
+        // Always move to the next stream for normal exits or user-initiated exits
         await this.handleStreamEnd(data.screen);
       } else {
         logger.error(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
@@ -211,19 +220,31 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
-      // Start the stream
-      logger.info(`Starting stream ${nextStream.url} on screen ${screen}`, 'StreamManager');
+      // Check if the screen was manually closed by the user
+      if (this.manuallyClosedScreens.has(screen)) {
+        logger.info(`Screen ${screen} was manually closed, not starting next stream`, 'StreamManager');
+        return;
+      }
+
+      // Start the stream with metadata from the queue
+      logger.info(`Starting stream ${nextStream.url} on screen ${screen} with metadata: ${nextStream.title}, ${nextStream.viewerCount} viewers`, 'StreamManager');
+      
+      // Mark as watched and remove from queue before starting the new stream
+      // This prevents the same stream from being restarted if there's an error
+      queueService.markStreamAsWatched(nextStream.url);
+      queueService.removeFromQueue(screen, 0);
+      
       await this.startStream({
         url: nextStream.url,
         screen,
         quality: screenConfig.quality || this.config.player.defaultQuality,
         windowMaximized: screenConfig.windowMaximized,
-        volume: screenConfig.volume
+        volume: screenConfig.volume,
+        // Pass metadata from the queue
+        title: nextStream.title,
+        viewerCount: nextStream.viewerCount,
+        startTime: nextStream.startTime
       });
-
-      // Mark as watched and remove from queue
-      queueService.markStreamAsWatched(nextStream.url);
-      queueService.removeFromQueue(screen, 0);
     } catch (error) {
       logger.error(
         `Failed to handle stream end for screen ${screen}`,
@@ -309,15 +330,19 @@ export class StreamManager extends EventEmitter {
         if (combinedStreams.length > 0) {
           const [firstStream, ...remainingStreams] = combinedStreams;
           
-          logger.info(`Starting stream ${firstStream.url} on screen ${screen}`, 'StreamManager');
+          logger.info(`Starting stream ${firstStream.url} on screen ${screen} with metadata: ${firstStream.title}, ${firstStream.viewerCount} viewers`, 'StreamManager');
           
-          // Start first stream
+          // Start first stream with all available metadata
           await this.startStream({
             url: firstStream.url,
             screen: screen,
             quality: screenConfig.quality || this.config.player.defaultQuality,
             windowMaximized: screenConfig.windowMaximized,
-            volume: screenConfig.volume
+            volume: screenConfig.volume,
+            // Pass all available metadata
+            title: firstStream.title,
+            viewerCount: firstStream.viewerCount,
+            startTime: firstStream.startTime
           });
           
           // Mark the stream as watched
@@ -393,13 +418,40 @@ export class StreamManager extends EventEmitter {
       };
     }
 
-    return this.playerService.startStream({
+    // Try to find stream metadata from our sources
+    let streamMetadata: Partial<StreamSource> = {};
+    
+    try {
+      // Get all live streams to find metadata for this URL
+      const allStreams = await this.getLiveStreams();
+      const matchingStream = allStreams.find(s => s.url === options.url);
+      
+      if (matchingStream) {
+        logger.info(`Found metadata for stream ${options.url}: ${matchingStream.title}, ${matchingStream.viewerCount} viewers`, 'StreamManager');
+        streamMetadata = matchingStream;
+      } else {
+        logger.info(`No metadata found for stream ${options.url}, using defaults`, 'StreamManager');
+      }
+    } catch (error) {
+      logger.warn(`Error fetching stream metadata: ${error instanceof Error ? error.message : String(error)}`, 'StreamManager');
+    }
+
+    // Prepare enhanced options with metadata
+    const enhancedOptions = {
       ...options,
       screen,
       quality: options.quality || streamConfig.quality,
       volume: options.volume || streamConfig.volume,
-      windowMaximized: options.windowMaximized ?? streamConfig.windowMaximized
-    });
+      windowMaximized: options.windowMaximized ?? streamConfig.windowMaximized,
+      // Use metadata if available, otherwise use provided options or defaults
+      title: options.title || streamMetadata.title,
+      viewerCount: options.viewerCount || streamMetadata.viewerCount,
+      startTime: options.startTime || streamMetadata.startTime || new Date().toLocaleTimeString()
+    };
+
+    logger.info(`Starting stream with enhanced metadata: ${enhancedOptions.title}, ${enhancedOptions.viewerCount} viewers, ${enhancedOptions.startTime}`, 'StreamManager');
+    
+    return this.playerService.startStream(enhancedOptions);
   }
 
   /**
@@ -433,18 +485,9 @@ export class StreamManager extends EventEmitter {
       this.clearInactiveTimer(screen);
       this.clearStreamRefresh(screen);
 
-      // Cleanup process
-      const process = stream.process;
-      if (process?.pid) {
-        // Double termination pattern
-        process.kill('SIGINT');
-        setTimeout(() => {
-          if (!process.killed) {
-            process.kill('SIGKILL');
-          }
-        }, 1000);
-      }
-
+      // Stop the stream in the player service
+      const result = await this.playerService.stopStream(screen, isManualStop);
+      
       // Emit stopped state with stream info
       this.emit('streamUpdate', {
         ...stream,
@@ -461,7 +504,7 @@ export class StreamManager extends EventEmitter {
             fs.unlinkSync(fifoPath); 
           } catch {
             // Ignore error, file may not exist
-            logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'PlayerService');
+            logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'StreamManager');
           }
           this.fifoPaths.delete(screen);
         }
@@ -470,7 +513,7 @@ export class StreamManager extends EventEmitter {
 
       this.streams.delete(screen);
       logger.info(`Stream stopped on screen ${screen}${isManualStop ? ' (manual stop)' : ''}`, 'StreamManager');
-      return true;
+      return result;
     } catch (error) {
       logger.error(
         'Failed to stop stream', 

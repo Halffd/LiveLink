@@ -157,9 +157,9 @@ export class PlayerService {
       // Stop existing stream if any
       await this.stopStream(screen);
     
-    // Get screen configuration
-    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-    if (!screenConfig) {
+      // Get screen configuration
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      if (!screenConfig) {
         throw new Error(`Invalid screen number: ${screen}`);
       }
 
@@ -169,16 +169,29 @@ export class PlayerService {
       }
 
       // Don't start during shutdown
-    if (this.isShuttingDown) {
+      if (this.isShuttingDown) {
         throw new Error('Server is shutting down');
       }
 
-      // Clear manually closed flag
+      // Clear manually closed flag - we're explicitly starting a new stream
       this.manuallyClosedScreens.delete(screen);
       
       // Determine player type
       const useStreamlink = screenConfig.playerType === 'streamlink' || 
         (!screenConfig.playerType && this.config.player.preferStreamlink);
+
+      // Ensure we have metadata for the title
+      const streamTitle = options.title || this.extractTitleFromUrl(options.url) || 'Unknown Stream';
+      
+      // Get current date/time for the title
+      const currentTime = new Date().toLocaleTimeString();
+      
+      // Add metadata to options for use in player commands
+      options.title = streamTitle;
+      options.viewerCount = options.viewerCount || 0;
+      options.startTime = options.startTime || currentTime;
+      
+      logger.info(`Starting stream with title: ${streamTitle}, viewers: ${options.viewerCount}, time: ${options.startTime}, screen: ${screen}`, 'PlayerService');
 
       // Start the stream
       const process = useStreamlink ?
@@ -187,14 +200,16 @@ export class PlayerService {
 
       // Create stream instance
       const instance: StreamInstance = {
-            id: Date.now(),
+        id: Date.now(),
         screen,
-            url: options.url,
-            quality: options.quality || 'best',
-            status: 'playing',
+        url: options.url,
+        quality: options.quality || 'best',
+        status: 'playing',
         volume: options.volume || screenConfig.volume || this.config.player.defaultVolume,
         process,
-            platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch'
+        platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
+        title: streamTitle,
+        startTime: typeof options.startTime === 'string' ? new Date(options.startTime).getTime() : options.startTime
       };
 
       // Store stream instance
@@ -211,7 +226,7 @@ export class PlayerService {
 
     } catch (error) {
       logger.error(`Failed to start stream on screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
-        return {
+      return {
         screen,
         message: error instanceof Error ? error.message : String(error),
         success: false
@@ -250,7 +265,7 @@ export class PlayerService {
   }
 
   private async startStreamlinkProcess(options: StreamOptions & { screen: number }): Promise<ChildProcess> {
-    const args = this.getStreamlinkArgs(options.url, options.screen);
+    const args = this.getStreamlinkArgs(options.url, options);
     const env = this.getProcessEnv();
 
     logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
@@ -350,6 +365,16 @@ export class PlayerService {
             data: output,
             type: 'stdout'
           });
+          
+          // Check for user quit signals in the output
+          if (output.includes('Exiting... (Quit)') || 
+              output.includes('Exiting normally') || 
+              output.includes('Quit') || 
+              output.includes('User stopped playback')) {
+            logger.info(`Detected user quit in output for screen ${screen}`, 'PlayerService');
+            // Mark as manually closed to prevent auto-restart of the same stream
+            this.manuallyClosedScreens.delete(screen);
+          }
         }
       });
     }
@@ -358,11 +383,16 @@ export class PlayerService {
       process.stderr.on('data', (data: Buffer) => {
         const output = data.toString('utf8').trim();
         if (output && /[\x20-\x7E]/.test(output)) {
-          logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
-          this.errorCallback?.({
-            screen,
-            error: output
-          });
+          // Filter out common PipeWire warnings that don't affect functionality
+          if (output.includes('pw.conf') && output.includes('deprecated')) {
+            logger.debug(`[Screen ${screen}] PipeWire config warning: ${output}`, 'PlayerService');
+          } else {
+            logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
+            this.errorCallback?.({
+              screen,
+              error: output
+            });
+          }
         }
       });
     }
@@ -411,6 +441,13 @@ export class PlayerService {
   }
 
   private async restartStream(screen: number, options: StreamOptions): Promise<void> {
+    // Don't restart if the screen was manually closed
+    if (this.manuallyClosedScreens.has(screen)) {
+      logger.info(`Not restarting stream on screen ${screen} as it was manually closed`, 'PlayerService');
+      return;
+    }
+    
+    logger.info(`Restarting stream on screen ${screen}: ${options.url}`, 'PlayerService');
     await this.stopStream(screen);
     await new Promise(resolve => setTimeout(resolve, 2000));
     await this.startStream({ ...options, screen });
@@ -420,6 +457,9 @@ export class PlayerService {
     // Clear monitoring
     this.clearMonitoring(screen);
 
+    // Get the stream before removing it
+    const stream = this.streams.get(screen);
+    
     // Remove stream instance
     this.streams.delete(screen);
 
@@ -432,10 +472,16 @@ export class PlayerService {
 
     // Handle non-zero exit
     if (code !== 0 && code !== null) {
-      // Handle SIGINT (130) separately - don't retry
-      if (code === 130) {
-        logger.info(`Stream on screen ${screen} was interrupted`, 'PlayerService');
+      // Handle SIGINT (130), SIGTERM (143), and SIGQUIT (131) as normal exits - these are typically user-initiated
+      if (code === 130 || code === 143 || code === 131) {
+        logger.info(`Stream on screen ${screen} was terminated with code ${code}, treating as normal exit and moving to next stream`, 'PlayerService');
         this.streamRetries.delete(screen);
+        // Signal to move to next stream
+        this.errorCallback?.({
+          screen,
+          error: 'Stream ended by user',
+          code: 0 // Use code 0 to indicate normal exit
+        });
         return;
       }
 
@@ -447,8 +493,7 @@ export class PlayerService {
         logger.info(`Stream crashed on screen ${screen}, retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s`, 'PlayerService');
         
         setTimeout(() => {
-      const stream = this.streams.get(screen);
-      if (stream) {
+          if (stream) {
             this.restartStream(screen, stream).catch(error => {
               logger.error(`Failed to restart stream on screen ${screen}`, 'PlayerService', error);
             });
@@ -465,10 +510,10 @@ export class PlayerService {
       }
     } else {
       // Stream ended normally or player closed, reset retry counter and trigger next stream
-    this.streamRetries.delete(screen);
+      this.streamRetries.delete(screen);
       logger.info(`Stream ended normally on screen ${screen}, triggering next stream`, 'PlayerService');
       this.errorCallback?.({
-              screen,
+        screen,
         error: 'Stream ended',
         code: 0
       });
@@ -584,6 +629,15 @@ export class PlayerService {
     // This is based on the screen configuration - screen 1 is typically primary
     const x11Screen = screenConfig.primary ? 0 : 1;
 
+    // Get stream metadata for title
+    const streamTitle = options.title || 'Unknown Title';
+    const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
+    const startTime = options.startTime 
+      ? (typeof options.startTime === 'string' 
+         ? new Date(options.startTime).toLocaleTimeString() 
+         : new Date(options.startTime).toLocaleTimeString())
+      : new Date().toLocaleTimeString();
+    
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
       options.url,
@@ -593,7 +647,7 @@ export class PlayerService {
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--screen=${x11Screen}`,
       `--fs-screen=${x11Screen}`,
-      `--title=${options.title || 'Unknown Title'} - ${options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers'} - ${options.startTime ? new Date(options.startTime).toLocaleTimeString() : 'Unknown time'} - Screen ${options.screen}`,
+      `--title=${streamTitle} - ${viewerCount} - ${startTime} - Screen ${options.screen}`,
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
 
@@ -601,7 +655,8 @@ export class PlayerService {
     return [...staticArgs, ...dynamicArgs];
   }
 
-  private getStreamlinkArgs(url: string, screen: number): string[] {
+  private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
+    const screen = options.screen;
     const screenConfig = this.config.player.screens.find(s => s.screen === screen);
     if (!screenConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
@@ -616,10 +671,19 @@ export class PlayerService {
     // Determine which X11 screen to use (0 for primary, 1 for secondary, etc.)
     const x11Screen = screenConfig.primary ? 0 : 1;
 
+    // Get stream metadata for title
+    const streamTitle = options.title || 'Unknown Title';
+    const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
+    const startTime = options.startTime 
+      ? (typeof options.startTime === 'string' 
+         ? new Date(options.startTime).toLocaleTimeString() 
+         : new Date(options.startTime).toLocaleTimeString())
+      : new Date().toLocaleTimeString();
+
     // Build MPV player arguments in a more organized way
     const mpvArgs = [
       // Basic window setup
-      `--title=LiveLink-${screen}`,
+      `--title=${streamTitle} - ${viewerCount} - ${startTime} - Screen ${screen}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--screen=${x11Screen}`,
       `--fs-screen=${x11Screen}`,
@@ -783,6 +847,43 @@ export class PlayerService {
           logger.error(`Failed to start player for screen ${screen.screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
         }
       }
+    }
+  }
+
+  // Helper method to extract title from URL
+  private extractTitleFromUrl(url: string): string | null {
+    try {
+      // Extract video ID from YouTube URL
+      if (url.includes('youtube.com') || url.includes('youtu.be')) {
+        const urlObj = new URL(url);
+        let videoId;
+        
+        if (url.includes('youtube.com/watch')) {
+          videoId = urlObj.searchParams.get('v');
+        } else if (url.includes('youtu.be/')) {
+          videoId = url.split('youtu.be/')[1]?.split(/[/?#]/)[0];
+        } else if (url.includes('youtube.com/live/')) {
+          videoId = url.split('youtube.com/live/')[1]?.split(/[/?#]/)[0];
+        } else if (url.includes('youtube.com/channel/')) {
+          const channelId = url.split('youtube.com/channel/')[1]?.split(/[/?#]/)[0];
+          return channelId ? `YouTube Channel (${channelId})` : 'YouTube Stream';
+        }
+        
+        return videoId ? `YouTube Video (${videoId})` : 'YouTube Stream';
+      }
+      
+      // Extract channel name from Twitch URL
+      if (url.includes('twitch.tv')) {
+        const channelName = url.split('twitch.tv/')[1]?.split(/[/?#]/)[0];
+        return channelName ? `Twitch Stream (${channelName})` : 'Twitch Stream';
+      }
+      
+      // For other URLs, use the hostname
+      const hostname = new URL(url).hostname;
+      return hostname ? `Stream from ${hostname}` : 'Unknown Stream';
+    } catch (err) {
+      logger.warn(`Failed to extract title from URL: ${url}`, 'PlayerService', err instanceof Error ? err : new Error(String(err)));
+      return 'Unknown Stream';
     }
   }
 } 
