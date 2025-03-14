@@ -246,9 +246,13 @@ export class PlayerService {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     env.SCREEN = options.screen.toString();
     env.DATE = timestamp;
-    const streamTitle = options.title || 'Unknown Title';
+    
+    // Sanitize title components to avoid issues with shell escaping
+    const streamTitle = (options.title || 'Unknown Title').replace(/['"]/g, '');
     const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
     const startTime = options.startTime ? new Date(options.startTime).toLocaleTimeString() : 'Unknown time';
+    
+    // Set environment variables without quotes
     env.TITLE = `${streamTitle} - ${viewerCount} - ${startTime} - Screen ${options.screen}`;
     env.STREAM_URL = options.url;
 
@@ -638,6 +642,14 @@ export class PlayerService {
          : new Date(options.startTime).toLocaleTimeString())
       : new Date().toLocaleTimeString();
     
+    // Sanitize title components to avoid issues with shell escaping
+    const sanitizedTitle = streamTitle.replace(/['"]/g, '');
+    const sanitizedViewerCount = viewerCount.replace(/['"]/g, '');
+    const sanitizedStartTime = startTime.replace(/['"]/g, '');
+    
+    // Format the title without quotes in the argument
+    const titleArg = `--title=${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}`;
+    
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
       options.url,
@@ -647,7 +659,7 @@ export class PlayerService {
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--screen=${x11Screen}`,
       `--fs-screen=${x11Screen}`,
-      `--title=${streamTitle} - ${viewerCount} - ${startTime} - Screen ${options.screen}`,
+      titleArg,
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
 
@@ -680,10 +692,18 @@ export class PlayerService {
          : new Date(options.startTime).toLocaleTimeString())
       : new Date().toLocaleTimeString();
 
+    // Sanitize title components to avoid issues with shell escaping
+    const sanitizedTitle = streamTitle.replace(/['"]/g, '');
+    const sanitizedViewerCount = viewerCount.replace(/['"]/g, '');
+    const sanitizedStartTime = startTime.replace(/['"]/g, '');
+    
+    // Format the title without quotes in the argument
+    const titleArg = `--title=${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${screen}`;
+
     // Build MPV player arguments in a more organized way
     const mpvArgs = [
       // Basic window setup
-      `--title=${streamTitle} - ${viewerCount} - ${startTime} - Screen ${screen}`,
+      titleArg,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
       `--screen=${x11Screen}`,
       `--fs-screen=${x11Screen}`,
@@ -707,6 +727,9 @@ export class PlayerService {
       })
       .filter((arg): arg is string => arg !== undefined);
 
+    // Properly escape the player args for the shell
+    const escapedMpvArgs = mpvArgs.map(arg => arg.replace(/"/g, '\\"')).join(' ');
+
     // Return streamlink arguments in proper order:
     // 1. URL and quality
     // 2. Streamlink-specific options
@@ -716,7 +739,7 @@ export class PlayerService {
       'best',
       ...streamlinkArgs,
       `--player=${this.mpvPath}`,
-      `--player-args="${mpvArgs.join(' ')}"`
+      `--player-args=${escapedMpvArgs}`
     ];
   }
 
