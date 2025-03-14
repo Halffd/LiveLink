@@ -17,7 +17,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
-      "playerType": "mpv",
+      "playerType": "streamlink",
       "primary": true
     },
     {
