@@ -705,8 +705,6 @@ export class PlayerService {
       // Basic window setup
       titleArg,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-      `--screen=${x11Screen}`,
-      `--fs-screen=${x11Screen}`,
       screenConfig.windowMaximized ? '--window-maximized=yes' : '',
       
       // Audio settings
