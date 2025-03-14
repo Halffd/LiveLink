@@ -157,9 +157,9 @@ export class PlayerService {
       // Stop existing stream if any
       await this.stopStream(screen);
     
-      // Get screen configuration
-      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-      if (!screenConfig) {
+    // Get screen configuration
+    const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+    if (!screenConfig) {
         throw new Error(`Invalid screen number: ${screen}`);
       }
 
@@ -169,7 +169,7 @@ export class PlayerService {
       }
 
       // Don't start during shutdown
-      if (this.isShuttingDown) {
+    if (this.isShuttingDown) {
         throw new Error('Server is shutting down');
       }
 
@@ -200,11 +200,11 @@ export class PlayerService {
 
       // Create stream instance
       const instance: StreamInstance = {
-        id: Date.now(),
+            id: Date.now(),
         screen,
-        url: options.url,
-        quality: options.quality || 'best',
-        status: 'playing',
+            url: options.url,
+            quality: options.quality || 'best',
+            status: 'playing',
         volume: options.volume || screenConfig.volume || this.config.player.defaultVolume,
         process,
         platform: options.url.includes('youtube.com') ? 'youtube' : 'twitch',
@@ -226,7 +226,7 @@ export class PlayerService {
 
     } catch (error) {
       logger.error(`Failed to start stream on screen ${screen}`, 'PlayerService', error instanceof Error ? error : new Error(String(error)));
-      return {
+        return {
         screen,
         message: error instanceof Error ? error.message : String(error),
         success: false
@@ -391,11 +391,11 @@ export class PlayerService {
           if (output.includes('pw.conf') && output.includes('deprecated')) {
             logger.debug(`[Screen ${screen}] PipeWire config warning: ${output}`, 'PlayerService');
           } else {
-            logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
-            this.errorCallback?.({
-              screen,
-              error: output
-            });
+          logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
+          this.errorCallback?.({
+            screen,
+            error: output
+          });
           }
         }
       });
@@ -463,7 +463,7 @@ export class PlayerService {
 
     // Get the stream before removing it
     const stream = this.streams.get(screen);
-    
+
     // Remove stream instance
     this.streams.delete(screen);
 
@@ -497,7 +497,7 @@ export class PlayerService {
         logger.info(`Stream crashed on screen ${screen}, retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay/1000}s`, 'PlayerService');
         
         setTimeout(() => {
-          if (stream) {
+      if (stream) {
             this.restartStream(screen, stream).catch(error => {
               logger.error(`Failed to restart stream on screen ${screen}`, 'PlayerService', error);
             });
@@ -514,10 +514,10 @@ export class PlayerService {
       }
     } else {
       // Stream ended normally or player closed, reset retry counter and trigger next stream
-      this.streamRetries.delete(screen);
+    this.streamRetries.delete(screen);
       logger.info(`Stream ended normally on screen ${screen}, triggering next stream`, 'PlayerService');
       this.errorCallback?.({
-        screen,
+              screen,
         error: 'Stream ended',
         code: 0
       });
@@ -648,8 +648,9 @@ export class PlayerService {
     const sanitizedStartTime = startTime.replace(/['"]/g, '');
     
     // Format the title without quotes in the argument
-    const titleArg = `--title=${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}`;
-    
+    // eslint-disable-next-line no-useless-escape
+    const titleArg = `--title=\\\"${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}\\\"`;
+
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
       options.url,
@@ -657,8 +658,6 @@ export class PlayerService {
       `--log-file=${logFile}`,
       `--volume=${options.volume !== undefined ? options.volume : (screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume)}`,
       `--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-      `--screen=${x11Screen}`,
-      `--fs-screen=${x11Screen}`,
       titleArg,
       ...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
     ];
@@ -698,7 +697,8 @@ export class PlayerService {
     const sanitizedStartTime = startTime.replace(/['"]/g, '');
     
     // Format the title without quotes in the argument
-    const titleArg = `--title=${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${screen}`;
+    // eslint-disable-next-line no-useless-escape
+    const titleArg = `--title=\\\"${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}\\\"`;
 
     // Build MPV player arguments in a more organized way
     const mpvArgs = [
