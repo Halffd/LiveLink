@@ -115,7 +115,7 @@ export class StreamManager extends EventEmitter {
               error instanceof Error ? error : new Error(String(error))
             );
           });
-        }, 5000); // 5 second delay for error cases
+        }, 1000); // Reduced from 5000ms to 1000ms
       }
     });
 
@@ -226,14 +226,15 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
-      // Start the stream with metadata from the queue
-      logger.info(`Starting stream ${nextStream.url} on screen ${screen} with metadata: ${nextStream.title}, ${nextStream.viewerCount} viewers`, 'StreamManager');
-      
       // Mark as watched and remove from queue before starting the new stream
       // This prevents the same stream from being restarted if there's an error
       queueService.markStreamAsWatched(nextStream.url);
       queueService.removeFromQueue(screen, 0);
       
+      // Start the stream with metadata from the queue
+      logger.info(`Starting stream ${nextStream.url} on screen ${screen} with metadata: ${nextStream.title}, ${nextStream.viewerCount} viewers`, 'StreamManager');
+      
+      // Start the stream immediately without additional delays
       await this.startStream({
         url: nextStream.url,
         screen,
@@ -245,6 +246,13 @@ export class StreamManager extends EventEmitter {
         viewerCount: nextStream.viewerCount,
         startTime: nextStream.startTime
       });
+      
+      // Pre-fetch the next stream in the queue to prepare it
+      const upcomingStream = queueService.getNextStream(screen);
+      if (upcomingStream) {
+        // Just log that we're preparing the next stream, but don't wait for it
+        logger.info(`Preparing next stream in queue for screen ${screen}: ${upcomingStream.url}`, 'StreamManager');
+      }
     } catch (error) {
       logger.error(
         `Failed to handle stream end for screen ${screen}`,
@@ -509,7 +517,7 @@ export class StreamManager extends EventEmitter {
           this.fifoPaths.delete(screen);
         }
         this.ipcPaths.delete(screen);
-      }, 2000);
+      }, 200); // Reduced from 2000ms to 500ms
 
       this.streams.delete(screen);
       logger.info(`Stream stopped on screen ${screen}${isManualStop ? ' (manual stop)' : ''}`, 'StreamManager');

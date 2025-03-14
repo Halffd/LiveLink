@@ -20,12 +20,12 @@ const streamlinkConfig = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../
 
 export class PlayerService {
   private readonly BASE_LOG_DIR: string;
-  private readonly MAX_RETRIES = 5;
-  private readonly RETRY_INTERVAL = 5000;
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_INTERVAL = 500;
   private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
   private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-  private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
-  private readonly SHUTDOWN_TIMEOUT = 5000; // 5 seconds
+  private readonly STARTUP_TIMEOUT = 3000; // 30 seconds
+  private readonly SHUTDOWN_TIMEOUT = 100; // 1 second (reduced from 5 seconds)
 
   private streams: Map<number, StreamInstance> = new Map();
   private streamRetries: Map<number, number> = new Map();
@@ -453,7 +453,7 @@ export class PlayerService {
     
     logger.info(`Restarting stream on screen ${screen}: ${options.url}`, 'PlayerService');
     await this.stopStream(screen);
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 100));
     await this.startStream({ ...options, screen });
   }
 
@@ -629,27 +629,16 @@ export class PlayerService {
       return `--${key}=${value}`;
     }).filter((arg): arg is string => arg !== undefined);
 
-    // Determine which X11 screen to use (0 for primary, 1 for secondary, etc.)
-    // This is based on the screen configuration - screen 1 is typically primary
-    const x11Screen = screenConfig.primary ? 0 : 1;
-
     // Get stream metadata for title
     const streamTitle = options.title || 'Unknown Title';
     const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
-    const startTime = options.startTime 
-      ? (typeof options.startTime === 'string' 
-         ? new Date(options.startTime).toLocaleTimeString() 
-         : new Date(options.startTime).toLocaleTimeString())
-      : new Date().toLocaleTimeString();
     
     // Sanitize title components to avoid issues with shell escaping
     const sanitizedTitle = streamTitle.replace(/['"]/g, '');
-    const sanitizedViewerCount = viewerCount.replace(/['"]/g, '');
-    const sanitizedStartTime = startTime.replace(/['"]/g, '');
     
     // Format the title without quotes in the argument
     // eslint-disable-next-line no-useless-escape
-    const titleArg = `--title=\\\"${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}\\\"`;
+    const titleArg = `--title=\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\"`;
 
     // Dynamic arguments that depend on runtime values
     const dynamicArgs = [
@@ -679,26 +668,15 @@ export class PlayerService {
     const ipcPath = homedir ? path.join(homedir, '.livelink', `mpv-ipc-${screen}`) : `/tmp/mpv-ipc-${screen}`;
     this.ipcPaths.set(screen, ipcPath);
 
-    // Determine which X11 screen to use (0 for primary, 1 for secondary, etc.)
-    const x11Screen = screenConfig.primary ? 0 : 1;
-
     // Get stream metadata for title
     const streamTitle = options.title || 'Unknown Title';
     const viewerCount = options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
-    const startTime = options.startTime 
-      ? (typeof options.startTime === 'string' 
-         ? new Date(options.startTime).toLocaleTimeString() 
-         : new Date(options.startTime).toLocaleTimeString())
-      : new Date().toLocaleTimeString();
-
     // Sanitize title components to avoid issues with shell escaping
     const sanitizedTitle = streamTitle.replace(/['"]/g, '');
-    const sanitizedViewerCount = viewerCount.replace(/['"]/g, '');
-    const sanitizedStartTime = startTime.replace(/['"]/g, '');
     
     // Format the title without quotes in the argument
     // eslint-disable-next-line no-useless-escape
-    const titleArg = `--title=\\\"${sanitizedTitle} - ${sanitizedViewerCount} - ${sanitizedStartTime} - Screen ${options.screen}\\\"`;
+    const titleArg = `--title=\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\"`;
 
     // Build MPV player arguments in a more organized way
     const mpvArgs = [
