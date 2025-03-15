@@ -591,7 +591,7 @@ export class StreamManager extends EventEmitter {
               if (source.subtype === 'favorites') {
                 streams = await this.holodexService.getLiveStreams({
                   channels: this.favoriteChannels.holodex,
-                  limit: limit * 2,
+                  limit: limit * 20,
                   sort: 'start_scheduled'  // Sort by scheduled start time
                 });
                 logger.debug(
@@ -609,7 +609,7 @@ export class StreamManager extends EventEmitter {
               } else if (source.subtype === 'organization' && source.name) {
                 streams = await this.holodexService.getLiveStreams({
                   organization: source.name,
-                  limit,
+                  limit: limit * 20,
                   sort: 'start_scheduled'  // Sort by scheduled start time
                 });
               }
@@ -617,7 +617,7 @@ export class StreamManager extends EventEmitter {
               if (source.subtype === 'favorites') {
                 streams = await this.twitchService.getStreams({
                   channels: this.favoriteChannels.twitch,
-                  limit
+                  limit: limit * 20
                 });
                 
                 // For favorites, assign a higher priority based on source priority
