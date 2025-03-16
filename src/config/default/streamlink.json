@@ -3,15 +3,6 @@
   "options": {
     "twitch-disable-ads": true,
     "twitch-low-latency": true,
-    "stream-segment-threads": 4,
-    "ringbuffer-size": "64M",
-    "player-no-close": true,
-    "player-continuous-http": true,
-    "hls-live-edge": 2,
-    "hls-segment-stream-data": true,
-    "stream-timeout": 60,
-    "retry-max": 3,
-    "retry-streams": 3,
-    "retry-open": 3
+    "player-no-close": false
   }
 } 
