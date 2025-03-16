@@ -57,6 +57,9 @@ export class StreamManager extends EventEmitter {
   private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
   private fifoPaths: Map<number, string> = new Map();
   private ipcPaths: Map<number, string> = new Map();
+  private cachedStreams: StreamSource[] = []; // Cache for stream metadata
+  private lastStreamFetch: number = 0; // Timestamp of last stream fetch
+  private readonly STREAM_CACHE_TTL = 60000; // 1 minute cache TTL
 
   /**
    * Creates a new StreamManager instance
@@ -430,8 +433,11 @@ export class StreamManager extends EventEmitter {
     let streamMetadata: Partial<StreamSource> = {};
     
     try {
-      // Get all live streams to find metadata for this URL
-      const allStreams = await this.getLiveStreams();
+      // Use cached streams if available, otherwise get all live streams
+      const allStreams = this.cachedStreams.length > 0 && Date.now() - this.lastStreamFetch < this.STREAM_CACHE_TTL
+        ? this.cachedStreams
+        : await this.getLiveStreams();
+        
       const matchingStream = allStreams.find(s => s.url === options.url);
       
       if (matchingStream) {
@@ -558,6 +564,13 @@ export class StreamManager extends EventEmitter {
    * Fetches live streams from both Holodex and Twitch based on config
    */
   async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
+    // Check if we have a recent cache
+    const now = Date.now();
+    if (this.cachedStreams.length > 0 && now - this.lastStreamFetch < this.STREAM_CACHE_TTL) {
+      logger.debug(`Using cached streams (${this.cachedStreams.length} streams, age: ${now - this.lastStreamFetch}ms)`, 'StreamManager');
+      return this.cachedStreams;
+    }
+
     try {
       const results: Array<StreamSource & { screen?: number; sourceName?: string; priority?: number }> = [];
       const streamConfigs = this.config.streams;
@@ -581,7 +594,7 @@ export class StreamManager extends EventEmitter {
           String(screenNumber),
           sortedSources.map(s => `${s.type}:${s.subtype || 'other'} (${s.priority || 999})`).join(', ')
         );
-
+        
         for (const source of sortedSources) {
           const limit = source.limit || 25;
           let streams: StreamSource[] = [];
@@ -644,7 +657,7 @@ export class StreamManager extends EventEmitter {
                 });
               }
             }
-
+            
             // Add source metadata to each stream
             const streamsWithMetadata = streams.map(stream => ({
               ...stream,
@@ -680,11 +693,15 @@ export class StreamManager extends EventEmitter {
         return (b.viewerCount || 0) - (a.viewerCount || 0);
       });
 
+      // Update cache
+      this.cachedStreams = results;
+      this.lastStreamFetch = now;
+
       return results;
     } catch (error) {
       logger.error(
         'Failed to fetch live streams',
-        'StreamManager',
+        'StreamManager', 
         error instanceof Error ? error : new Error(String(error))
       );
       
