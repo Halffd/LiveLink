@@ -33,7 +33,7 @@ export class PlayerService {
 	private readonly RETRY_INTERVAL = 500;
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-	private readonly STARTUP_TIMEOUT = 600000; // 10 minutes
+	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
 	private readonly SHUTDOWN_TIMEOUT = 100; // 1 second (reduced from 5 seconds)
 
 	private streams: Map<number, StreamInstance> = new Map();

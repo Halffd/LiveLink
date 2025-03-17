@@ -3,8 +3,6 @@
   "gpu-context": "x11egl",
   "gpu-api": "opengl",
   "hwdec": "auto-safe",
-  "input-ipc-server": "${HOME}/.livelink/mpv-ipc-${SCREEN}",
-  "log-file": "${HOME}/.livelink/logs/mpv/mpv-screen${SCREEN}-${DATE}.log",
   "border": "no",
   "keep-open": "no",
   "idle": "no"
