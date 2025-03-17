@@ -34,7 +34,7 @@ export class PlayerService {
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
-	private readonly SHUTDOWN_TIMEOUT = 100; // 1 second (reduced from 5 seconds)
+	private readonly SHUTDOWN_TIMEOUT = 1000; // Increased from 100ms to 1 second
 
 	private streams: Map<number, StreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
@@ -503,8 +503,25 @@ export class PlayerService {
 		}
 
 		logger.info(`Restarting stream on screen ${screen}: ${options.url}`, 'PlayerService');
+		
+		// Stop existing stream and wait for cleanup
 		await this.stopStream(screen);
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		
+		// Add a longer delay to ensure cleanup is complete
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		
+		// Double check no existing process before starting new one
+		const existingStream = this.streams.get(screen);
+		if (existingStream?.process) {
+			logger.warn(`Found existing process for screen ${screen}, forcing cleanup`, 'PlayerService');
+			try {
+				existingStream.process.kill('SIGKILL');
+				await new Promise(resolve => setTimeout(resolve, 200));
+			} catch {
+				// Process might already be gone
+			}
+		}
+		
 		await this.startStream({ ...options, screen });
 	}
 
@@ -610,7 +627,7 @@ export class PlayerService {
 		this.streamRetries.delete(screen);
 	}
 
-	async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
+	public async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
 		const stream = this.streams.get(screen);
 		if (!stream) return false;
 
@@ -625,15 +642,30 @@ export class PlayerService {
 					// Try graceful shutdown first
 					stream.process.kill('SIGTERM');
 
-					// Force kill after timeout
+					// Force kill after timeout with better cleanup
 					await Promise.race([
 						new Promise<void>((resolve) => {
-							stream.process?.once('exit', () => resolve());
+							const cleanup = () => {
+								stream.process?.removeAllListeners();
+								resolve();
+							};
+							stream.process?.once('exit', cleanup);
+							stream.process?.once('close', cleanup);
 						}),
 						new Promise<void>((_, reject) => {
 							setTimeout(() => {
 								try {
-									stream.process?.kill('SIGKILL');
+									if (stream.process) {
+										stream.process.kill('SIGKILL');
+										stream.process.removeAllListeners();
+										// Double check process is gone
+										try {
+											process.kill(stream.process.pid || 0, 0);
+											reject(new Error('Process still running after SIGKILL'));
+										} catch {
+											// Process is gone, which is good
+										}
+									}
 								} catch {
 									// Process might already be gone
 								}
@@ -647,6 +679,14 @@ export class PlayerService {
 						'PlayerService',
 						error instanceof Error ? error : new Error(String(error))
 					);
+					// Additional cleanup - force kill if still running
+					try {
+						if (stream.process && stream.process.pid) {
+							process.kill(stream.process.pid, 'SIGKILL');
+						}
+					} catch {
+						// Process might already be gone
+					}
 				}
 			}
 
@@ -668,6 +708,9 @@ export class PlayerService {
 				}
 			}
 			this.ipcPaths.delete(screen);
+
+			// Add a small delay to ensure cleanup is complete
+			await new Promise(resolve => setTimeout(resolve, 200));
 
 			return true;
 		} catch (error) {
