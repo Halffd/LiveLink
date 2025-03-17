@@ -628,7 +628,7 @@ export class PlayerService {
 	}
 
 	public async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
-		const stream = this.streams.get(screen);
+			const stream = this.streams.get(screen);
 		if (!stream) return false;
 
 		try {
