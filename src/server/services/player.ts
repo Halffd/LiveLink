@@ -768,7 +768,7 @@ export class PlayerService {
 		const dynamicArgs = [
 			options.url,
 			`--input-ipc-server=${ipcPath}`,
-			`--script-directory=${this.SCRIPTS_PATH}`,
+			`--scripts=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
@@ -818,7 +818,7 @@ export class PlayerService {
 
 			// IPC and logging
 			`--input-ipc-server=${ipcPath}`,
-			`--script-directory=${this.SCRIPTS_PATH}`,
+			`--scripts=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`
 		].filter(Boolean);
 
