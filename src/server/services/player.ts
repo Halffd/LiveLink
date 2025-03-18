@@ -772,6 +772,8 @@ export class PlayerService {
 			`--log-file=${logFile}`,
 			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+			`--stream-buffer-size=96k`,
+			`--cache-secs=20`,
 			titleArg,
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		];
