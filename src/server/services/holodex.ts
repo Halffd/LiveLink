@@ -245,12 +245,17 @@ export class HolodexService implements StreamService {
 
     // Normalize channel name: lowercase and remove all spaces and special characters
     const normalizedChannelName = channelName.toLowerCase().replace(/[\s\-_]+/g, '');
-    logger.debug(`Normalized channel name: ${normalizedChannelName}`, 'HolodexService');
+    
     // Compare with normalized filter names
-    return this.filters.some(filter => {
+    for (const filter of this.filters) {
       const normalizedFilter = filter.toLowerCase().replace(/[\s\-_]+/g, '');
-      return normalizedChannelName === normalizedFilter;
-    });
+      if (normalizedChannelName.includes(normalizedFilter)) {
+        logger.debug(`Filtering out channel ${channelName} (${normalizedChannelName}) due to filter ${filter} (${normalizedFilter})`, 'HolodexService');
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   public updateFavorites(channels: string[]): void {

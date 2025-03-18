@@ -805,7 +805,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\"`;
+		const titleArg = `--title=\\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
 
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
