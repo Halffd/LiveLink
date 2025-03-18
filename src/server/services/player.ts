@@ -34,7 +34,7 @@ export class PlayerService {
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
-	private readonly SHUTDOWN_TIMEOUT = 1000; // Increased from 100ms to 1 second
+	private readonly SHUTDOWN_TIMEOUT = 2000; // Increased from 100ms to 1 second
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, StreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
@@ -806,7 +806,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\"`;
+		const titleArg = `--title=\\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
 
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
