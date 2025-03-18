@@ -762,7 +762,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
+		const titleArg = `--title=\\\\${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
 
 		// Dynamic arguments that depend on runtime values
 		const dynamicArgs = [
@@ -805,7 +805,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
+		const titleArg = `--title=\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\"`;
 
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
@@ -821,7 +821,7 @@ export class PlayerService {
 			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			titleArg
-		];
+		].filter(Boolean);
 
 		// Convert streamlink config options to command line arguments
 		const streamlinkArgs = Object.entries(streamlinkConfig.options)
@@ -833,13 +833,11 @@ export class PlayerService {
 			})
 			.filter((arg): arg is string => arg !== undefined);
 
-		// Properly escape the player args for the shell
-		const escapedMpvArgs = mpvArgs; //.map((arg) => arg.replace(/"/g, '\\"')).join(' ');
+		// Join MPV args with spaces
+		const escapedMpvArgs = mpvArgs.join(' ');
 		logger.info(`Escaped MPV args: ${escapedMpvArgs}`, 'PlayerService');
-		// Return streamlink arguments in proper order:
-		// 1. URL and quality
-		// 2. Streamlink-specific options
-		// 3. Player command and args
+
+		// Return streamlink arguments in proper order
 		return [
 			url,
 			'best',
