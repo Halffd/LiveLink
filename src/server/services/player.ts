@@ -762,7 +762,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\"`;
+		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
 
 		// Dynamic arguments that depend on runtime values
 		const dynamicArgs = [
@@ -774,12 +774,11 @@ export class PlayerService {
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--stream-buffer-size=96k`,
 			`--cache-secs=20`,
-			titleArg,
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		];
 
 		// Combine static and dynamic arguments
-		return [...staticArgs, ...dynamicArgs];
+		return [...staticArgs, ...dynamicArgs, titleArg];
 	}
 
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
@@ -806,7 +805,7 @@ export class PlayerService {
 
 		// Format the title without quotes in the argument
 		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=${sanitizedTitle}-${viewerCount}-Screen-${options.screen}`;
+		const titleArg = `--title=\\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
 
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
@@ -822,7 +821,7 @@ export class PlayerService {
 			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			titleArg
-		].filter(Boolean);
+		];
 
 		// Convert streamlink config options to command line arguments
 		const streamlinkArgs = Object.entries(streamlinkConfig.options)
@@ -835,8 +834,8 @@ export class PlayerService {
 			.filter((arg): arg is string => arg !== undefined);
 
 		// Properly escape the player args for the shell
-		const escapedMpvArgs = mpvArgs.map((arg) => arg.replace(/"/g, '\\"')).join(' ');
-
+		const escapedMpvArgs = mpvArgs; //.map((arg) => arg.replace(/"/g, '\\"')).join(' ');
+		logger.info(`Escaped MPV args: ${escapedMpvArgs}`, 'PlayerService');
 		// Return streamlink arguments in proper order:
 		// 1. URL and quality
 		// 2. Streamlink-specific options
