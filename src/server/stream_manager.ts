@@ -311,10 +311,7 @@ export class StreamManager extends EventEmitter {
         const sortedStreams = [...availableStreams].sort((a, b) => {
           // First by priority
           const priorityDiff = (a.priority || 999) - (b.priority || 999);
-          if (priorityDiff !== 0) return priorityDiff;
-          
-          // Then by viewer count
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          return priorityDiff;
         });
         
         // First, get all favorite streams (they have higher priority < 900)
@@ -678,26 +675,16 @@ export class StreamManager extends EventEmitter {
           }
         }
       }
-
       // Final sorting of all streams
-      results.sort((a, b) => {
-        // First by priority (lower number = higher priority)
-        const priorityDiff = (a.priority || 999) - (b.priority || 999);
-        if (priorityDiff !== 0) return priorityDiff;
-
-        // For streams with same priority, sort by live status
-        if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
-        if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
-
-        // For streams with same priority and live status, sort by viewer count
-        return (b.viewerCount || 0) - (a.viewerCount || 0);
-      });
+      const sortedResults = results
+      .filter(stream => stream.sourceStatus === "live")
+      .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
       // Update cache
-      this.cachedStreams = results;
+      this.cachedStreams = sortedResults;
       this.lastStreamFetch = now;
 
-      return results;
+      return sortedResults;
     } catch (error) {
       logger.error(
         'Failed to fetch live streams',

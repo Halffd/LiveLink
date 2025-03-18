@@ -35,7 +35,7 @@ export class PlayerService {
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
 	private readonly SHUTDOWN_TIMEOUT = 1000; // Increased from 100ms to 1 second
-
+	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, StreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
 	private streamStartTimes: Map<number, number> = new Map();
@@ -57,6 +57,7 @@ export class PlayerService {
 	constructor() {
 		this.BASE_LOG_DIR = path.join(process.cwd(), 'logs');
 		this.mpvPath = this.findMpvPath();
+		this.SCRIPTS_PATH = path.join(process.cwd(), 'scripts', 'mpv');
 		this.initializeDirectories();
 		this.registerSignalHandlers();
 	}
@@ -767,6 +768,7 @@ export class PlayerService {
 		const dynamicArgs = [
 			options.url,
 			`--input-ipc-server=${ipcPath}`,
+			`--script-directory=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
@@ -816,6 +818,7 @@ export class PlayerService {
 
 			// IPC and logging
 			`--input-ipc-server=${ipcPath}`,
+			`--script-directory=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`
 		].filter(Boolean);
 

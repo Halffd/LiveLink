@@ -116,8 +116,16 @@ export class HolodexService implements StreamService {
       }
 
       // Filter out channels that should be excluded
-      const filteredVideos = videos.filter(video => !this.isChannelFiltered(video));
-      
+      const filteredVideos = videos.filter(video => {
+        if (this.isChannelFiltered(video)) {
+          logger.info(`Filtering out video from channel ${video.channel?.name}`, 'HolodexService');
+          return false;
+        }
+        return true;
+      });
+      if (videos.length !== filteredVideos.length) {
+        logger.info(`Some videos were filtered out due to channel exclusions`, 'HolodexService');
+      }
       // Convert to StreamSource format with channel order preserved
       const streamSources = filteredVideos.map(video => {
         const channelId = video.channel?.channelId;
@@ -220,16 +228,27 @@ export class HolodexService implements StreamService {
   }
 
   private isChannelFiltered(video: Video): boolean {
-    const channelName = video.channel?.name?.toLowerCase();
     const channelId = video.channel?.channelId;
+    const channelName = video.channel?.name;
     
     // If channel is in favorites, don't filter it
     if (channelId && this.favoriteChannels.includes(channelId)) {
       return false;
     }
     
-    // If channel name matches any filter exactly, filter it
-    return Boolean(channelName && this.filters.includes(channelName));
+    // If no channel name, don't filter
+    if (!channelName) {
+      return false;
+    }
+
+    // Normalize channel name: lowercase and remove all spaces and special characters
+    const normalizedChannelName = channelName.toLowerCase().replace(/[\s\-_]+/g, '');
+    logger.debug(`Normalized channel name: ${normalizedChannelName}`, 'HolodexService');
+    // Compare with normalized filter names
+    return this.filters.some(filter => {
+      const normalizedFilter = filter.toLowerCase().replace(/[\s\-_]+/g, '');
+      return normalizedChannelName === normalizedFilter;
+    });
   }
 
   public updateFavorites(channels: string[]): void {

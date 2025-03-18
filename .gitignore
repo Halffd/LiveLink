@@ -41,3 +41,4 @@ data/
 src/config/default/favorites.json
 !src/config/default/.gitkeep
 logs/
+scripts/mpv

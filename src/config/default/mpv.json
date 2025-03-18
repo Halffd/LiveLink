@@ -4,5 +4,6 @@
   "gpu-api": "opengl",
   "hwdec": "auto-safe",
   "border": "no",
-  "keep-open": "no"
+  "keep-open": "no",
+  "ytdl-raw-options": "verbose="
 } 
