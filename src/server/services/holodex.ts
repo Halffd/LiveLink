@@ -2,7 +2,8 @@ import {
   HolodexApiClient,
   type VideoStatus,
   type Video,
-  type VideoType
+  type VideoType,
+  VideoRaw
 } from 'holodex.js';
 import type { StreamSource, Config } from '../../types/stream.js';
 import { logger } from './logger.js';
@@ -68,7 +69,8 @@ export class HolodexService implements StreamService {
             channel_id: channelId,
             status: 'live' as VideoStatus,
             type: 'stream' as VideoType,
-            max_upcoming_hours: 48 // Include upcoming streams for next 48 hours
+            max_upcoming_hours: 0, // Include upcoming streams for next 48 hours
+            sort: 'live_viewers' as keyof VideoRaw & string,
           }).catch(error => {
             logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
             logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
