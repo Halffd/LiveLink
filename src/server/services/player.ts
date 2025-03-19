@@ -393,8 +393,11 @@ export class PlayerService {
 					if (output.includes('[youtube]')) {
 						if (output.includes('Post-Live Manifestless mode')) {
 							logger.info(`[Screen ${screen}] YouTube stream is in post-live state (ended)`, 'PlayerService');
-							// Mark as manually closed to prevent auto-restart
-							this.manuallyClosedScreens.add(screen);
+							this.errorCallback?.({
+								screen,
+								error: 'Stream ended',
+								code: 0
+							});
 						} else if (output.includes('Downloading MPD manifest')) {
 							logger.debug(`[Screen ${screen}] YouTube stream manifest download attempt`, 'PlayerService');
 						}
@@ -411,13 +414,14 @@ export class PlayerService {
 					if (output.includes('Exiting... (Quit)') || 
 						output.includes('Quit') || 
 						output.includes('Exiting normally') ||
-						output.includes('EOF reached')) {
-						logger.info(`Stream ended normally on screen ${screen}`, 'PlayerService');
-						// Mark as manually closed to prevent auto-restart
-						this.manuallyClosedScreens.add(screen);
-					} else if (output.includes('User stopped playback')) {
-						logger.info(`User manually stopped stream on screen ${screen}`, 'PlayerService');
-						this.manuallyClosedScreens.add(screen);
+						output.includes('EOF reached') ||
+						output.includes('User stopped playback')) {
+						logger.info(`Stream ended on screen ${screen}`, 'PlayerService');
+						this.errorCallback?.({
+							screen,
+							error: 'Stream ended',
+							code: 0
+						});
 					}
 				}
 			});
@@ -437,13 +441,19 @@ export class PlayerService {
 								`[Screen ${screen}] YouTube stream error - may be ended or unavailable: ${output}`,
 								'PlayerService'
 							);
+							this.errorCallback?.({
+								screen,
+								error: 'Stream ended',
+								code: 0
+							});
 						} else {
 							logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
+							this.errorCallback?.({
+								screen,
+								error: output,
+								code: 0  // Always use code 0 to trigger next stream
+							});
 						}
-						this.errorCallback?.({
-							screen,
-							error: output
-						});
 					}
 				}
 			});
@@ -455,13 +465,13 @@ export class PlayerService {
 			this.errorCallback?.({
 				screen,
 				error: errorMessage,
-				code: -1
+				code: 0  // Changed to 0 to always trigger next stream
 			});
 		});
 
 		process.on('exit', (code: number | null) => {
 			logger.info(`Process exited on screen ${screen} with code ${code}`, 'PlayerService');
-			this.handleProcessExit(screen, code);
+			this.handleProcessExit(screen);
 		});
 	}
 
@@ -551,112 +561,17 @@ export class PlayerService {
 		await this.startStream({ ...options, screen });
 	}
 
-	private handleProcessExit(screen: number, code: number | null): void {
+	private handleProcessExit(screen: number): void {
 		// Clear monitoring
 		this.clearMonitoring(screen);
-
-		// Get the stream before removing it
-		const stream = this.streams.get(screen);
 
 		// Remove stream instance
 		this.streams.delete(screen);
 
-		// Don't retry or trigger next stream if manually closed
-		if (this.manuallyClosedScreens.has(screen)) {
-			logger.info(`Screen ${screen} was manually closed by user`, 'PlayerService');
-			this.streamRetries.delete(screen); // Reset retry counter for manually closed screens
-			this.manuallyClosedScreens.delete(screen); // Clear the flag for future streams
-			return;
-		}
-
-		// Handle non-zero exit
-		if (code !== 0 && code !== null) {
-			// Handle SIGINT (130), SIGTERM (143), and SIGQUIT (131) as normal exits
-			if (code === 130 || code === 143 || code === 131) {
-				logger.info(
-					`Stream on screen ${screen} was terminated with code ${code}, treating as normal exit`,
-					'PlayerService'
-				);
-				this.streamRetries.delete(screen);
-				this.errorCallback?.({
-					screen,
-					error: 'Stream ended by user',
-					code: 0
-				});
-				return;
-			}
-
-			// Check if this is a YouTube post-live stream that has ended
-			const isPostLiveEnded = stream?.url?.includes('youtube.com') && 
-				(stream.error?.includes('youtube-dl failed') || 
-				 stream.error?.includes('Post-Live Manifestless mode'));
-
-			if (isPostLiveEnded) {
-				logger.info(
-					`YouTube stream on screen ${screen} is in post-live state (ended), moving to next stream`,
-					'PlayerService'
-				);
-				this.streamRetries.delete(screen);
-				this.errorCallback?.({
-					screen,
-					error: 'Stream has ended (post-live)',
-					code: 0
-				});
-				return;
-			}
-
-			// Handle unexpected exits
-			const retryCount = this.streamRetries.get(screen) || 0;
-			if (retryCount < this.MAX_RETRIES) {
-				// Don't retry if we've detected a post-live state in the output
-				const hasPostLiveIndicator = stream?.error?.includes('Post-Live Manifestless mode') ||
-									   stream?.error?.includes('youtube-dl failed');
-				
-				if (stream?.url?.includes('youtube.com') && hasPostLiveIndicator) {
-					logger.info(
-						`Not retrying YouTube stream on screen ${screen} as it appears to be in post-live state`,
-						'PlayerService'
-					);
-					this.streamRetries.delete(screen);
-					this.errorCallback?.({
-						screen,
-						error: 'Stream has ended (post-live)',
-						code: 0
-					});
-					return;
-				}
-
-				const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
-				this.streamRetries.set(screen, retryCount + 1);
-
-				logger.info(
-					`Stream crashed on screen ${screen}, retry ${retryCount + 1}/${this.MAX_RETRIES} in ${delay / 1000}s`,
-					'PlayerService'
-				);
-
-				setTimeout(() => {
-					if (stream) {
-						this.restartStream(screen, stream).catch((error) => {
-							logger.error(`Failed to restart stream on screen ${screen}`, 'PlayerService', error);
-						});
-					}
-				}, delay);
-			} else {
-				logger.error(`Max retries reached for screen ${screen}`, 'PlayerService');
-				this.streamRetries.delete(screen);
-				this.errorCallback?.({
-					screen,
-					error: 'Max retries reached',
-					code: -1
-				});
-			}
-			return;
-		}
-
-		// Stream ended normally (code === 0 or null)
+		// Always emit stream end event with code 0 to trigger next stream
 		this.streamRetries.delete(screen);
 		logger.info(
-			`Stream ended normally on screen ${screen}, ready for next stream`,
+			`Stream ended on screen ${screen}, moving to next stream`,
 			'PlayerService'
 		);
 		this.errorCallback?.({
