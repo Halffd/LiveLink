@@ -402,6 +402,15 @@ export class PlayerService {
 			process.stdout.on('data', (data: Buffer) => {
 				const output = data.toString('utf8').trim();
 				if (output && /[\x20-\x7E]/.test(output)) {
+					// Log YouTube-specific state information
+					if (output.includes('[youtube]')) {
+						if (output.includes('Post-Live Manifestless mode')) {
+							logger.info(`[Screen ${screen}] YouTube stream is in post-live state (ended)`, 'PlayerService');
+						} else if (output.includes('Downloading MPD manifest')) {
+							logger.debug(`[Screen ${screen}] YouTube stream manifest download attempt`, 'PlayerService');
+						}
+					}
+
 					logger.debug(`[Screen ${screen}] ${output}`, 'PlayerService');
 					this.outputCallback?.({
 						screen,
@@ -414,11 +423,12 @@ export class PlayerService {
 						output.includes('Exiting... (Quit)') ||
 						output.includes('Exiting normally') ||
 						output.includes('Quit') ||
-						output.includes('User stopped playback')
+						output.includes('User stopped playback') ||
+						output.includes('Post-Live Manifestless mode') // Add post-live as a quit condition
 					) {
-						logger.info(`Detected user quit in output for screen ${screen}`, 'PlayerService');
+						logger.info(`Detected stream end or user quit in output for screen ${screen}`, 'PlayerService');
 						// Mark as manually closed to prevent auto-restart of the same stream
-						this.manuallyClosedScreens.delete(screen);
+						this.manuallyClosedScreens.add(screen);
 					}
 				}
 			});
@@ -432,7 +442,15 @@ export class PlayerService {
 					if (output.includes('pw.conf') && output.includes('deprecated')) {
 						logger.debug(`[Screen ${screen}] PipeWire config warning: ${output}`, 'PlayerService');
 					} else {
-						logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
+						// Log YouTube-specific errors with more context
+						if (output.includes('youtube-dl failed')) {
+							logger.info(
+								`[Screen ${screen}] YouTube stream error - may be ended or unavailable: ${output}`,
+								'PlayerService'
+							);
+						} else {
+							logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
+						}
 						this.errorCallback?.({
 							screen,
 							error: output
@@ -573,6 +591,26 @@ export class PlayerService {
 				this.errorCallback?.({
 					screen,
 					error: 'Stream ended by user',
+					code: 0
+				});
+				return;
+			}
+
+			// Check if this is a YouTube post-live stream that has ended
+			const isPostLiveEnded = stream?.url?.includes('youtube.com') && 
+				this.outputCallback && 
+				(stream.status === 'error' || stream.error?.includes('youtube-dl failed'));
+
+			if (isPostLiveEnded) {
+				logger.info(
+					`YouTube stream on screen ${screen} appears to be in post-live state (ended), stopping retries`,
+					'PlayerService'
+				);
+				this.streamRetries.delete(screen);
+				this.manuallyClosedScreens.add(screen); // Prevent auto-restart
+				this.errorCallback?.({
+					screen,
+					error: 'Stream has ended',
 					code: 0
 				});
 				return;
