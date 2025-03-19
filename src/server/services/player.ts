@@ -418,17 +418,26 @@ export class PlayerService {
 						type: 'stdout'
 					});
 
-					// Check for user quit signals in the output
-					if (
-						output.includes('Exiting... (Quit)') ||
-						output.includes('Exiting normally') ||
-						output.includes('Quit') ||
+					// Check for different types of stream endings
+					if (output.includes('Exiting... (Quit)')) {
+						// This is a normal stream end, don't mark as manually closed
+						logger.info(`Stream ended normally on screen ${screen}`, 'PlayerService');
+					} else if (
 						output.includes('User stopped playback') ||
-						output.includes('Post-Live Manifestless mode') // Add post-live as a quit condition
+						output.includes('Quit') ||
+						output.includes('Exiting normally')
 					) {
-						logger.info(`Detected stream end or user quit in output for screen ${screen}`, 'PlayerService');
-						// Mark as manually closed to prevent auto-restart of the same stream
+						// These are user-initiated quits
+						logger.info(`User manually stopped stream on screen ${screen}`, 'PlayerService');
 						this.manuallyClosedScreens.add(screen);
+					} else if (output.includes('Post-Live Manifestless mode')) {
+						// Stream has ended (post-live)
+						logger.info(`Stream ended (post-live) on screen ${screen}`, 'PlayerService');
+					}
+
+					// Check for keepalive failures which might indicate stream end
+					if (output.includes('keepalive request failed')) {
+						logger.info(`Stream keepalive failed on screen ${screen}, may be ending`, 'PlayerService');
 					}
 				}
 			});
@@ -574,8 +583,9 @@ export class PlayerService {
 
 		// Don't retry or trigger next stream if manually closed
 		if (this.manuallyClosedScreens.has(screen)) {
-			logger.info(`Screen ${screen} was manually closed`, 'PlayerService');
+			logger.info(`Screen ${screen} was manually closed by user`, 'PlayerService');
 			this.streamRetries.delete(screen); // Reset retry counter for manually closed screens
+			this.manuallyClosedScreens.delete(screen); // Clear the flag for future streams
 			return;
 		}
 
@@ -603,11 +613,10 @@ export class PlayerService {
 
 			if (isPostLiveEnded) {
 				logger.info(
-					`YouTube stream on screen ${screen} appears to be in post-live state (ended), stopping retries`,
+					`YouTube stream on screen ${screen} appears to be in post-live state (ended), moving to next stream`,
 					'PlayerService'
 				);
 				this.streamRetries.delete(screen);
-				this.manuallyClosedScreens.add(screen); // Prevent auto-restart
 				this.errorCallback?.({
 					screen,
 					error: 'Stream has ended',
@@ -649,7 +658,7 @@ export class PlayerService {
 		// Stream ended normally (code === 0 or null)
 		this.streamRetries.delete(screen);
 		logger.info(
-			`Stream ended normally on screen ${screen}`,
+			`Stream ended normally on screen ${screen}, ready for next stream`,
 			'PlayerService'
 		);
 		this.errorCallback?.({

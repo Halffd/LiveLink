@@ -267,7 +267,7 @@ export class StreamManager extends EventEmitter {
     }
   }
 
-  private async handleEmptyQueue(screen: number) {
+  private async handleEmptyQueue(screen: number): Promise<void> {
     try {
       // Get screen configuration
       const screenConfig = this.config.player.screens.find(s => s.screen === screen);
@@ -276,7 +276,8 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
-      // Get all streams
+      // Force refresh of streams when queue is empty
+      this.lastStreamFetch = 0; // Reset cache to force fresh fetch
       const allStreams = await this.getLiveStreams();
       
       // Filter streams for this screen
@@ -290,8 +291,10 @@ export class StreamManager extends EventEmitter {
         // Check if stream is already playing on another screen
         const activeStreams = this.getActiveStreams();
         const isPlaying = activeStreams.some(s => s.url === stream.url);
-        if (isPlaying) {
-          logger.debug(`Stream ${stream.url} is already playing on another screen`, 'StreamManager');
+        
+        // Allow high priority streams (favorites) to play on multiple screens
+        if (isPlaying && (!stream.priority || stream.priority >= 900)) {
+          logger.debug(`Stream ${stream.url} is already playing and is not high priority`, 'StreamManager');
           return false;
         }
 
@@ -307,38 +310,28 @@ export class StreamManager extends EventEmitter {
       logger.info(`Found ${availableStreams.length} streams for screen ${screen}`, 'StreamManager');
 
       if (availableStreams.length > 0) {
-        // Sort by priority - already done in getLiveStreams, but ensure it's maintained
-        const sortedStreams = [...availableStreams].sort((a, b) => {
-          // First by priority
-          const priorityDiff = (a.priority || 999) - (b.priority || 999);
-          return priorityDiff;
+        // Sort streams by priority (lower number = higher priority)
+        const sortedStreams = availableStreams.sort((a, b) => {
+          // First by priority (undefined priority goes last)
+          const aPriority = a.priority ?? 999;
+          const bPriority = b.priority ?? 999;
+          if (aPriority !== bPriority) return aPriority - bPriority;
+          
+          // Then by viewer count for same priority
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         });
-        
-        // First, get all favorite streams (they have higher priority < 900)
-        const favoriteStreams = sortedStreams.filter(stream => 
-          stream.priority !== undefined && stream.priority < 900
-        );
-        
-        // Then get unwatched non-favorite streams
-        const unwatchedNonFavorites = sortedStreams.filter(stream => {
-          // Skip favorites as they're already included
-          if (stream.priority !== undefined && stream.priority < 900) {
-            return false;
-          }
-          // Filter out watched streams
-          return !queueService.isStreamWatched(stream.url);
-        });
-        
-        // Combine favorites and unwatched non-favorites
-        const combinedStreams = [...favoriteStreams, ...unwatchedNonFavorites];
-        
-        logger.info(`Found ${favoriteStreams.length} favorite streams and ${unwatchedNonFavorites.length} unwatched non-favorite streams for screen ${screen}`, 'StreamManager');
-        logger.info(`Combined ${combinedStreams.length} total streams for screen ${screen}`, 'StreamManager');
-        
+
+        // Filter out watched streams unless all streams have been watched
+        const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
+        const combinedStreams = unwatchedStreams.length > 0 ? unwatchedStreams : sortedStreams;
+
         if (combinedStreams.length > 0) {
           const [firstStream, ...remainingStreams] = combinedStreams;
           
-          logger.info(`Starting stream ${firstStream.url} on screen ${screen} with metadata: ${firstStream.title}, ${firstStream.viewerCount} viewers`, 'StreamManager');
+          logger.info(
+            `Starting stream ${firstStream.url} on screen ${screen} (Priority: ${firstStream.priority ?? 'none'}) with metadata: ${firstStream.title}, ${firstStream.viewerCount} viewers`,
+            'StreamManager'
+          );
           
           // Start first stream with all available metadata
           await this.startStream({
@@ -347,7 +340,6 @@ export class StreamManager extends EventEmitter {
             quality: screenConfig.quality || this.config.player.defaultQuality,
             windowMaximized: screenConfig.windowMaximized,
             volume: screenConfig.volume,
-            // Pass all available metadata
             title: firstStream.title,
             viewerCount: firstStream.viewerCount,
             startTime: firstStream.startTime
@@ -356,22 +348,35 @@ export class StreamManager extends EventEmitter {
           // Mark the stream as watched
           queueService.markStreamAsWatched(firstStream.url);
 
-          // Queue remaining streams
+          // Queue remaining streams, maintaining priority order
           if (remainingStreams.length > 0) {
             queueService.setQueue(screen, remainingStreams);
             logger.info(
               `Queued ${remainingStreams.length} streams for screen ${screen}. ` +
-              `First in queue: ${remainingStreams[0].url} (Priority: ${remainingStreams[0].priority || 999})`,
+              `First in queue: ${remainingStreams[0].url} (Priority: ${remainingStreams[0].priority ?? 'none'})`,
               'StreamManager'
             );
           }
         } else {
-          logger.info(`No unwatched streams available for screen ${screen}`, 'StreamManager');
-          queueService.clearQueue(screen);
+          logger.info(`No unwatched streams available for screen ${screen}, clearing watched history`, 'StreamManager');
+          queueService.clearWatchedStreams(); // Reset watched history to start over with high priority streams
+          return this.handleEmptyQueue(screen); // Retry with cleared history
         }
       } else {
-        logger.info(`No available streams for screen ${screen}`, 'StreamManager');
+        logger.info(`No available streams for screen ${screen}, will retry in ${this.RETRY_INTERVAL}ms`, 'StreamManager');
         queueService.clearQueue(screen);
+        // Schedule a retry after the interval
+        setTimeout(() => {
+          if (!this.isShuttingDown) {
+            this.handleEmptyQueue(screen).catch((error: Error | unknown) => {
+              logger.error(
+                `Failed to retry empty queue for screen ${screen}`,
+                'StreamManager',
+                error instanceof Error ? error : new Error(String(error))
+              );
+            });
+          }
+        }, this.RETRY_INTERVAL);
       }
     } catch (error) {
       logger.error(
