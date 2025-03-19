@@ -463,21 +463,39 @@ export class PlayerService {
 		process: ChildProcess,
 		options: StreamOptions
 	): void {
-		// Setup health check
+		// Setup health check with more lenient timing
 		const healthCheck = setInterval(() => {
-			try {
-				process.kill(0); // Check if process is responding
-			} catch {
-				logger.warn(`Stream on screen ${screen} appears to be unresponsive`, 'PlayerService');
-				this.restartStream(screen, options).catch((err) => {
-					logger.error(
-						`Failed to restart unresponsive stream on screen ${screen}`,
-						'PlayerService',
-						err
-					);
-				});
+			if (!process.pid) {
+				logger.warn(`No PID found for stream on screen ${screen}`, 'PlayerService');
+				return;
 			}
-		}, 60000);
+
+			try {
+				// Check if process exists and responds
+				process.kill(0);
+				
+				// Also verify the process hasn't been replaced
+				const currentProcess = this.streams.get(screen)?.process;
+				if (currentProcess !== process) {
+					logger.warn(`Process mismatch detected for screen ${screen}, clearing health check`, 'PlayerService');
+					clearInterval(healthCheck);
+					this.healthCheckIntervals.delete(screen);
+					return;
+				}
+			} catch (err) {
+				// Only restart if the process is actually gone
+				if (err && typeof err === 'object' && 'code' in err && err.code === 'ESRCH') {
+					logger.warn(`Stream on screen ${screen} appears to be unresponsive`, 'PlayerService');
+					this.restartStream(screen, options).catch((err) => {
+						logger.error(
+							`Failed to restart unresponsive stream on screen ${screen}`,
+							'PlayerService',
+							err
+						);
+					});
+				}
+			}
+		}, 30000); // Increased from 60s to 30s for more responsive detection
 
 		this.healthCheckIntervals.set(screen, healthCheck);
 
@@ -540,26 +558,27 @@ export class PlayerService {
 		if (this.manuallyClosedScreens.has(screen)) {
 			logger.info(`Screen ${screen} was manually closed`, 'PlayerService');
 			this.streamRetries.delete(screen); // Reset retry counter for manually closed screens
+			return;
 		}
 
 		// Handle non-zero exit
 		if (code !== 0 && code !== null) {
-			// Handle SIGINT (130), SIGTERM (143), and SIGQUIT (131) as normal exits - these are typically user-initiated
+			// Handle SIGINT (130), SIGTERM (143), and SIGQUIT (131) as normal exits
 			if (code === 130 || code === 143 || code === 131) {
 				logger.info(
-					`Stream on screen ${screen} was terminated with code ${code}, treating as normal exit and moving to next stream`,
+					`Stream on screen ${screen} was terminated with code ${code}, treating as normal exit`,
 					'PlayerService'
 				);
 				this.streamRetries.delete(screen);
-				// Signal to move to next stream
 				this.errorCallback?.({
 					screen,
 					error: 'Stream ended by user',
-					code: 0 // Use code 0 to indicate normal exit
+					code: 0
 				});
 				return;
 			}
 
+			// Handle unexpected exits
 			const retryCount = this.streamRetries.get(screen) || 0;
 			if (retryCount < this.MAX_RETRIES) {
 				const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
@@ -586,19 +605,20 @@ export class PlayerService {
 					code: -1
 				});
 			}
-		} else {
-			// Stream ended normally or player closed, reset retry counter and trigger next stream
-			this.streamRetries.delete(screen);
-			logger.info(
-				`Stream ended normally on screen ${screen}, triggering next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: 'Stream ended',
-				code: 0
-			});
+			return;
 		}
+
+		// Stream ended normally (code === 0 or null)
+		this.streamRetries.delete(screen);
+		logger.info(
+			`Stream ended normally on screen ${screen}`,
+			'PlayerService'
+		);
+		this.errorCallback?.({
+			screen,
+			error: 'Stream ended',
+			code: 0
+		});
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -629,7 +649,7 @@ export class PlayerService {
 	}
 
 	public async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
-			const stream = this.streams.get(screen);
+		const stream = this.streams.get(screen);
 		if (!stream) return false;
 
 		try {
@@ -637,40 +657,52 @@ export class PlayerService {
 				this.manuallyClosedScreens.add(screen);
 			}
 
-			// Stop the process
+			// Stop the process with improved cleanup
 			if (stream.process) {
 				try {
+					// Clear all process listeners first to prevent any race conditions
+					stream.process.removeAllListeners();
+					
 					// Try graceful shutdown first
 					stream.process.kill('SIGTERM');
 
-					// Force kill after timeout with better cleanup
+					// Wait for process to exit or force kill
 					await Promise.race([
 						new Promise<void>((resolve) => {
 							const cleanup = () => {
-								stream.process?.removeAllListeners();
 								resolve();
 							};
 							stream.process?.once('exit', cleanup);
 							stream.process?.once('close', cleanup);
 						}),
-						new Promise<void>((_, reject) => {
-							setTimeout(() => {
+						new Promise<void>((resolve, reject) => {
+							setTimeout(async () => {
 								try {
-									if (stream.process) {
-										stream.process.kill('SIGKILL');
-										stream.process.removeAllListeners();
-										// Double check process is gone
+									if (stream.process?.pid) {
+										// Double check if process still exists
 										try {
-											process.kill(stream.process.pid || 0, 0);
-											reject(new Error('Process still running after SIGKILL'));
+											process.kill(stream.process.pid, 0);
+											// Process still exists, force kill it
+											stream.process.kill('SIGKILL');
+											
+											// Wait a bit more and verify it's gone
+											await new Promise(r => setTimeout(r, 200));
+											try {
+												process.kill(stream.process.pid, 0);
+												reject(new Error('Process still running after SIGKILL'));
+											} catch {
+												// Process is gone, which is good
+												resolve();
+											}
 										} catch {
-											// Process is gone, which is good
+											// Process is already gone
+											resolve();
 										}
 									}
 								} catch {
 									// Process might already be gone
+									resolve();
 								}
-								reject(new Error('Process kill timeout'));
 							}, this.SHUTDOWN_TIMEOUT);
 						})
 					]);
@@ -680,9 +712,10 @@ export class PlayerService {
 						'PlayerService',
 						error instanceof Error ? error : new Error(String(error))
 					);
-					// Additional cleanup - force kill if still running
+					
+					// Final cleanup attempt - force kill if still running
 					try {
-						if (stream.process && stream.process.pid) {
+						if (stream.process?.pid) {
 							process.kill(stream.process.pid, 'SIGKILL');
 						}
 					} catch {
@@ -691,7 +724,7 @@ export class PlayerService {
 				}
 			}
 
-			// Clear monitoring and state
+			// Clear all monitoring and state
 			this.clearMonitoring(screen);
 			this.streams.delete(screen);
 
@@ -710,8 +743,8 @@ export class PlayerService {
 			}
 			this.ipcPaths.delete(screen);
 
-			// Add a small delay to ensure cleanup is complete
-			await new Promise(resolve => setTimeout(resolve, 200));
+			// Add a delay to ensure cleanup is complete
+			await new Promise(r => setTimeout(r, 200));
 
 			return true;
 		} catch (error) {
