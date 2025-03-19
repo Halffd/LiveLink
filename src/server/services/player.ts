@@ -608,18 +608,18 @@ export class PlayerService {
 
 			// Check if this is a YouTube post-live stream that has ended
 			const isPostLiveEnded = stream?.url?.includes('youtube.com') && 
-				this.outputCallback && 
-				(stream.status === 'error' || stream.error?.includes('youtube-dl failed'));
+				(stream.error?.includes('youtube-dl failed') || 
+				 stream.error?.includes('Post-Live Manifestless mode'));
 
 			if (isPostLiveEnded) {
 				logger.info(
-					`YouTube stream on screen ${screen} appears to be in post-live state (ended), moving to next stream`,
+					`YouTube stream on screen ${screen} is in post-live state (ended), moving to next stream`,
 					'PlayerService'
 				);
 				this.streamRetries.delete(screen);
 				this.errorCallback?.({
 					screen,
-					error: 'Stream has ended',
+					error: 'Stream has ended (post-live)',
 					code: 0
 				});
 				return;
@@ -628,6 +628,24 @@ export class PlayerService {
 			// Handle unexpected exits
 			const retryCount = this.streamRetries.get(screen) || 0;
 			if (retryCount < this.MAX_RETRIES) {
+				// Don't retry if we've detected a post-live state in the output
+				const hasPostLiveIndicator = stream?.error?.includes('Post-Live Manifestless mode') ||
+									   stream?.error?.includes('youtube-dl failed');
+				
+				if (stream?.url?.includes('youtube.com') && hasPostLiveIndicator) {
+					logger.info(
+						`Not retrying YouTube stream on screen ${screen} as it appears to be in post-live state`,
+						'PlayerService'
+					);
+					this.streamRetries.delete(screen);
+					this.errorCallback?.({
+						screen,
+						error: 'Stream has ended (post-live)',
+						code: 0
+					});
+					return;
+				}
+
 				const delay = this.RETRY_INTERVAL * Math.pow(2, retryCount);
 				this.streamRetries.set(screen, retryCount + 1);
 
@@ -908,6 +926,7 @@ export class PlayerService {
 			// IPC and logging
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${this.SCRIPTS_PATH}`,
+			`--vo=x11`,
 			titleArg,
 			`--log-file=${logFile}`
 		].filter(Boolean);
