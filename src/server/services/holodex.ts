@@ -235,29 +235,47 @@ export class HolodexService implements StreamService {
   private isChannelFiltered(video: Video): boolean {
     const channelId = video.channel?.channelId;
     const channelName = video.channel?.name;
+    const englishName = video.channel?.englishName;
     
     // If channel is in favorites, don't filter it
     if (channelId && this.favoriteChannels.includes(channelId)) {
+      logger.debug(`Channel ${channelName} (${channelId}) is in favorites, not filtering`, 'HolodexService');
       return false;
     }
     
-    // If no channel name, don't filter
-    if (!channelName) {
+    // If no channel names, don't filter
+    if (!channelName && !englishName) {
       return false;
     }
 
-    // Normalize channel name: lowercase and remove all spaces and special characters
-    const normalizedChannelName = channelName.toLowerCase().replace(/[\s\-_]+/g, '');
+    // Normalize channel names: lowercase and remove all spaces and special characters
+    const normalizedNames = [
+      channelName?.toLowerCase().replace(/[\s\-_]+/g, ''),
+      englishName?.toLowerCase().replace(/[\s\-_]+/g, '')
+    ].filter(Boolean);
     
-    // Compare with normalized filter names
+    // Check if any of the normalized names exactly match any filter
     for (const filter of this.filters) {
       const normalizedFilter = filter.toLowerCase().replace(/[\s\-_]+/g, '');
-      if (normalizedChannelName.includes(normalizedFilter)) {
-        logger.debug(`Filtering out channel ${channelName} (${normalizedChannelName}) due to filter ${filter} (${normalizedFilter})`, 'HolodexService');
-        return true;
+      
+      // Check if any of the normalized names match the filter
+      for (const normalizedName of normalizedNames) {
+        // Only filter if the normalized name matches the filter exactly or contains the full filter name
+        if (normalizedName === normalizedFilter || normalizedName.includes(normalizedFilter)) {
+          logger.info(
+            `Filtering out channel ${channelName}${englishName ? ` (${englishName})` : ''} - matched filter "${filter}"`,
+            'HolodexService'
+          );
+          return true;
+        }
       }
     }
     
+    // If no filters matched, don't filter out the channel
+    logger.debug(
+      `Channel ${channelName}${englishName ? ` (${englishName})` : ''} does not match any filters, keeping`,
+      'HolodexService'
+    );
     return false;
   }
 
