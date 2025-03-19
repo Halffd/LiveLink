@@ -69,7 +69,7 @@ export class HolodexService implements StreamService {
             channel_id: channelId,
             status: 'live' as VideoStatus,
             type: 'stream' as VideoType,
-            max_upcoming_hours: 0, // Include upcoming streams for next 48 hours
+            max_upcoming_hours: 0,
             sort: 'live_viewers' as keyof VideoRaw & string,
           }).catch(error => {
             logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
@@ -83,7 +83,10 @@ export class HolodexService implements StreamService {
         // Flatten results but maintain channel order
         videos = [];
         channels.forEach((channelId, index) => {
-          const channelVideos = results[index];
+          const channelVideos = results[index]
+            // Filter out videos where the channel ID doesn't match (collabs)
+            .filter(video => video.channel?.channelId === channelId);
+            
           if (channelVideos && channelVideos.length > 0) {
             // Sort videos for each channel: live first, then by viewer count
             channelVideos.sort((a, b) => {

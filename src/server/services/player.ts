@@ -768,7 +768,7 @@ export class PlayerService {
 		const dynamicArgs = [
 			options.url,
 			`--input-ipc-server=${ipcPath}`,
-			`--scripts=${this.SCRIPTS_PATH}`,
+			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
@@ -811,16 +811,16 @@ export class PlayerService {
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
 			// Basic window setup
-			titleArg,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			screenConfig.windowMaximized ? '--window-maximized=yes' : '',
 
 			// Audio settings
 			`--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
-
+			
 			// IPC and logging
 			`--input-ipc-server=${ipcPath}`,
-			`--scripts=${this.SCRIPTS_PATH}`,
+			`--config-dir=${this.SCRIPTS_PATH}`,
+			titleArg,
 			`--log-file=${logFile}`
 		].filter(Boolean);
 
@@ -835,7 +835,7 @@ export class PlayerService {
 			.filter((arg): arg is string => arg !== undefined);
 
 		// Properly escape the player args for the shell
-		const escapedMpvArgs = mpvArgs.map((arg) => arg.replace(/"/g, '\\"')).join(' ');
+		const escapedMpvArgs = mpvArgs.join(' ');
 
 		// Return streamlink arguments in proper order:
 		// 1. URL and quality
@@ -846,7 +846,7 @@ export class PlayerService {
 			'best',
 			...streamlinkArgs,
 			`--player=${this.mpvPath}`,
-			`--player-args="${escapedMpvArgs}"`
+			"--player-args", escapedMpvArgs
 		];
 	}
 
