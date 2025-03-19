@@ -810,6 +810,14 @@ export class PlayerService {
 
 		// Build MPV player arguments in a more organized way
 		const mpvArgs = [
+			// Include static MPV config options from mpv.json
+			...Object.entries(mpvConfig).map(([key, value]) => {
+				if (typeof value === 'boolean') {
+					return value ? `--${key}` : '';
+				}
+				return `--${key}=${value}`;
+			}).filter(Boolean),
+
 			// Basic window setup
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			screenConfig.windowMaximized ? '--window-maximized=yes' : '',
@@ -845,8 +853,10 @@ export class PlayerService {
 			url,
 			'best',
 			...streamlinkArgs,
-			`--player=${this.mpvPath}`,
-			"--player-args", escapedMpvArgs
+			'--player',
+			this.mpvPath,
+			'--player-args',
+			escapedMpvArgs
 		];
 	}
 
