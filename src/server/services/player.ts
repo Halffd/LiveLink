@@ -13,19 +13,6 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
-import { fileURLToPath } from 'url';
-
-// Get the directory name equivalent to __dirname in CommonJS
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Load static configs
-const mpvConfig = JSON.parse(
-	fs.readFileSync(path.resolve(__dirname, '../../../config', 'mpv.json'), 'utf-8')
-);
-const streamlinkConfig = JSON.parse(
-	fs.readFileSync(path.resolve(__dirname, '../../../config', 'streamlink.json'), 'utf-8')
-);
 
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
@@ -406,6 +393,8 @@ export class PlayerService {
 					if (output.includes('[youtube]')) {
 						if (output.includes('Post-Live Manifestless mode')) {
 							logger.info(`[Screen ${screen}] YouTube stream is in post-live state (ended)`, 'PlayerService');
+							// Mark as manually closed to prevent auto-restart
+							this.manuallyClosedScreens.add(screen);
 						} else if (output.includes('Downloading MPD manifest')) {
 							logger.debug(`[Screen ${screen}] YouTube stream manifest download attempt`, 'PlayerService');
 						}
@@ -419,25 +408,16 @@ export class PlayerService {
 					});
 
 					// Check for different types of stream endings
-					if (output.includes('Exiting... (Quit)')) {
-						// This is a normal stream end, don't mark as manually closed
+					if (output.includes('Exiting... (Quit)') || 
+						output.includes('Quit') || 
+						output.includes('Exiting normally') ||
+						output.includes('EOF reached')) {
 						logger.info(`Stream ended normally on screen ${screen}`, 'PlayerService');
-					} else if (
-						output.includes('User stopped playback') ||
-						output.includes('Quit') ||
-						output.includes('Exiting normally')
-					) {
-						// These are user-initiated quits
+						// Mark as manually closed to prevent auto-restart
+						this.manuallyClosedScreens.add(screen);
+					} else if (output.includes('User stopped playback')) {
 						logger.info(`User manually stopped stream on screen ${screen}`, 'PlayerService');
 						this.manuallyClosedScreens.add(screen);
-					} else if (output.includes('Post-Live Manifestless mode')) {
-						// Stream has ended (post-live)
-						logger.info(`Stream ended (post-live) on screen ${screen}`, 'PlayerService');
-					}
-
-					// Check for keepalive failures which might indicate stream end
-					if (output.includes('keepalive request failed')) {
-						logger.info(`Stream keepalive failed on screen ${screen}, may be ending`, 'PlayerService');
 					}
 				}
 			});
@@ -840,16 +820,6 @@ export class PlayerService {
 			: `/tmp/mpv-ipc-${options.screen}`;
 		this.ipcPaths.set(options.screen, ipcPath);
 
-		// Convert mpvConfig object to arguments array
-		const staticArgs = Object.entries(mpvConfig)
-			.map(([key, value]) => {
-				if (typeof value === 'boolean') {
-					return value ? `--${key}` : undefined;
-				}
-				return `--${key}=${value}`;
-			})
-			.filter((arg): arg is string => arg !== undefined);
-
 		// Get stream metadata for title
 		const streamTitle = options.title || 'Unknown Title';
 		const viewerCount =
@@ -859,25 +829,63 @@ export class PlayerService {
 		const sanitizedTitle = streamTitle.replace(/['"]/g, '');
 
 		// Format the title without quotes in the argument
-		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\"`;
+		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
 
-		// Dynamic arguments that depend on runtime values
-		const dynamicArgs = [
-			options.url,
+		// YouTube-specific arguments for better handling
+		const youtubeArgs = options.url.includes('youtube.com') ? [
+			'--ytdl-format=bestvideo[height<=?1080]+bestaudio/best',
+			'--force-seekable=yes',
+			'--demuxer-max-bytes=500M',
+			'--demuxer-max-back-bytes=100M',
+			'--stream-buffer-size=128k',
+			'--cache-secs=30',
+			'--cache-pause=no'
+		] : [];
+
+		// Base arguments for MPV direct playback
+		const baseArgs = [
+			// Video output settings
+			'--vo=gpu',
+			'--gpu-context=x11egl',
+			'--gpu-api=opengl',
+			'--hwdec=auto-safe',
+			
+			// Window settings
+			'--border=no',
+			'--keep-open=no',
+			'--force-window=immediate',
+			'--stop-screensaver',
+			
+			// Network settings
+			'--network-timeout=60',
+			'--retry-streams=no', // Don't retry on our own, let the manager handle it
+			
+			// IPC and config
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
-			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
+			
+			// Window position and size
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			`--stream-buffer-size=96k`,
-			`--cache-secs=20`,
+			
+			// Audio settings
+			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
+			
+			// Title
 			titleArg,
+			
+			// URL must be last
+			options.url
+		];
+
+		// Combine all arguments
+		const allArgs = [
+			...baseArgs,
+			...youtubeArgs,
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		];
 
-		// Combine static and dynamic arguments
-		return [...staticArgs, ...dynamicArgs];
+		return allArgs;
 	}
 
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
@@ -899,64 +907,61 @@ export class PlayerService {
 		const streamTitle = options.title || 'Unknown Title';
 		const viewerCount =
 			options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
-		// Sanitize title components to avoid issues with shell escaping
 		const sanitizedTitle = streamTitle.replace(/['"]/g, '');
+		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
 
-		// Format the title without quotes in the argument
-		// eslint-disable-next-line no-useless-escape
-		const titleArg = `--title=\\\\"${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}\\\\"`;
-
-		// Build MPV player arguments in a more organized way
+		// MPV arguments specifically for Streamlink
 		const mpvArgs = [
-			// Include static MPV config options from mpv.json
-			...Object.entries(mpvConfig).map(([key, value]) => {
-				if (typeof value === 'boolean') {
-					return value ? `--${key}` : '';
-				}
-				return `--${key}=${value}`;
-			}).filter(Boolean),
-
-			// Basic window setup
+			// Video output settings for Streamlink
+			'--vo=x11',
+			'--hwdec=auto-safe',
+			
+			// Window settings
+			'--border=no',
+			'--keep-open=no',
+			'--force-window=immediate',
+			'--stop-screensaver',
+			
+			// Window position and size
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			screenConfig.windowMaximized ? '--window-maximized=yes' : '',
-
+			
 			// Audio settings
 			`--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			
-			// IPC and logging
+			// IPC and config
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${this.SCRIPTS_PATH}`,
-			`--vo=x11`,
+			`--log-file=${logFile}`,
+			
+			// Title
 			titleArg,
-			`--log-file=${logFile}`
+			
+			// Window state
+			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		].filter(Boolean);
 
-		// Convert streamlink config options to command line arguments
-		const streamlinkArgs = Object.entries(streamlinkConfig.options)
-			.map(([key, value]): string | undefined => {
-				if (typeof value === 'boolean') {
-					return value ? `--${key}` : undefined;
-				}
-				return `--${key}=${value}`;
-			})
-			.filter((arg): arg is string => arg !== undefined);
-
-		// Properly escape the player args for the shell
-		const escapedMpvArgs = mpvArgs.join(' ');
-
-		// Return streamlink arguments in proper order:
-		// 1. URL and quality
-		// 2. Streamlink-specific options
-		// 3. Player command and args
-		return [
+		// Streamlink-specific arguments
+		const streamlinkArgs = [
 			url,
-			'best',
-			...streamlinkArgs,
+			'best', // Quality selection
+			'--retry-max=1', // Let our manager handle retries
+			'--retry-streams=1',
+			'--stream-timeout=60',
+			'--player-no-close',
+			'--twitch-disable-hosting',
+			'--twitch-disable-ads',
+			...(url.includes('youtube.com') ? [
+				'--stream-segment-threads=3',
+				'--stream-timeout=60',
+				'--hls-segment-threads=3'
+			] : []),
 			'--player',
 			this.mpvPath,
 			'--player-args',
-			escapedMpvArgs
+			mpvArgs.join(' ')
 		];
+
+		return streamlinkArgs;
 	}
 
 	private getProcessEnv(): NodeJS.ProcessEnv {
