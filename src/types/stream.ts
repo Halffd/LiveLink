@@ -234,6 +234,57 @@ export interface FavoriteChannels {
   youtube: string[];
 }
 
+export interface MpvConfig {
+  vo?: 'gpu' | 'x11';
+  'gpu-context'?: string;
+  'gpu-api'?: string;
+  hwdec?: string;
+  border?: string;
+  'keep-open'?: string;
+  'force-window'?: string;
+  'stop-screensaver'?: string;
+  'ytdl-format'?: string;
+  'demuxer-max-bytes'?: string;
+  'demuxer-max-back-bytes'?: string;
+  'stream-buffer-size'?: string;
+  'cache-secs'?: string;
+  'cache-pause'?: string;
+  'force-seekable'?: string;
+  priority?: string;
+  'x11-bypass-compositor'?: string;
+  'vd-lavc-threads'?: string;
+  'ad-lavc-threads'?: string;
+  [key: string]: string | undefined;
+}
+
+export interface StreamlinkOptions {
+  player?: string;
+  'default-stream'?: string;
+  'stream-segment-threads'?: string;
+  'stream-timeout'?: string;
+  'hls-segment-threads'?: string;
+  'player-no-close'?: boolean;
+  'twitch-disable-hosting'?: boolean;
+  'twitch-disable-ads'?: boolean;
+  'twitch-low-latency'?: boolean;
+  'retry-max'?: string;
+  'retry-streams'?: string;
+  'ringbuffer-size'?: string;
+  'hls-live-edge'?: string;
+  'hls-segment-attempts'?: string;
+  'player-continuous-http'?: boolean;
+  'stream-segment-attempts'?: string;
+  [key: string]: string | boolean | undefined;
+}
+
+export interface StreamlinkConfig {
+  path: string;
+  mpv?: MpvConfig;
+  options?: StreamlinkOptions;
+  http_header?: Record<string, string>;
+  args?: string[];
+}
+
 /**
  * Complete application configuration
  */
@@ -278,25 +329,9 @@ export interface Config {
   /** Favorite channels configuration */
   favoriteChannels: FavoriteChannels;
   /** MPV player configuration */
-  mpv?: {
-    /** Process priority */
-    priority?: string;
-    /** Additional arguments */
-    args?: string[];
-    /** GPU context */
-    'gpu-context'?: string;
-  };
+  mpv?: MpvConfig;
   /** Streamlink configuration */
-  streamlink?: {
-    /** Path to streamlink executable */
-    path?: string;
-    /** Additional arguments */
-    args?: string[];
-    /** HTTP headers */
-    http_header?: Record<string, string>;
-    /** Additional options */
-    options?: Record<string, string>;
-  };
+  streamlink?: StreamlinkConfig;
   /** Filters configuration */
   filters?: {
     /** List of filters - can be either simple strings or complex filter objects */

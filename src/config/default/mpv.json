@@ -1,9 +1,8 @@
 {
   "vo": "gpu",
-  "gpu-context": "x11egl",
-  "gpu-api": "opengl",
-  "hwdec": "auto-safe",
+  "hwdec": "auto-copy",
+  "hwdec-codecs": "all",
   "border": "no",
   "keep-open": "no",
-  "ytdl-raw-options": "verbose="
+  "cache-secs": "30"
 } 

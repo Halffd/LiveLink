@@ -1,8 +1,34 @@
 {
   "path": "streamlink",
+  "mpv": {
+    "vo": "gpu",
+    "hwdec": "auto-copy",
+    "force-window": "immediate",
+    "border": "no",
+    "keep-open": "no",
+    "stop-screensaver": "yes",
+    "vd-lavc-dr": "no",
+    "vd-lavc-threads": "4",
+    "cache-pause": "no",
+    "demuxer-max-bytes": "500M",
+    "demuxer-max-back-bytes": "100M"
+  },
   "options": {
+    "player": "mpv",
+    "default-stream": "best",
+    "stream-segment-threads": "3",
+    "stream-timeout": "60",
+    "hls-segment-threads": "3",
+    "player-no-close": true,
+    "twitch-disable-hosting": true,
     "twitch-disable-ads": true,
     "twitch-low-latency": true,
-    "player-no-close": false
+    "retry-max": "1",
+    "retry-streams": "1",
+    "ringbuffer-size": "32M",
+    "hls-live-edge": "3",
+    "hls-segment-attempts": "3",
+    "player-continuous-http": true,
+    "stream-segment-attempts": "3"
   }
 } 

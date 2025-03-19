@@ -831,35 +831,8 @@ export class PlayerService {
 		// Format the title without quotes in the argument
 		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
 
-		// YouTube-specific arguments for better handling
-		const youtubeArgs = options.url.includes('youtube.com') ? [
-			'--ytdl-format=bestvideo[height<=?1080]+bestaudio/best',
-			'--force-seekable=yes',
-			'--demuxer-max-bytes=500M',
-			'--demuxer-max-back-bytes=100M',
-			'--stream-buffer-size=128k',
-			'--cache-secs=30',
-			'--cache-pause=no'
-		] : [];
-
 		// Base arguments for MPV direct playback
 		const baseArgs = [
-			// Video output settings
-			'--vo=gpu',
-			'--gpu-context=x11egl',
-			'--gpu-api=opengl',
-			'--hwdec=auto-safe',
-			
-			// Window settings
-			'--border=no',
-			'--keep-open=no',
-			'--force-window=immediate',
-			'--stop-screensaver',
-			
-			// Network settings
-			'--network-timeout=60',
-			'--retry-streams=no', // Don't retry on our own, let the manager handle it
-			
 			// IPC and config
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${this.SCRIPTS_PATH}`,
@@ -881,7 +854,6 @@ export class PlayerService {
 		// Combine all arguments
 		const allArgs = [
 			...baseArgs,
-			...youtubeArgs,
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		];
 
@@ -944,12 +916,6 @@ export class PlayerService {
 		const streamlinkArgs = [
 			url,
 			'best', // Quality selection
-			'--retry-max=1', // Let our manager handle retries
-			'--retry-streams=1',
-			'--stream-timeout=60',
-			'--player-no-close',
-			'--twitch-disable-hosting',
-			'--twitch-disable-ads',
 			...(url.includes('youtube.com') ? [
 				'--stream-segment-threads=3',
 				'--stream-timeout=60',
