@@ -2,7 +2,6 @@ import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { StreamOptions } from '../../types/stream.js';
 import type {
-	StreamInstance,
 	StreamOutput,
 	StreamError,
 	StreamResponse
@@ -13,6 +12,20 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
+
+interface StreamInstance {
+	id: number;
+	screen: number;
+	url: string;
+	quality: string;
+	status: string;
+	volume: number;
+	process: ChildProcess;
+	platform: 'youtube' | 'twitch';
+	title?: string;
+	startTime?: number;
+	options: StreamOptions & { screen: number };
+}
 
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
@@ -226,7 +239,8 @@ export class PlayerService {
 				startTime:
 					typeof options.startTime === 'string'
 						? new Date(options.startTime).getTime()
-						: options.startTime
+						: options.startTime,
+				options: options
 			};
 
 			// Store stream instance
@@ -471,7 +485,7 @@ export class PlayerService {
 
 		process.on('exit', (code: number | null) => {
 			logger.info(`Process exited on screen ${screen} with code ${code}`, 'PlayerService');
-			this.handleProcessExit(screen);
+			this.handleProcessExit(screen, code);
 		});
 	}
 
@@ -561,24 +575,82 @@ export class PlayerService {
 		await this.startStream({ ...options, screen });
 	}
 
-	private handleProcessExit(screen: number): void {
+	private handleProcessExit(screen: number, code: number | null): void {
 		// Clear monitoring
 		this.clearMonitoring(screen);
+
+		// Get stream options before removing the instance
+		const stream = this.streams.get(screen);
+		const streamOptions = stream?.options;
 
 		// Remove stream instance
 		this.streams.delete(screen);
 
-		// Always emit stream end event with code 0 to trigger next stream
-		this.streamRetries.delete(screen);
-		logger.info(
-			`Stream ended on screen ${screen}, moving to next stream`,
-			'PlayerService'
-		);
-		this.errorCallback?.({
-			screen,
-			error: 'Stream ended',
-			code: 0
-		});
+		// Initialize retry count if not exists
+		if (!this.streamRetries.has(screen)) {
+			this.streamRetries.set(screen, 0);
+		}
+
+		const retryCount = this.streamRetries.get(screen) || 0;
+		const MAX_RETRIES = 3;
+
+		// Handle different exit codes
+		if (code === 0) {
+			// Normal exit - clear retries and move to next stream
+			this.streamRetries.delete(screen);
+			logger.info(
+				`Stream ended normally on screen ${screen}, moving to next stream`,
+				'PlayerService'
+			);
+			this.errorCallback?.({
+				screen,
+				error: 'Stream ended normally',
+				code: 0
+			});
+		} else if (code === 2) {
+			// Streamlink error (usually temporary) - retry with backoff
+			if (retryCount < MAX_RETRIES && streamOptions) {
+				const backoffTime = Math.min(1000 * Math.pow(2, retryCount), 10000); // Max 10 second backoff
+				this.streamRetries.set(screen, retryCount + 1);
+				logger.warn(
+					`Stream error on screen ${screen} (code ${code}), retry ${retryCount + 1}/${MAX_RETRIES} in ${backoffTime}ms`,
+					'PlayerService'
+				);
+				setTimeout(() => {
+					this.startStream(streamOptions).catch(error => {
+						logger.error(
+							`Failed to restart stream on screen ${screen}`,
+							'PlayerService',
+							error
+						);
+					});
+				}, backoffTime);
+			} else {
+				// Max retries reached or no options available - move to next stream
+				this.streamRetries.delete(screen);
+				logger.error(
+					`Stream failed after ${MAX_RETRIES} retries on screen ${screen}, moving to next stream`,
+					'PlayerService'
+				);
+				this.errorCallback?.({
+					screen,
+					error: `Stream failed after ${MAX_RETRIES} retries`,
+					code: -1
+				});
+			}
+		} else {
+			// Other error codes - move to next stream
+			this.streamRetries.delete(screen);
+			logger.error(
+				`Stream ended with error code ${code} on screen ${screen}, moving to next stream`,
+				'PlayerService'
+			);
+			this.errorCallback?.({
+				screen,
+				error: `Stream ended with error code ${code}`,
+				code: -1
+			});
+		}
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -832,9 +904,15 @@ export class PlayerService {
 			url,
 			'best', // Quality selection
 			...(url.includes('youtube.com') ? [
-				'--stream-segment-threads=3',
+				'--stream-segment-threads=2',  // Reduced from 3 to 2
 				'--stream-timeout=60',
-				'--hls-segment-threads=3'
+				'--hls-segment-threads=2',     // Reduced from 3 to 2
+				'--ringbuffer-size=32M',       // Limit ring buffer size
+				'--hls-segment-stream-data',   // Stream segments directly
+				'--hls-live-edge=2',          // Reduce live edge buffer
+				'--stream-segment-attempts=3', // Limit segment retry attempts
+				'--player-no-close',          // Don't close player on stream end
+				'--hls-playlist-reload-time=2' // Faster playlist reload
 			] : []),
 			'--player',
 			this.mpvPath,
