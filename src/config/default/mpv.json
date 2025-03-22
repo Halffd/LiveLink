@@ -5,11 +5,6 @@
   "border": "no",
   "keep-open": "no",
   "cache-secs": "30",
-  "demuxer-max-bytes": "32MiB",
-  "demuxer-max-back-bytes": "16MiB",
-  "cache-pause": "no",
-  "cache-pause-wait": "1",
-  "cache-pause-initial": "no",
-  "stream-buffer-size": "4MiB",
-  "network-timeout": "5"
+  "demuxer-max-bytes": "96MiB",
+  "demuxer-max-back-bytes": "96MiB"
 } 

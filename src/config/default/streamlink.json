@@ -7,9 +7,6 @@
     "border": "no",
     "keep-open": "no",
     "stop-screensaver": "yes",
-    "vd-lavc-dr": "no",
-    "vd-lavc-threads": "4",
-    "cache-pause": "no",
     "demuxer-max-bytes": "500M",
     "demuxer-max-back-bytes": "100M"
   },
