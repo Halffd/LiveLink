@@ -141,18 +141,30 @@ class QueueService extends EventEmitter {
 
   // Add method to filter unwatched streams
   public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
+    // First check if we have any unwatched non-favorite streams
+    const hasUnwatchedNonFavorites = streams.some(stream => {
+      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      return !isFavorite && !this.watchedStreams.has(stream.url);
+    });
+
     return streams.filter(stream => {
-      // Always include favorite streams (they have higher priority < 900)
-      if (stream.priority !== undefined && stream.priority < 900) {
-        logger.debug(`QueueService: Including favorite stream ${stream.url} with priority ${stream.priority} in filtered streams`, 'QueueService');
+      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      const isWatched = this.isStreamWatched(stream.url);
+      
+      // If it's not watched, always include it
+      if (!isWatched) {
         return true;
       }
-      // Filter out watched streams
-      const isWatched = this.isStreamWatched(stream.url);
-      if (isWatched) {
-        logger.debug(`QueueService: Filtering out watched stream ${stream.url}`, 'QueueService');
+      
+      // If it's watched and a favorite, only include if all non-favorites are watched
+      if (isFavorite && !hasUnwatchedNonFavorites) {
+        logger.debug(`QueueService: Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
+        return true;
       }
-      return !isWatched;
+      
+      // Otherwise, don't include watched streams
+      logger.debug(`QueueService: Filtering out watched stream ${stream.url}`, 'QueueService');
+      return false;
     });
   }
 }
