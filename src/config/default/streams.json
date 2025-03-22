@@ -9,7 +9,7 @@
 					"type": "holodex",
 					"subtype": "favorites",
 					"enabled": true,
-					"limit": 25,
+					"limit": 200,
 					"priority": 1
 				},
 				{
@@ -17,7 +17,7 @@
 					"subtype": "organization",
 					"name": "Hololive",
 					"enabled": true,
-					"limit": 25,
+					"limit": 100,
 					"priority": 2
 				},
 				{
@@ -25,7 +25,7 @@
 					"subtype": "organization",
 					"name": "Phase Connect",
 					"enabled": true,
-					"limit": 30,
+					"limit": 15,
 					"priority": 3
 				},
 				{
@@ -41,7 +41,7 @@
 					"subtype": "organization",
 					"name": "Independents",
 					"enabled": true,
-					"limit": 25,
+					"limit": 2,
 					"priority": 5
 				}
 			],
