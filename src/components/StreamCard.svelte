@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Stream } from '$types/stream';
+  import type { Stream } from '../types/stream';
   import { createEventDispatcher } from 'svelte';
 
   const dispatch = createEventDispatcher();
@@ -52,7 +52,8 @@
     <div class="flex space-x-2">
       <button
         class="p-2 rounded hover:bg-gray-600 transition-colors"
-        on:click={() => showControls = !showControls}
+        onclick={() => showControls = !showControls}
+        aria-label="Toggle controls"
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
@@ -61,7 +62,8 @@
       
       <button
         class="p-2 rounded bg-red-500 hover:bg-red-600 transition-colors"
-        on:click={() => dispatch('stop')}
+        onclick={() => dispatch('stop')}
+        aria-label="Stop stream"
       >
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -75,7 +77,8 @@
       <div class="flex items-center space-x-4">
         <button
           class="p-2 rounded hover:bg-gray-600 transition-colors"
-          on:click={togglePause}
+          onclick={togglePause}
+          aria-label="Play/Pause"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
@@ -84,7 +87,8 @@
 
         <button
           class="p-2 rounded hover:bg-gray-600 transition-colors"
-          on:click={() => seek(-10)}
+          onclick={() => seek(-10)}
+          aria-label="Rewind 10 seconds"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0019 16V8a1 1 0 00-1.6-.8l-5.333 4zM4.066 11.2a1 1 0 000 1.6l5.334 4A1 1 0 0011 16V8a1 1 0 00-1.6-.8l-5.334 4z" />
@@ -93,7 +97,8 @@
 
         <button
           class="p-2 rounded hover:bg-gray-600 transition-colors"
-          on:click={() => seek(10)}
+          onclick={() => seek(10)}
+          aria-label="Forward 10 seconds"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.933 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 005 8v8a1 1 0 001.6.8l5.334-4zM19.933 12.8a1 1 0 000-1.6l-5.334-4A1 1 0 0013 8v8a1 1 0 001.6.8l5.334-4z" />
@@ -111,7 +116,7 @@
           min="0"
           max="100"
           bind:value={volume}
-          on:change={() => setVolume(volume)}
+          onchange={() => setVolume(volume)}
           class="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
         />
         

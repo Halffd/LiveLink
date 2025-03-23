@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { twitchUser } from '$lib/stores/auth';
+  import { page } from '$app/stores';
 
   interface StreamSource {
     url: string;
@@ -242,8 +243,19 @@
   <header class="mb-4">
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark rounded">
       <div class="container-fluid">
-        <a class="navbar-brand" href="/">LiveLink</a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <a class="navbar-brand" href={$page.url.pathname !== '/login' &&
+                                      $page.url.pathname !== '/register' ? (
+                                      currentUser && currentUser.admin ?
+                                      '/admin' :
+                                      '/'
+                                  ) : '/'}>LiveLink</a>
+        <button 
+          class="navbar-toggler" 
+          type="button" 
+          data-bs-toggle="collapse" 
+          data-bs-target="#navbarNav"
+          aria-label="Toggle navigation"
+        >
           <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarNav">
@@ -261,7 +273,7 @@
           {#if !$twitchUser.isAuthenticated}
             <button 
               class="btn btn-outline-light"
-              on:click={login}
+              onclick={login}
             >
               Login with Twitch
             </button>
@@ -279,7 +291,7 @@
       <li class="nav-item">
         <button 
           class="nav-link {activeTab === 'streams' ? 'active' : ''}"
-          on:click={() => activeTab = 'streams'}
+          onclick={() => activeTab = 'streams'}
         >
           Live Streams
         </button>
@@ -287,7 +299,7 @@
       <li class="nav-item">
         <button 
           class="nav-link {activeTab === 'api' ? 'active' : ''}"
-          on:click={() => activeTab = 'api'}
+          onclick={() => activeTab = 'api'}
         >
           API Explorer
         </button>
@@ -295,7 +307,7 @@
       <li class="nav-item">
         <button 
           class="nav-link {activeTab === 'config' ? 'active' : ''}"
-          on:click={() => activeTab = 'config'}
+          onclick={() => activeTab = 'config'}
         >
           Configuration
         </button>
@@ -305,7 +317,12 @@
     {#if error}
       <div class="alert alert-danger alert-dismissible fade show mb-4">
         <strong>Error!</strong> {error}
-        <button type="button" class="btn-close" on:click={() => error = null}></button>
+        <button 
+          type="button" 
+          class="btn-close" 
+          onclick={() => error = null}
+          aria-label="Close"
+        ></button>
       </div>
     {/if}
 
@@ -318,7 +335,7 @@
             id="orgSelect"
             class="form-select"
             bind:value={selectedOrg}
-            on:change={() => fetchData()}
+            onchange={() => fetchData()}
           >
             {#each organizations as org}
               <option value={org}>{org}</option>
@@ -328,7 +345,7 @@
         <div>
           <button 
             class="btn btn-primary"
-            on:click={fetchData}
+            onclick={fetchData}
             disabled={loading}
           >
             {loading ? 'Loading...' : 'Refresh'}
@@ -490,7 +507,7 @@
                                 {#if route.testable}
                                   <button 
                                     class="btn btn-sm btn-outline-primary"
-                                    on:click={() => testApiRoute(route)}
+                                    onclick={() => testApiRoute(route)}
                                   >
                                     Test
                                   </button>

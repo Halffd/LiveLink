@@ -120,7 +120,7 @@
       <h2 class="text-xl font-semibold">Streams</h2>
       <button
         class="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-sm"
-        on:click={addStream}
+        onclick={addStream}
       >
         Add Stream
       </button>
@@ -137,7 +137,8 @@
             <div class="flex items-center space-x-2">
               <button
                 class="p-1.5 hover:bg-gray-700 rounded"
-                on:click={() => editingStream = streamIndex}
+                onclick={() => editingStream = streamIndex}
+                aria-label="Edit stream"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -145,7 +146,8 @@
               </button>
               <button
                 class="p-1.5 hover:bg-red-600 rounded"
-                on:click={() => removeStream(streamIndex)}
+                onclick={() => removeStream(streamIndex)}
+                aria-label="Remove stream"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -227,9 +229,11 @@
               </div>
 
               <div class="col-span-2">
-                <label class="block text-sm text-gray-300 mb-2">Sorting</label>
+                <span class="block text-sm text-gray-300 mb-2">Sorting</span>
                 <div class="flex space-x-4">
+                  <label class="sr-only" for="sort-field-{streamIndex}">Sort field</label>
                   <select
+                    id="sort-field-{streamIndex}"
                     class="rounded-md bg-gray-700 border-gray-600"
                     bind:value={stream.sorting.field}
                   >
@@ -238,7 +242,9 @@
                     {/each}
                   </select>
 
+                  <label class="sr-only" for="sort-order-{streamIndex}">Sort order</label>
                   <select
+                    id="sort-order-{streamIndex}"
                     class="rounded-md bg-gray-700 border-gray-600"
                     bind:value={stream.sorting.order}
                   >
@@ -257,7 +263,7 @@
               <h4 class="text-sm font-medium text-gray-300">Sources</h4>
               <button
                 class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs"
-                on:click={() => addSource(streamIndex)}
+                onclick={() => addSource(streamIndex)}
               >
                 Add Source
               </button>
@@ -279,7 +285,8 @@
                     <div class="flex items-center space-x-2">
                       <button
                         class="p-1 hover:bg-gray-600 rounded"
-                        on:click={() => editingSource = sourceIndex}
+                        onclick={() => editingSource = sourceIndex}
+                        aria-label="Edit source"
                       >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
@@ -287,7 +294,8 @@
                       </button>
                       <button
                         class="p-1 hover:bg-red-600 rounded"
-                        on:click={() => removeSource(streamIndex, sourceIndex)}
+                        onclick={() => removeSource(streamIndex, sourceIndex)}
+                        aria-label="Remove source"
                       >
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -377,7 +385,7 @@
       <h2 class="text-xl font-semibold">Organizations</h2>
       <button
         class="px-3 py-1.5 bg-green-600 hover:bg-green-700 rounded text-sm"
-        on:click={addOrganization}
+        onclick={addOrganization}
       >
         Add Organization
       </button>
@@ -393,7 +401,8 @@
           />
           <button
             class="p-1.5 hover:bg-red-600 rounded"
-            on:click={() => removeOrganization(i)}
+            onclick={() => removeOrganization(i)}
+            aria-label="Remove organization"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -427,7 +436,7 @@
             <span class="text-sm text-gray-300">Favorite Channels</span>
             <button
               class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs"
-              on:click={() => addFavoriteChannel('holodex')}
+              onclick={() => addFavoriteChannel('holodex')}
             >
               Add Channel
             </button>
@@ -443,7 +452,8 @@
                 />
                 <button
                   class="p-1.5 hover:bg-red-600 rounded"
-                  on:click={() => removeFavoriteChannel('holodex', i)}
+                  onclick={() => removeFavoriteChannel('holodex', i)}
+                  aria-label="Remove Holodex channel"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -482,7 +492,7 @@
             <span class="text-sm text-gray-300">Favorite Channels</span>
             <button
               class="px-2 py-1 bg-blue-600 hover:bg-blue-700 rounded text-xs"
-              on:click={() => addFavoriteChannel('twitch')}
+              onclick={() => addFavoriteChannel('twitch')}
             >
               Add Channel
             </button>
@@ -498,7 +508,8 @@
                 />
                 <button
                   class="p-1.5 hover:bg-red-600 rounded"
-                  on:click={() => removeFavoriteChannel('twitch', i)}
+                  onclick={() => removeFavoriteChannel('twitch', i)}
+                  aria-label="Remove Twitch channel"
                 >
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -516,7 +527,7 @@
   <div class="flex justify-end">
     <button
       class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded text-white font-medium"
-      on:click={save}
+      onclick={save}
     >
       Save Configuration
     </button>

@@ -5,11 +5,11 @@
     let activeTab = $state('overview'); // or whatever default tab you want
     
     // Persist the active tab when navigating
-    $: {
+    $effect(() => {
         if ($page.url.searchParams.get('tab')) {
             activeTab = $page.url.searchParams.get('tab')!;
         }
-    }
+    });
     
     function switchTab(tab: string) {
         activeTab = tab;
@@ -21,13 +21,13 @@
 <div class="tabs">
     <button 
         class="tab {activeTab === 'overview' ? 'active' : ''}"
-        on:click={() => switchTab('overview')}
+        onclick={() => switchTab('overview')}
     >
         Overview
     </button>
     <button 
         class="tab {activeTab === 'endpoints' ? 'active' : ''}"
-        on:click={() => switchTab('endpoints')}
+        onclick={() => switchTab('endpoints')}
     >
         Endpoints
     </button>

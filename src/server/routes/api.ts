@@ -751,4 +751,109 @@ router.post('/api/streams/playlist', async (ctx: Context) => {
   }
 });
 
+// Add a refresh endpoint to force stream refresh
+router.post('/api/streams/refresh', async (ctx: Context) => {
+  try {
+    logger.info('Force refreshing all streams', 'API');
+    
+    // Reset the last refresh timestamps for all screens
+    const enabledScreens = streamManager.getEnabledScreens();
+    streamManager.resetRefreshTimestamps(enabledScreens);
+    
+    // Update streams queue for all enabled screens
+    await streamManager.updateAllQueues(true);
+    
+    ctx.body = { success: true, message: 'Stream data refresh initiated for all screens' };
+  } catch (error) {
+    logger.error(
+      'Failed to refresh streams',
+      'API',
+      error instanceof Error ? error : new Error(String(error))
+    );
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to refresh streams' };
+  }
+});
+
+// Add a refresh endpoint for specific screen
+router.post('/api/streams/refresh/:screen', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'Invalid screen number' };
+      return;
+    }
+    
+    logger.info(`Force refreshing streams for screen ${screen}`, 'API');
+    
+    // Reset the refresh timestamp for this screen
+    streamManager.resetRefreshTimestamps([screen]);
+    
+    // Update queue for this screen
+    await streamManager.updateQueue(screen, true);
+    
+    ctx.body = { success: true, message: `Stream data refresh initiated for screen ${screen}` };
+  } catch (error) {
+    logger.error(
+      `Failed to refresh streams for screen ${ctx.params.screen}`,
+      'API',
+      error instanceof Error ? error : new Error(String(error))
+    );
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to refresh streams' };
+  }
+});
+
+// Server status endpoint
+router.get('/api/server/status', async (ctx: Context) => {
+  try {
+    const uptimeSeconds = process.uptime();
+    const uptimeFormatted = formatUptime(uptimeSeconds);
+    
+    const activeStreams = streamManager.getActiveStreams();
+    const memUsage = process.memoryUsage();
+    
+    ctx.body = {
+      status: 'running',
+      uptime: uptimeFormatted,
+      activeStreams: activeStreams.length,
+      version: process.env.npm_package_version || '1.0.0',
+      nodeVersion: process.version,
+      platform: process.platform,
+      memory: {
+        rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`,
+        heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`,
+        heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`,
+        external: `${Math.round(memUsage.external / 1024 / 1024)} MB`
+      }
+    };
+  } catch (error) {
+    logger.error(
+      'Failed to get server status',
+      'API',
+      error instanceof Error ? error : new Error(String(error))
+    );
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to get server status' };
+  }
+});
+
+// Helper function to format uptime
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / (3600 * 24));
+  const hours = Math.floor((seconds % (3600 * 24)) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
+  
+  return parts.join(' ');
+}
+
 export const apiRouter = router; 

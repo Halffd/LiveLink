@@ -24,7 +24,7 @@
         class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
         bind:value={layer.zIndex}
         min="0"
-        on:change={updateLayer}
+        onchange={updateLayer}
       />
     </label>
 
@@ -38,7 +38,7 @@
           min="0"
           max="1"
           step="0.1"
-          on:change={updateLayer}
+          onchange={updateLayer}
         />
         <span class="text-sm text-gray-300 w-12 text-right">
           {Math.round(layer.opacity * 100)}%
@@ -51,7 +51,7 @@
         type="checkbox"
         class="rounded bg-gray-700 border-gray-600"
         bind:checked={layer.visible}
-        on:change={updateLayer}
+        onchange={updateLayer}
       />
       <span class="text-sm text-gray-300">Visible</span>
     </label>
@@ -61,7 +61,7 @@
       <select
         class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
         bind:value={layer.blendMode}
-        on:change={updateLayer}
+        onchange={updateLayer}
       >
         {#each blendModes as mode}
           <option value={mode}>{mode}</option>

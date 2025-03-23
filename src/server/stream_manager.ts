@@ -87,6 +87,9 @@ export class StreamManager extends EventEmitter {
       youtube: config.favoriteChannels.youtube || []
     };
     this.initializeQueues();
+    
+    // Synchronize disabled screens from config
+    this.synchronizeDisabledScreens();
 
     logger.info('Stream manager initialized', 'StreamManager');
 
@@ -910,6 +913,10 @@ export class StreamManager extends EventEmitter {
     
     // Disable the screen in config
     streamConfig.enabled = false;
+    
+    // Notify the PlayerService that the screen is disabled
+    this.playerService.disableScreen(screen);
+    
     logger.info(`Screen ${screen} disabled`, 'StreamManager');
   }
 
@@ -920,6 +927,10 @@ export class StreamManager extends EventEmitter {
     }
     
     streamConfig.enabled = true;
+    
+    // Notify the PlayerService that the screen is enabled
+    this.playerService.enableScreen(screen);
+    
     logger.info(`Screen ${screen} enabled`, 'StreamManager');
     
     // Start streams if auto-start is enabled
@@ -1489,6 +1500,159 @@ export class StreamManager extends EventEmitter {
 
     // Emit playlist update event
     this.emit('playlistUpdate', screen, stream.playlist);
+  }
+
+  /**
+   * Gets a list of all enabled screens
+   */
+  getEnabledScreens(): number[] {
+    // Get all enabled screens from the config
+    return this.config.streams
+      .filter(stream => stream.enabled)
+      .map(stream => stream.screen);
+  }
+
+  /**
+   * Resets the refresh timestamps for specified screens
+   * @param screens Array of screen numbers to reset
+   */
+  resetRefreshTimestamps(screens: number[]): void {
+    logger.info(`Resetting refresh timestamps for screens: ${screens.join(', ')}`, 'StreamManager');
+    
+    screens.forEach(screen => {
+      this.lastStreamRefresh.set(screen, 0);
+    });
+  }
+
+  /**
+   * Updates the queue for a specific screen, optionally forcing a refresh
+   * @param screen Screen number
+   * @param forceRefresh Whether to force a refresh regardless of time elapsed
+   */
+  async updateQueue(screen: number, forceRefresh = false): Promise<void> {
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    // Skip screens that are already being processed
+    if (this.queueProcessing.has(screen)) {
+      logger.info(`Skipping queue update for screen ${screen} - queue is being processed`, 'StreamManager');
+      return;
+    }
+
+    try {
+      // Check if there's an active stream on this screen
+      const activeStream = this.getActiveStreams().find(s => s.screen === screen);
+      
+      if (forceRefresh) {
+        // Force refresh - set last refresh to 0 to ensure new data is fetched
+        this.lastStreamRefresh.set(screen, 0);
+        logger.info(`Forcing refresh for screen ${screen}`, 'StreamManager');
+        
+        // If no active stream and not manually closed, try to start a new one
+        if (!activeStream && !this.manuallyClosedScreens.has(screen)) {
+          // Mark as processing to prevent concurrent queue processing
+          this.queueProcessing.add(screen);
+          try {
+            await this.handleEmptyQueue(screen);
+          } finally {
+            this.queueProcessing.delete(screen);
+          }
+        } else if (activeStream) {
+          // If active stream, just update the queue
+          logger.info(`Active stream on screen ${screen}, updating queue only`, 'StreamManager');
+          
+          // Fetch fresh streams
+          const streams = await this.getLiveStreams();
+          this.lastStreamRefresh.set(screen, Date.now());
+          
+          const availableStreams = streams.filter(s => s.screen === screen);
+          
+          if (availableStreams.length > 0) {
+            // Get existing queue
+            const existingQueue = queueService.getQueue(screen);
+            
+            // Combine existing queue URLs with available streams
+            const existingUrls = new Set(existingQueue.map(s => s.url));
+            
+            // Add new streams that aren't in the existing queue
+            const newStreams = availableStreams.filter(s => !existingUrls.has(s.url));
+            
+            if (newStreams.length > 0) {
+              // Filter unwatched from new streams only
+              const unwatchedNewStreams = queueService.filterUnwatchedStreams(newStreams);
+              
+              if (unwatchedNewStreams.length > 0) {
+                // Add unwatched new streams to end of existing queue
+                const updatedQueue = [...existingQueue, ...unwatchedNewStreams];
+                queueService.setQueue(screen, updatedQueue);
+                logger.info(
+                  `Updated queue for screen ${screen} with ${unwatchedNewStreams.length} new streams. Total queue size: ${updatedQueue.length}`,
+                  'StreamManager'
+                );
+              } else {
+                logger.info(`No new unwatched streams for screen ${screen}`, 'StreamManager');
+              }
+            } else {
+              logger.info(`No new streams available for screen ${screen}`, 'StreamManager');
+            }
+          }
+        }
+      } else {
+        // Non-forced update - follow normal refresh interval
+        const now = Date.now();
+        const lastRefresh = this.lastStreamRefresh.get(screen) || 0;
+        const timeSinceLastRefresh = now - lastRefresh;
+        
+        if (timeSinceLastRefresh >= this.STREAM_REFRESH_INTERVAL) {
+          logger.info(`Refresh interval elapsed for screen ${screen}, updating queue`, 'StreamManager');
+          await this.updateQueue(screen, true);
+        } else {
+          logger.info(`Refresh interval not elapsed for screen ${screen}, skipping queue update`, 'StreamManager');
+        }
+      }
+    } catch (error) {
+      logger.error(
+        `Failed to update queue for screen ${screen}`,
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  }
+
+  /**
+   * Updates all queues for enabled screens
+   * @param forceRefresh Whether to force a refresh for all screens
+   */
+  async updateAllQueues(forceRefresh = false): Promise<void> {
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    logger.info(`${forceRefresh ? 'Force updating' : 'Updating'} all stream queues...`, 'StreamManager');
+    
+    // Get all enabled screens
+    const enabledScreens = this.getEnabledScreens();
+
+    // Update queues for each screen
+    for (const screen of enabledScreens) {
+      await this.updateQueue(screen, forceRefresh);
+    }
+  }
+
+  /**
+   * Synchronize disabled screens from config to PlayerService
+   */
+  private synchronizeDisabledScreens(): void {
+    if (!this.config.player.screens) return;
+    
+    // Mark all disabled screens in the PlayerService
+    for (const screenConfig of this.config.player.screens) {
+      if (!screenConfig.enabled) {
+        this.playerService.disableScreen(screenConfig.screen);
+        logger.info(`Screen ${screenConfig.screen} marked as disabled during initialization`, 'StreamManager');
+      }
+    }
   }
 }
 

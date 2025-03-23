@@ -1046,22 +1046,32 @@ export class PlayerService {
 	}
 
 	public async ensurePlayersRunning(): Promise<void> {
-		const enabledScreens = this.config.player.screens.filter((s) => s.enabled);
-
-		for (const screen of enabledScreens) {
-			const isPlayerRunning = this.getActiveStreams().some((s) => s.screen === screen.screen);
-			if (!isPlayerRunning) {
+		try {
+			// Check all screen configs and ensure they have players running if enabled
+			for (const screen of this.config.player.screens) {
+				// Skip if screen is disabled
+				if (!screen.enabled || this.disabledScreens.has(screen.screen) || 
+					this.manuallyClosedScreens.has(screen.screen)) {
+					logger.debug(`Skipping disabled or manually closed screen ${screen.screen}`, 'PlayerService');
+					continue;
+				}
+				
+				// Skip if a stream is already running on this screen
+				const isStreamRunning = this.streams.has(screen.screen);
+				if (isStreamRunning) {
+					continue;
+				}
+				
+				// Start a player with a dummy source
+				const options: StreamOptions & { screen: number } = {
+					url: 'about:blank', // Use about:blank as dummy source
+					screen: screen.screen,
+					quality: 'best',
+					volume: screen.volume || this.config.player.defaultVolume
+				};
+				
 				try {
-					await this.startStream({
-						url: 'about:blank',
-						screen: screen.screen,
-						quality: screen.quality || this.config.player.defaultQuality,
-						volume: screen.volume !== undefined ? screen.volume : this.config.player.defaultVolume,
-						windowMaximized:
-							screen.windowMaximized !== undefined
-								? screen.windowMaximized
-								: this.config.player.windowMaximized
-					});
+					await this.startStream(options);
 					logger.info(`Started player for screen ${screen.screen}`, 'PlayerService');
 				} catch (error) {
 					logger.error(
@@ -1071,7 +1081,23 @@ export class PlayerService {
 					);
 				}
 			}
+		} catch (error) {
+			logger.error(
+				'Failed to ensure players are running',
+				'PlayerService',
+				error instanceof Error ? error : new Error(String(error))
+			);
 		}
+	}
+
+	public disableScreen(screen: number): void {
+		this.disabledScreens.add(screen);
+		logger.info(`Screen ${screen} marked as disabled in PlayerService`, 'PlayerService');
+	}
+
+	public enableScreen(screen: number): void {
+		this.disabledScreens.delete(screen);
+		logger.info(`Screen ${screen} marked as enabled in PlayerService`, 'PlayerService');
 	}
 
 	// Helper method to extract title from URL

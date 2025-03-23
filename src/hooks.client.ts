@@ -8,6 +8,14 @@ const CACHE_TTL = 30000; // 30 seconds cache lifetime
 const debounceTimers = new Map<string, NodeJS.Timeout>();
 const DEBOUNCE_TIME = 300; // 300ms debounce time
 
+// Initialize client hooks
+export function init() {
+  // This function is required by SvelteKit
+  return {
+    version: '1.0.0'
+  };
+}
+
 // Handle client-side errors
 export const handleError: HandleClientError = ({ error, event }) => {
   const errorId = crypto.randomUUID();

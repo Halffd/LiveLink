@@ -40,7 +40,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig.vo}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Auto</option>
             {#each videoOutputs as output}
@@ -54,7 +54,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig.hwdec}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Auto</option>
             {#each hwdecOptions as option}
@@ -68,7 +68,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig['gpu-api']}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Auto</option>
             {#each gpuApiOptions as api}
@@ -87,7 +87,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig.video_sync}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Default</option>
             {#each videoSyncOptions as sync}
@@ -101,7 +101,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig.tscale}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Default</option>
             {#each tscaleOptions as scale}
@@ -115,9 +115,20 @@
             type="checkbox"
             class="rounded bg-gray-700 border-gray-600"
             bind:checked={mpvConfig.interpolation}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           />
           <span class="text-sm text-gray-300">Enable Interpolation</span>
+        </label>
+
+        <label class="block">
+          <span class="text-sm text-gray-300">Deband</span>
+          <input
+            type="range"
+            bind:value={mpvConfig.deband}
+            min="0"
+            max="32"
+            onchange={updateMPVConfig}
+          />
         </label>
       </div>
 
@@ -130,7 +141,7 @@
           <select
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={mpvConfig.audio_channels}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           >
             <option value="">Auto</option>
             {#each audioChannelOptions as channels}
@@ -149,7 +160,7 @@
             type="checkbox"
             class="rounded bg-gray-700 border-gray-600"
             bind:checked={mpvConfig.gpu_dumb_mode}
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           />
           <span class="text-sm text-gray-300">GPU Dumb Mode</span>
         </label>
@@ -162,7 +173,7 @@
             bind:value={mpvConfig.vd_lavc_threads}
             min="0"
             max="32"
-            on:change={updateMPVConfig}
+            onchange={updateMPVConfig}
           />
         </label>
       </div>
@@ -185,7 +196,7 @@
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={streamlinkConfig.retry_open}
             min="0"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
 
@@ -196,7 +207,7 @@
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={streamlinkConfig.retry_streams}
             min="0"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
 
@@ -207,7 +218,7 @@
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={streamlinkConfig.stream_timeout}
             min="0"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
       </div>
@@ -223,7 +234,7 @@
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={streamlinkConfig.ringbuffer_size}
             placeholder="e.g., 32M"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
 
@@ -235,7 +246,7 @@
             bind:value={streamlinkConfig.stream_segment_threads}
             min="1"
             max="10"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
 
@@ -246,7 +257,7 @@
             class="mt-1 block w-full rounded-md bg-gray-700 border-gray-600"
             bind:value={streamlinkConfig.stream_segment_timeout}
             min="0"
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
         </label>
       </div>
@@ -260,7 +271,7 @@
             type="checkbox"
             class="rounded bg-gray-700 border-gray-600"
             bind:checked={streamlinkConfig.twitch_disable_hosting}
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
           <span class="text-sm text-gray-300">Disable Twitch Hosting</span>
         </label>
@@ -270,7 +281,7 @@
             type="checkbox"
             class="rounded bg-gray-700 border-gray-600"
             bind:checked={streamlinkConfig.twitch_disable_ads}
-            on:change={updateStreamlinkConfig}
+            onchange={updateStreamlinkConfig}
           />
           <span class="text-sm text-gray-300">Disable Twitch Ads</span>
         </label>
