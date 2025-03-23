@@ -690,16 +690,22 @@ export class PlayerService {
 		const player = this.streams.get(screen);
 		if (!player || !player.process) {
 			logger.debug(`No player to stop on screen ${screen}`, 'PlayerService');
+			// Clean up any resources that might be left even if no player is active
+			this.cleanup_after_stop(screen);
 			return true; // Nothing to stop, so consider it a success
 		}
 		
+		// Track the stream being terminated so we don't restart it automatically
+		this.manuallyClosedScreens.add(screen);
+
 		// Try graceful shutdown via IPC first
 		let gracefulShutdown = false;
 		try {
+			// Send quit command via IPC
 			await this.sendMpvCommand(screen, 'quit');
 			
-			// Give it a moment to shutdown gracefully
-			await new Promise((resolve) => setTimeout(resolve, 500));
+			// Give it a moment to shutdown gracefully (increased timeout)
+			await new Promise((resolve) => setTimeout(resolve, 1000));
 			
 			// Check if the process has exited
 			gracefulShutdown = !this.isProcessRunning(player.process.pid);
@@ -712,28 +718,88 @@ export class PlayerService {
 			logger.debug(`IPC command failed for screen ${screen}, will try force kill: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
 		}
 		
+		// If not force but graceful shutdown worked, use normal cleanup
+		if (gracefulShutdown && !force) {
+			this.cleanup_after_stop(screen);
+			return true;
+		}
+		
 		// If graceful shutdown failed or force is true, use the forceful method
-		if (!gracefulShutdown || force) {
-			try {
-				player.process.kill('SIGTERM');
+		try {
+			// First, try to find and kill any child processes
+			this.killChildProcesses(player.process.pid);
+			
+			// Now send SIGTERM to the main process
+			player.process.kill('SIGTERM');
+			
+			// Give it a moment to respond to SIGTERM (increased timeout)
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			
+			// Check if we need to force kill with SIGKILL
+			if (this.isProcessRunning(player.process.pid)) {
+				logger.debug(`SIGTERM didn't work for screen ${screen}, using SIGKILL`, 'PlayerService');
+				player.process.kill('SIGKILL');
 				
-				// Give it a moment to respond to SIGTERM
-				await new Promise((resolve) => setTimeout(resolve, 300));
+				// Give it a moment for SIGKILL to take effect
+				await new Promise((resolve) => setTimeout(resolve, 200));
 				
-				// Check if we need to force kill with SIGKILL
+				// If process still exists, try more aggressive approach with system kill command
 				if (this.isProcessRunning(player.process.pid)) {
-					logger.debug(`SIGTERM didn't work for screen ${screen}, using SIGKILL`, 'PlayerService');
-					player.process.kill('SIGKILL');
+					logger.warn(`Process for screen ${screen} resistant to SIGKILL, using system kill command`, 'PlayerService');
+					try {
+						execSync(`kill -9 ${player.process.pid}`);
+					} catch (error) {
+						logger.error(`System kill failed for screen ${screen}`, 'PlayerService', 
+							error instanceof Error ? error : String(error));
+					}
 				}
-			} catch (error) {
-				logger.error(`Error killing process for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
 			}
+		} catch (error) {
+			logger.error(`Error killing process for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
 		}
 		
 		// Clean up regardless of kill success
 		this.cleanup_after_stop(screen);
 		
 		return true;
+	}
+	
+	/**
+	 * Kill child processes of a given parent process
+	 */
+	private killChildProcesses(parentPid?: number): void {
+		if (!parentPid) return;
+		
+		try {
+			// Get child processes
+			const psOutput = execSync(`ps -o pid --ppid ${parentPid} --no-headers`).toString();
+			const childPids = psOutput.trim().split('\n').filter(Boolean).map(pid => parseInt(pid.trim()));
+			
+			// Kill each child with increasing force
+			for (const pid of childPids) {
+				if (isNaN(pid)) continue;
+				
+				try {
+					// Try SIGTERM first
+					process.kill(pid, 'SIGTERM');
+					setTimeout(() => {
+						try {
+							// Check if still running and use SIGKILL if needed
+							if (this.isProcessRunning(pid)) {
+								process.kill(pid, 'SIGKILL');
+							}
+						} catch {
+							// Process might already be gone
+						}
+					}, 300);
+				} catch {
+					// Process might already be gone
+				}
+			}
+		} catch (error) {
+			// Ignore errors, this is a best-effort approach
+			logger.debug(`Error killing child processes: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+		}
 	}
 	
 	/**
@@ -747,12 +813,34 @@ export class PlayerService {
 			this.healthCheckIntervals.delete(screen);
 		}
 		
+		// Clean up refresh timer
+		const refreshTimer = this.streamRefreshTimers.get(screen);
+		if (refreshTimer) {
+			clearTimeout(refreshTimer);
+			this.streamRefreshTimers.delete(screen);
+		}
+		
+		// Clean up inactive timer
+		const inactiveTimer = this.inactiveTimers.get(screen);
+		if (inactiveTimer) {
+			clearTimeout(inactiveTimer);
+			this.inactiveTimers.delete(screen);
+		}
+		
 		// Clean up player state
 		this.streams.delete(screen);
 		this.streamRetries.delete(screen);
 		this.streamStartTimes.delete(screen);
-		this.streamRefreshTimers.delete(screen);
-		this.inactiveTimers.delete(screen);
+		
+		// Clean up IPC socket if it exists
+		const ipcPath = this.ipcPaths.get(screen);
+		if (ipcPath && fs.existsSync(ipcPath)) {
+			try {
+				fs.unlinkSync(ipcPath);
+			} catch (error) {
+				logger.debug(`Failed to remove IPC socket ${ipcPath}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+			}
+		}
 		this.ipcPaths.delete(screen);
 		
 		logger.debug(`Cleaned up resources for screen ${screen}`, 'PlayerService');
@@ -858,7 +946,7 @@ export class PlayerService {
 		const mpvArgs = [
 			// Window position and size
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			
+			`--vo=x11`,
 			// Audio settings
 			`--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			
@@ -867,6 +955,11 @@ export class PlayerService {
 			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			
+			// Memory limits for mpv
+			'--demuxer-max-bytes=100M',
+			'--demuxer-max-back-bytes=50M',
+			'--stream-buffer-size=4M',
+			
 			// Title
 			titleArg,
 			
@@ -874,21 +967,26 @@ export class PlayerService {
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		].filter(Boolean);
 
+		// Common arguments for all platforms
+		const commonArgs = [
+			'--ringbuffer-size=16M',          // Reduced ring buffer size
+			'--stream-segment-threads=1',     // Reduced from 2 to 1
+			'--stream-segment-attempts=2',    // Reduced attempts
+			'--hls-live-edge=1',              // Minimum edge buffer
+			'--hls-segment-stream-data',      // Stream segments directly
+			'--player-no-close',              // Don't close player on stream end
+			'--stream-timeout=30',            // Reduced timeout
+			'--http-timeout=20',              // HTTP timeout in seconds
+			'--retry-open=2',                 // Limit retry attempts
+			'--retry-max=1',                  // Only retry once
+			'--retry-streams=1',              // Only retry once
+		];
+
 		// Streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
 			'best', // Quality selection
-			...(url.includes('youtube.com') ? [
-				'--stream-segment-threads=2',  // Reduced from 3 to 2
-				'--stream-timeout=60',
-				'--hls-segment-threads=2',     // Reduced from 3 to 2
-				'--ringbuffer-size=32M',       // Limit ring buffer size
-				'--hls-segment-stream-data',   // Stream segments directly
-				'--hls-live-edge=2',          // Reduce live edge buffer
-				'--stream-segment-attempts=3', // Limit segment retry attempts
-				'--player-no-close',          // Don't close player on stream end
-				'--hls-playlist-reload-time=2' // Faster playlist reload
-			] : []),
+			...commonArgs,
 			'--player',
 			this.mpvPath,
 			'--player-args',
@@ -978,9 +1076,23 @@ export class PlayerService {
 		logger.info('Cleaning up player service...', 'PlayerService');
 
 		try {
-			// Stop all streams
+			// Stop all streams with force=true to ensure they're killed
 			const activeScreens = Array.from(this.streams.keys());
-			await Promise.all(activeScreens.map((screen) => this.stopStream(screen, true)));
+			
+			// Attempt graceful shutdown first
+			const promises = activeScreens.map((screen) => this.stopStream(screen, false));
+			await Promise.allSettled(promises);
+			
+			// Wait a moment for graceful shutdown to complete
+			await new Promise(resolve => setTimeout(resolve, 500));
+			
+			// Force kill any remaining streams
+			const remainingScreens = Array.from(this.streams.keys());
+			if (remainingScreens.length > 0) {
+				logger.warn(`Forcing shutdown of ${remainingScreens.length} remaining streams`, 'PlayerService');
+				const forcePromises = remainingScreens.map((screen) => this.stopStream(screen, true));
+				await Promise.allSettled(forcePromises);
+			}
 
 			// Clear all timers and state
 			activeScreens.forEach((screen) => {
@@ -1001,11 +1113,22 @@ export class PlayerService {
 					);
 				}
 			});
-
+			
+			// Kill any remaining streamlink processes
+			try {
+				logger.info('Checking for any remaining streamlink processes...', 'PlayerService');
+				execSync('pkill -9 streamlink || true');
+			} catch {
+				// Ignore errors, this is just a precaution
+			}
+			
+			// Reset all state
 			this.ipcPaths.clear();
 			this.streams.clear();
 			this.manuallyClosedScreens.clear();
 			this.disabledScreens.clear();
+			this.streamRetries.clear();
+			this.streamStartTimes.clear();
 
 			logger.info('Player service cleanup complete', 'PlayerService');
 		} catch (error) {
@@ -1014,6 +1137,13 @@ export class PlayerService {
 				'PlayerService',
 				error instanceof Error ? error : new Error(String(error))
 			);
+			// Even if there's an error, try to kill remaining processes
+			try {
+				execSync('pkill -9 streamlink || true');
+				execSync('pkill -9 mpv || true');
+			} catch {
+				// Ignore errors
+			}
 			throw error;
 		}
 	}
