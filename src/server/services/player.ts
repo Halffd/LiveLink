@@ -856,16 +856,6 @@ export class PlayerService {
 
 		// MPV arguments specifically for Streamlink
 		const mpvArgs = [
-			// Video output settings for Streamlink
-			'--vo=x11',
-			'--hwdec=auto-safe',
-			
-			// Window settings
-			'--border=no',
-			'--keep-open=no',
-			'--force-window=immediate',
-			'--stop-screensaver',
-			
 			// Window position and size
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			

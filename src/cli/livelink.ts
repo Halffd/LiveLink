@@ -577,6 +577,55 @@ serverCommands
   });
 
 serverCommands
+  .command('stop-all')
+  .description('Stop all players and the LiveLink server')
+  .action(async () => {
+    try {
+      console.log(chalk.blue('Stopping all players and the LiveLink server...'));
+      
+      // Create AbortController for timeout (longer timeout since we're stopping all players first)
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
+      
+      try {
+        const response = await fetch('http://localhost:3001/api/server/stop-all', {
+          method: 'POST',
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeout);
+        
+        if (response.ok) {
+          console.log(chalk.green('All players and server shutdown initiated successfully'));
+          console.log(chalk.yellow('Waiting for processes to terminate...'));
+          // Wait a moment for cleanup to complete
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          process.exit(0);
+        } else {
+          const error = await response.text();
+          console.error(chalk.red('Failed to stop players and server:'), error);
+          process.exit(1);
+        }
+      } catch (error) {
+        clearTimeout(timeout);
+        if (error instanceof Error) {
+          if (error.name === 'AbortError') {
+            console.error(chalk.red('Stop-all command timed out'));
+          } else {
+            console.error(chalk.red('Failed to stop players and server:'), error.message);
+          }
+        } else {
+          console.error(chalk.red('Failed to stop players and server:'), String(error));
+        }
+        process.exit(1);
+      }
+    } catch (error) {
+      console.error(chalk.red('Failed to stop players and server:'), error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+serverCommands
   .command('status')
   .description('Get server status')
   .action(async () => {

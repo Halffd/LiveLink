@@ -443,9 +443,61 @@ router.post('/api/server/stop', async (ctx: Context) => {
         logger.error('Failed to cleanup server', 'API', error instanceof Error ? error : new Error(String(error)));
         process.exit(1);
       }
-    }, 100);
+    }, 1000);
   } catch (error) {
-    logger.error('Failed to stop server', 'API', error instanceof Error ? error : new Error(String(error)));
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Stop server and all player processes
+router.post('/api/server/stop-all', async (ctx: Context) => {
+  try {
+    logger.info('Received stop-all request (stopping all players and server)', 'API');
+    
+    // Set response headers to prevent connection from closing
+    ctx.set('Connection', 'close');
+    
+    // Send response before cleanup
+    ctx.status = 200;
+    ctx.body = { success: true, message: 'Stopping all players and server...' };
+    
+    // Force send the response
+    ctx.res.end();
+    
+    // Perform cleanup after response is sent
+    setTimeout(async () => {
+      try {
+        logger.info('Stopping all player processes...', 'API');
+        
+        // Get all active streams and stop them
+        const activeStreams = streamManager.getActiveStreams();
+        if (activeStreams.length > 0) {
+          logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
+          
+          const stopPromises = activeStreams.map(stream => {
+            logger.info(`Stopping player on screen ${stream.screen}`, 'API');
+            return streamManager.stopStream(stream.screen, true);
+          });
+          
+          // Wait for all streams to be stopped
+          await Promise.allSettled(stopPromises);
+          logger.info('All player processes stopped', 'API');
+        } else {
+          logger.info('No active streams to stop', 'API');
+        }
+        
+        // Then perform server cleanup
+        logger.info('Starting server cleanup...', 'API');
+        await streamManager.cleanup();
+        logger.info('Server cleanup complete, exiting...', 'API');
+        process.exit(0);
+      } catch (error) {
+        logger.error('Failed during stop-all sequence', 'API', error instanceof Error ? error : new Error(String(error)));
+        process.exit(1);
+      }
+    }, 1000);
+  } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
   }

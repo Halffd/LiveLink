@@ -1,10 +1,46 @@
+import { EventEmitter } from 'events';
+import { PlayerService } from '../services/player.js';
+import { logger } from '../services/logger/index.js';
+import { loadAllConfigs } from '../../config/loader.js';
+import type { Config } from '../../types/config.js';
+
+export class StreamManager extends EventEmitter {
+	private streams: Array<{ screen: number; status: string }> = [];
+	private config: any; // Using any temporarily for the config
+	private playerService: PlayerService;
+	private screenStatus: Map<number, { disabled: boolean }> = new Map();
+
+	constructor(config: any, playerService: PlayerService) {
+		super();
+		this.config = config;
+		this.playerService = playerService;
+		
+		// Initialize screen status
+		this.initializeScreenStatus();
+	}
+
+	private async initializeScreenStatus(): Promise<void> {
+		const config = await loadAllConfigs();
+		if (config.screens) {
+			Object.entries(config.screens).forEach(([screenStr, screenConfig]: [string, any]) => {
+				const screen = parseInt(screenStr, 10);
+				this.screenStatus.set(screen, { disabled: !!screenConfig.disabled });
+			});
+		}
+	}
+
+	async stopStream(screen: number, force?: boolean): Promise<boolean> {
+		// This is a placeholder - in a real implementation, this would stop a stream
+		return this.playerService.stopStream(screen, force);
+	}
+	
 	/**
 	 * Disables a screen in the configuration and stops any running streams on it
 	 * @param screen The screen number to disable
 	 */
 	async disableScreen(screen: number): Promise<{ success: boolean }> {
 		try {
-			logger.debug(`[StreamManager] Disabling screen ${screen}`);
+			logger.debug(`[StreamManager] Disabling screen ${screen}`, 'StreamManager');
 			
 			// First stop any streams running on this screen
 			const activeStream = this.streams.find(
@@ -12,7 +48,7 @@
 			);
 			
 			if (activeStream) {
-				logger.debug(`[StreamManager] Stopping active stream on screen ${screen} before disabling`);
+				logger.debug(`[StreamManager] Stopping active stream on screen ${screen} before disabling`, 'StreamManager');
 				try {
 					// Use a timeout to ensure the stream is stopped
 					const stopPromise = this.stopStream(screen);
@@ -45,7 +81,7 @@
 			// Remove stream from memory if it's still there
 			this.streams = this.streams.filter((s) => !(s.screen === screen && s.status === 'active'));
 			
-			logger.debug(`[StreamManager] Screen ${screen} disabled successfully`);
+			logger.debug(`[StreamManager] Screen ${screen} disabled successfully`, 'StreamManager');
 			return { success: true };
 		} catch (error) {
 			logger.error(`[StreamManager] Failed to disable screen ${screen}`, 'StreamManager', error);
@@ -59,7 +95,7 @@
 	 */
 	async enableScreen(screen: number): Promise<{ success: boolean }> {
 		try {
-			logger.debug(`[StreamManager] Enabling screen ${screen}`);
+			logger.debug(`[StreamManager] Enabling screen ${screen}`, 'StreamManager');
 			
 			// Update the config to enable the screen
 			const config = await loadAllConfigs();
@@ -77,7 +113,7 @@
 			// Update internal state
 			this.screenStatus.set(screen, { disabled: false });
 			
-			logger.debug(`[StreamManager] Screen ${screen} enabled successfully`);
+			logger.debug(`[StreamManager] Screen ${screen} enabled successfully`, 'StreamManager');
 			return { success: true };
 		} catch (error) {
 			logger.error(`[StreamManager] Failed to enable screen ${screen}`, 'StreamManager', error);
@@ -89,7 +125,7 @@
 	 * Initialize the server
 	 */
 	async initServer(): Promise<void> {
-		logger.debug('[StreamManager] Initializing server');
+		logger.debug('[StreamManager] Initializing server', 'StreamManager');
 		
 		// Load screen configuration from config
 		try {
@@ -97,19 +133,19 @@
 			
 			// Initialize screen status from config
 			if (config.screens) {
-				logger.debug('[StreamManager] Loading screen status from config');
+				logger.debug('[StreamManager] Loading screen status from config', 'StreamManager');
 				
 				// Initialize screen status for all configured screens
-				Object.entries(config.screens).forEach(([screenStr, screenConfig]) => {
+				Object.entries(config.screens).forEach(([screenStr, screenConfig]: [string, any]) => {
 					const screen = parseInt(screenStr, 10);
 					
 					// If the screen is disabled in config, update both StreamManager and PlayerService
 					if (screenConfig.disabled) {
-						logger.debug(`[StreamManager] Screen ${screen} marked as disabled from config`);
+						logger.debug(`[StreamManager] Screen ${screen} marked as disabled from config`, 'StreamManager');
 						this.screenStatus.set(screen, { disabled: true });
 						this.playerService.disableScreen(screen);
 					} else {
-						logger.debug(`[StreamManager] Screen ${screen} marked as enabled from config`);
+						logger.debug(`[StreamManager] Screen ${screen} marked as enabled from config`, 'StreamManager');
 						this.screenStatus.set(screen, { disabled: false });
 						this.playerService.enableScreen(screen);
 					}
@@ -126,6 +162,11 @@
 		}
 	}
 	
+	private async initStreams(): Promise<void> {
+		// This is a placeholder - in a real implementation, this would initialize streams
+		logger.debug('[StreamManager] Initializing streams', 'StreamManager');
+	}
+	
 	/**
 	 * Ensure StreamManager and PlayerService screen states are in sync
 	 */
@@ -138,4 +179,22 @@
 				this.playerService.enableScreen(screen);
 			}
 		}
-	} 
+	}
+	
+	/**
+	 * Clean up resources before shutdown
+	 */
+	async cleanup(): Promise<void> {
+		logger.debug('[StreamManager] Cleaning up before shutdown', 'StreamManager');
+		
+		// Stop all streams
+		const stopPromises = this.streams
+			.filter(stream => stream.status === 'active')
+			.map(stream => this.stopStream(stream.screen, true));
+			
+		await Promise.allSettled(stopPromises);
+		
+		// Let player service clean up its resources
+		await this.playerService.cleanup();
+	}
+} 
