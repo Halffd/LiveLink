@@ -908,14 +908,54 @@ export class StreamManager extends EventEmitter {
       throw new Error(`Invalid screen number: ${screen}`);
     }
     
-    // Stop any active streams
-    await this.stopStream(screen, true);
+    // Notify the PlayerService first that the screen is disabled
+    // This ensures any new attempts to start streams will be blocked
+    this.playerService.disableScreen(screen);
+    
+    // Stop any active streams with up to 3 attempts
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await this.stopStream(screen, true);
+      if (result) {
+        break;
+      }
+      // If stopping failed, wait a bit and try again
+      if (attempt < 2) {
+        logger.warn(`Failed to stop stream on screen ${screen}, attempt ${attempt + 1}, retrying...`, 'StreamManager');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    // Force kill the stream process if it exists
+    const stream = this.streams.get(screen);
+    if (stream && stream.process) {
+      logger.warn(`Forcibly killing stream process for screen ${screen}`, 'StreamManager');
+      try {
+        stream.process.kill('SIGKILL');
+      } catch (e) {
+        logger.error(`Failed to kill stream process: ${e}`, 'StreamManager');
+      }
+    }
+    
+    // Force clean up any remaining streams on this screen
+    if (this.streams.has(screen)) {
+      logger.warn(`Stream on screen ${screen} could not be stopped properly, forcing cleanup`, 'StreamManager');
+      this.streams.delete(screen);
+    }
     
     // Disable the screen in config
     streamConfig.enabled = false;
     
-    // Notify the PlayerService that the screen is disabled
-    this.playerService.disableScreen(screen);
+    // Also make sure PlayerService has cleaned up its stream data
+    const activeStreams = this.playerService.getActiveStreams();
+    if (activeStreams.some(s => s.screen === screen)) {
+      logger.warn(`PlayerService still has active stream for screen ${screen}, forcing cleanup`, 'StreamManager');
+      // Send a direct command to clean up
+      try {
+        await this.playerService.stopStream(screen, true);
+      } catch (e) {
+        logger.error(`Failed final PlayerService cleanup: ${e}`, 'StreamManager');
+      }
+    }
     
     logger.info(`Screen ${screen} disabled`, 'StreamManager');
   }

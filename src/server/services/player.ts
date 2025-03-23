@@ -12,6 +12,7 @@ import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
+import net from 'net';
 
 interface StreamInstance {
 	id: number;
@@ -680,111 +681,95 @@ export class PlayerService {
 		this.streamRetries.delete(screen);
 	}
 
-	public async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
-		const stream = this.streams.get(screen);
-		if (!stream) return false;
-
+	/**
+	 * Stop a stream that is currently playing on a screen
+	 */
+	async stopStream(screen: number, force: boolean = false): Promise<boolean> {
+		logger.debug(`Stopping stream on screen ${screen}`, 'PlayerService');
+		
+		const player = this.streams.get(screen);
+		if (!player || !player.process) {
+			logger.debug(`No player to stop on screen ${screen}`, 'PlayerService');
+			return true; // Nothing to stop, so consider it a success
+		}
+		
+		// Try graceful shutdown via IPC first
+		let gracefulShutdown = false;
 		try {
-			if (isManualStop) {
-				this.manuallyClosedScreens.add(screen);
+			await this.sendMpvCommand(screen, 'quit');
+			
+			// Give it a moment to shutdown gracefully
+			await new Promise((resolve) => setTimeout(resolve, 500));
+			
+			// Check if the process has exited
+			gracefulShutdown = !this.isProcessRunning(player.process.pid);
+			if (gracefulShutdown) {
+				logger.debug(`Graceful shutdown successful for screen ${screen}`, 'PlayerService');
+			} else {
+				logger.debug(`Graceful shutdown failed for screen ${screen}, will try force kill`, 'PlayerService');
 			}
-
-			// Stop the process with improved cleanup
-			if (stream.process) {
-				try {
-					// Clear all process listeners first to prevent any race conditions
-					stream.process.removeAllListeners();
-					
-					// Try graceful shutdown first
-					stream.process.kill('SIGTERM');
-
-					// Wait for process to exit or force kill
-					await Promise.race([
-						new Promise<void>((resolve) => {
-							const cleanup = () => {
-								resolve();
-							};
-							stream.process?.once('exit', cleanup);
-							stream.process?.once('close', cleanup);
-						}),
-						new Promise<void>((resolve, reject) => {
-							setTimeout(async () => {
-								try {
-									if (stream.process?.pid) {
-										// Double check if process still exists
-										try {
-											process.kill(stream.process.pid, 0);
-											// Process still exists, force kill it
-											stream.process.kill('SIGKILL');
-											
-											// Wait a bit more and verify it's gone
-											await new Promise(r => setTimeout(r, 200));
-											try {
-												process.kill(stream.process.pid, 0);
-												reject(new Error('Process still running after SIGKILL'));
-											} catch {
-												// Process is gone, which is good
-												resolve();
-											}
-										} catch {
-											// Process is already gone
-											resolve();
-										}
-									}
-								} catch {
-									// Process might already be gone
-									resolve();
-								}
-							}, this.SHUTDOWN_TIMEOUT);
-						})
-					]);
-				} catch (error) {
-					logger.warn(
-						`Error stopping process on screen ${screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
-					
-					// Final cleanup attempt - force kill if still running
-					try {
-						if (stream.process?.pid) {
-							process.kill(stream.process.pid, 'SIGKILL');
-						}
-					} catch {
-						// Process might already be gone
-					}
-				}
-			}
-
-			// Clear all monitoring and state
-			this.clearMonitoring(screen);
-			this.streams.delete(screen);
-
-			// Clean up IPC socket
-			const ipcPath = this.ipcPaths.get(screen);
-			if (ipcPath && fs.existsSync(ipcPath)) {
-				try {
-					fs.unlinkSync(ipcPath);
-				} catch (error) {
-					logger.warn(
-						`Failed to remove IPC socket for screen ${screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				}
-			}
-			this.ipcPaths.delete(screen);
-
-			// Add a delay to ensure cleanup is complete
-			await new Promise(r => setTimeout(r, 200));
-
-			return true;
 		} catch (error) {
-			logger.error(
-				`Failed to stop stream on screen ${screen}`,
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
+			logger.debug(`IPC command failed for screen ${screen}, will try force kill: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+		}
+		
+		// If graceful shutdown failed or force is true, use the forceful method
+		if (!gracefulShutdown || force) {
+			try {
+				player.process.kill('SIGTERM');
+				
+				// Give it a moment to respond to SIGTERM
+				await new Promise((resolve) => setTimeout(resolve, 300));
+				
+				// Check if we need to force kill with SIGKILL
+				if (this.isProcessRunning(player.process.pid)) {
+					logger.debug(`SIGTERM didn't work for screen ${screen}, using SIGKILL`, 'PlayerService');
+					player.process.kill('SIGKILL');
+				}
+			} catch (error) {
+				logger.error(`Error killing process for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+			}
+		}
+		
+		// Clean up regardless of kill success
+		this.cleanup_after_stop(screen);
+		
+		return true;
+	}
+	
+	/**
+	 * Clean up resources after a stream is stopped
+	 */
+	private cleanup_after_stop(screen: number): void {
+		// Clean up the monitoring interval
+		const monitorInterval = this.healthCheckIntervals.get(screen);
+		if (monitorInterval) {
+			clearInterval(monitorInterval);
+			this.healthCheckIntervals.delete(screen);
+		}
+		
+		// Clean up player state
+		this.streams.delete(screen);
+		this.streamRetries.delete(screen);
+		this.streamStartTimes.delete(screen);
+		this.streamRefreshTimers.delete(screen);
+		this.inactiveTimers.delete(screen);
+		this.ipcPaths.delete(screen);
+		
+		logger.debug(`Cleaned up resources for screen ${screen}`, 'PlayerService');
+	}
+	
+	/**
+	 * Check if a process is still running without sending a signal
+	 */
+	private isProcessRunning(pid: number | undefined): boolean {
+		if (!pid) return false;
+		
+		try {
+			// The kill with signal 0 doesn't actually kill the process
+			// It just checks if the process exists
+			process.kill(pid, 0);
+			return true;
+		} catch {
 			return false;
 		}
 	}
@@ -1091,13 +1076,22 @@ export class PlayerService {
 	}
 
 	public disableScreen(screen: number): void {
+		logger.debug(`PlayerService: Disabling screen ${screen}`, 'PlayerService');
 		this.disabledScreens.add(screen);
-		logger.info(`Screen ${screen} marked as disabled in PlayerService`, 'PlayerService');
+		
+		// Stop any running stream for this screen
+		this.stopStream(screen, true).catch(error => {
+			logger.error(`Failed to stop stream when disabling screen ${screen}`, 'PlayerService', error);
+		});
 	}
 
 	public enableScreen(screen: number): void {
+		logger.debug(`PlayerService: Enabling screen ${screen}`, 'PlayerService');
 		this.disabledScreens.delete(screen);
-		logger.info(`Screen ${screen} marked as enabled in PlayerService`, 'PlayerService');
+		this.manuallyClosedScreens.delete(screen);
+		
+		// Ensure players get restarted on this screen in the next ensurePlayersRunning call
+		// We don't start it immediately to allow for proper initialization
 	}
 
 	// Helper method to extract title from URL
@@ -1139,5 +1133,44 @@ export class PlayerService {
 			);
 			return 'Unknown Stream';
 		}
+	}
+
+	/**
+	 * Sends a command directly to the MPV IPC socket
+	 */
+	private async sendMpvCommand(screen: number, command: string): Promise<void> {
+		const ipcPath = this.ipcPaths.get(screen);
+		if (!ipcPath) {
+			logger.warn(`No IPC path found for screen ${screen}`, 'PlayerService');
+			throw new Error(`No IPC socket for screen ${screen}`);
+		}
+		
+		return new Promise((resolve, reject) => {
+			try {
+				const socket = net.createConnection(ipcPath);
+				
+				socket.on('connect', () => {
+					const mpvCommand = JSON.stringify({ command: [command] });
+					socket.write(mpvCommand + '\n');
+					socket.end();
+					resolve();
+				});
+				
+				socket.on('error', (err: Error) => {
+					logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err);
+					reject(err);
+				});
+				
+				// Set a timeout in case the connection hangs
+				socket.setTimeout(1000, () => {
+					socket.destroy();
+					logger.error(`Command send timeout for screen ${screen}`, 'PlayerService');
+					reject(new Error('Socket timeout'));
+				});
+			} catch (err) {
+				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err);
+				reject(err);
+			}
+		});
 	}
 }
