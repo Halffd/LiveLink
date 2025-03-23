@@ -931,12 +931,14 @@ export class PlayerService {
 		try {
 			exec(`echo "${command}" | socat - ${ipcPath}`, (err) => {
 				if (err) {
-					logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err);
+					logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err as Error);
 				}
 			});
 		} catch (err) {
 			if (err instanceof Error) {
 				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err);
+			} else {
+				logger.error(`Command send error for screen ${screen}`, 'PlayerService', String(err));
 			}
 		}
 	}
@@ -1158,7 +1160,7 @@ export class PlayerService {
 					reject(new Error('Socket timeout'));
 				});
 			} catch (err) {
-				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err);
+				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err instanceof Error ? err : String(err));
 				reject(err);
 			}
 		});
