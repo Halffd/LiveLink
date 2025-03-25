@@ -1,7 +1,7 @@
 {
   "defaultQuality": "best",
   "defaultVolume": 0,
-  "windowMaximized": false,
+  "windowMaximized": true,
   "maxStreams": 4,
   "autoStart": true,
   "force_player": false,

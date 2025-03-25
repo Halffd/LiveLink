@@ -100,7 +100,10 @@ export class TwitchService implements StreamService {
         }));
       }
 
-      // If these are favorite channels, preserve their original order
+      // Sort all results by viewer count first
+      results.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
+
+      // If these are favorite channels, then re-sort preserving favorite order
       if (channels && channels.length > 0) {
         // Create a map of channel IDs to their original position in the favorites array
         const channelOrderMap = new Map<string, number>();
@@ -113,6 +116,11 @@ export class TwitchService implements StreamService {
           const aOrder = a.channelId ? channelOrderMap.get(a.channelId) ?? 999 : 999;
           const bOrder = b.channelId ? channelOrderMap.get(b.channelId) ?? 999 : 999;
           
+          // If both are non-favorites (order 999), maintain viewer count order
+          if (aOrder === 999 && bOrder === 999) {
+            return (b.viewerCount || 0) - (a.viewerCount || 0);
+          }
+          
           // First sort by channel order (favorites order)
           if (aOrder !== bOrder) {
             return aOrder - bOrder;
@@ -121,10 +129,6 @@ export class TwitchService implements StreamService {
           // Then by viewer count for streams from the same channel
           return (b.viewerCount || 0) - (a.viewerCount || 0);
         });
-      }
-      // Sort by viewers if requested (for non-favorite channels)
-      else if (options.sort === 'viewers') {
-        results.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
       }
 
       logger.info(`Found ${results.length} Twitch streams`, 'TwitchService');
