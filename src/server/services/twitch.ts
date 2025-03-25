@@ -140,10 +140,65 @@ export class TwitchService implements StreamService {
   }
 
   async getVTuberStreams(limit = 50): Promise<StreamSource[]> {
-    return this.getStreams({
-      limit,
-      tags: ['VTuber']
-    });
+    if (!this.client) return [];
+
+    try {
+      // First, search for channels with VTuber tag
+      const channels = await this.client.search.searchChannels('vtuber', {
+        liveOnly: true,
+        limit
+      });
+
+      // Convert to StreamSource format
+      const results = channels.data.map(channel => ({
+        url: `https://twitch.tv/${channel.name}`,
+        title: channel.displayName,
+        platform: 'twitch' as const,
+        viewerCount: 0, // Not available in search results
+        startTime: Date.now(), // Not available in search results
+        sourceStatus: channel.isLive ? 'live' as const : 'offline' as const,
+        channelId: channel.name.toLowerCase(),
+        tags: channel.tags || []
+      }));
+
+      // Filter to only live streams with VTuber tag
+      const vtuberStreams = results.filter(stream => 
+        stream.sourceStatus === 'live' && 
+        stream.tags?.some(tag => tag.toLowerCase() === 'vtuber')
+      );
+
+      // Get actual stream data for live channels to get viewer counts
+      if (vtuberStreams.length > 0) {
+        const streamData = await this.client.streams.getStreams({
+          userName: vtuberStreams.map(s => s.channelId),
+          limit: vtuberStreams.length
+        });
+
+        // Update viewer counts and start times
+        for (const stream of streamData.data) {
+          const matchingStream = vtuberStreams.find(
+            s => s.channelId === stream.userName.toLowerCase()
+          );
+          if (matchingStream) {
+            matchingStream.viewerCount = stream.viewers;
+            matchingStream.startTime = stream.startDate.getTime();
+          }
+        }
+      }
+
+      // Sort by viewer count
+      vtuberStreams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
+
+      logger.info(`Found ${vtuberStreams.length} VTuber streams on Twitch`, 'TwitchService');
+      return vtuberStreams;
+    } catch (error) {
+      logger.error(
+        'Failed to get VTuber streams',
+        'TwitchService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return [];
+    }
   }
 
   async getJapaneseStreams(limit = 50): Promise<StreamSource[]> {

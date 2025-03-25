@@ -748,3 +748,51 @@ program.parse(process.argv);
 if (process.argv.length <= 2) {
   program.help();
 }
+
+streamCommands
+  .command('switch')
+  .description('Switch current stream to a new URL')
+  .requiredOption('-u, --url <url>', 'New stream URL')
+  .option('-s, --screen <number>', 'Screen number', '1')
+  .option('-q, --quality <quality>', 'Stream quality', 'best')
+  .action(async (options) => {
+    try {
+      const screen = parseInt(options.screen);
+      console.log(chalk.blue(`Switching stream on screen ${screen} to ${options.url}...`));
+
+      // First get current stream to mark as watched
+      const activeStreams = await fetch(`${API_URL}/streams/active`)
+        .then(res => handleResponse<Stream[]>(res));
+      
+      const currentStream = activeStreams.find(s => s.screen === screen);
+      if (currentStream?.url) {
+        // Mark current stream as watched
+        await fetch(`${API_URL}/streams/watched`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: currentStream.url })
+        });
+        console.log(chalk.gray(`Marked current stream as watched: ${currentStream.url}`));
+      }
+
+      // Stop current stream
+      await fetch(`${API_URL}/streams/${screen}`, {
+        method: 'DELETE'
+      });
+
+      // Start new stream
+      const response = await fetch(`${API_URL}/streams/url`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: options.url,
+          quality: options.quality,
+          screen
+        })
+      });
+      const result = await handleResponse(response);
+      console.log(chalk.green('Stream switched successfully:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
+    }
+  });

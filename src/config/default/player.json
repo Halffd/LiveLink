@@ -17,7 +17,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
-      "playerType": "mpv",
+      "playerType": "both",
       "primary": true
     },
     {
@@ -31,7 +31,7 @@
       "volume": 0,
       "quality": "best",
       "windowMaximized": true,
-      "playerType": "streamlink",
+      "playerType": "both",
       "primary": false
     }
   ]

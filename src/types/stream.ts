@@ -109,7 +109,7 @@ export interface StreamConfig {
   /** Whether the window should be maximized */
   windowMaximized: boolean;
   /** Player type to use for this screen (streamlink or mpv) */
-  playerType?: 'streamlink' | 'mpv';
+  playerType?: 'streamlink' | 'mpv' | 'both';
   /** X position of the window */
   windowX?: number;
   /** Y position of the window */

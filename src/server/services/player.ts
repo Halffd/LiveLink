@@ -202,6 +202,7 @@ export class PlayerService {
 			// Determine player type
 			const useStreamlink =
 				screenConfig.playerType === 'streamlink' ||
+				screenConfig.playerType === 'both' && (options.url.includes('twitch.tv')) ||
 				(!screenConfig.playerType && this.config.player.preferStreamlink);
 
 			// Ensure we have metadata for the title
