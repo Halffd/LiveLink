@@ -766,7 +766,7 @@ export class StreamManager extends EventEmitter {
                 streams.forEach(s => {
                   s.priority = basePriority - 100; // Make favorites 100 points higher priority
                 });
-              } else if (source.tags?.includes('vtuber')) {
+              } else if (source.tags?.map(tag => tag.toLowerCase()).includes('vtuber')) {
                 streams = await this.twitchService.getVTuberStreams(limit);
                 // Sort VTuber streams by viewer count
                 streams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
@@ -806,10 +806,11 @@ export class StreamManager extends EventEmitter {
           }
         }
       }
+
       // Final sorting of all streams
       const sortedResults = results
-      .filter(stream => stream.sourceStatus === "live")
-      .sort((a, b) => (a.priority || 999) - (b.priority || 999));
+        .filter(stream => stream.sourceStatus === "live")
+        .sort((a, b) => (a.priority || 999) - (b.priority || 999));
 
       // Update cache
       this.cachedStreams = sortedResults;
