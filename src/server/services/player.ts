@@ -1259,6 +1259,7 @@ export class PlayerService {
 	 */
 	private async sendMpvCommand(screen: number, command: string): Promise<void> {
 		const ipcPath = this.ipcPaths.get(screen);
+		logger.info(`Sending command ${command} to screen ${screen} with IPC path ${ipcPath}`, 'PlayerService');
 		if (!ipcPath) {
 			logger.warn(`No IPC path found for screen ${screen}`, 'PlayerService');
 			throw new Error(`No IPC socket for screen ${screen}`);

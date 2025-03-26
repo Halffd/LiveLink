@@ -601,7 +601,14 @@ export class StreamManager extends EventEmitter {
   async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
     try {
       const stream = this.streams.get(screen);
-      if (!stream) {
+      logger.info(`Stopping stream on screen ${screen}`, 'StreamManager');
+      
+      // Check PlayerService state if no stream found in StreamManager
+      const playerStreams = this.playerService.getActiveStreams();
+      const playerStream = playerStreams.find(s => s.screen === screen);
+      
+      if (!stream && !playerStream) {
+        logger.info(`No active stream found for screen ${screen}`, 'StreamManager');
         // If no active stream, emit a basic stopped state
         this.emit('streamUpdate', {
           screen,
@@ -626,12 +633,13 @@ export class StreamManager extends EventEmitter {
       this.clearInactiveTimer(screen);
       this.clearStreamRefresh(screen);
 
+      logger.info(`Stopping player service for screen ${screen}`, 'StreamManager');
       // Stop the stream in the player service
       const result = await this.playerService.stopStream(screen, isManualStop);
       
       // Emit stopped state with stream info
       this.emit('streamUpdate', {
-        ...stream,
+        ...(stream || { screen, url: playerStream?.url || '', quality: playerStream?.quality || '', platform: playerStream?.platform || 'twitch' }),
         playerStatus: 'stopped',
         error: undefined,
         process: null

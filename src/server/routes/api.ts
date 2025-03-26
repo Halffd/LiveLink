@@ -472,6 +472,7 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
         
         // Get all active streams and stop them
         const activeStreams = streamManager.getActiveStreams();
+        logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
         if (activeStreams.length > 0) {
           logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
           
