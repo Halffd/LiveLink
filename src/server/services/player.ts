@@ -947,7 +947,6 @@ export class PlayerService {
 		const mpvArgs = [
 			// Window position and size
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			`--vo=x11`,
 			// Audio settings
 			`--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
 			
@@ -956,10 +955,7 @@ export class PlayerService {
 			`--config-dir=${this.SCRIPTS_PATH}`,
 			`--log-file=${logFile}`,
 			
-			// Memory limits for mpv
-			'--demuxer-max-bytes=100M',
-			'--demuxer-max-back-bytes=50M',
-			'--stream-buffer-size=4M',
+			`--profile=streamlink`,
 			
 			// Title
 			titleArg,

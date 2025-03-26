@@ -58,13 +58,6 @@
 			"screen": 2,
 			"sources": [
 				{
-					"type": "twitch",
-					"enabled": true,
-					"limit": 25,
-					"priority": 4,
-					"tags": ["vtuber"]
-				},
-				{
 					"type": "holodex",
 					"subtype": "favorites",
 					"enabled": true,
@@ -78,6 +71,13 @@
 					"enabled": true,
 					"limit": 25,
 					"priority": 3
+				},
+				{
+					"type": "twitch",
+					"enabled": true,
+					"limit": 2,
+					"priority": 4,
+					"tags": ["vtuber"]
 				},
 				{
 					"type": "twitch",
