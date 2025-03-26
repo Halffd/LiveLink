@@ -361,7 +361,7 @@ export class StreamManager extends EventEmitter {
         return;
       }
       
-      // Filter streams for this screen
+      // Filter streams for this screen and ensure they're actually live
       const availableStreams = allStreams.filter(stream => {
         // Filter streams for this screen
         if (stream.screen !== screen) {
@@ -380,8 +380,15 @@ export class StreamManager extends EventEmitter {
         }
 
         // Only include streams that are actually live
-        if (stream.sourceStatus && stream.sourceStatus !== 'live') {
+        if (!stream.sourceStatus || stream.sourceStatus !== 'live') {
           logger.debug(`Stream ${stream.url} is not live (status: ${stream.sourceStatus})`, 'StreamManager');
+          return false;
+        }
+
+        // Filter out non-stream content (like MVs)
+        if (stream.url.toLowerCase().includes('/mv') || 
+            (stream.title && stream.title.toLowerCase().includes('[mv]'))) {
+          logger.debug(`Filtered out MV content: ${stream.url}`, 'StreamManager');
           return false;
         }
         
@@ -391,15 +398,29 @@ export class StreamManager extends EventEmitter {
       logger.info(`Found ${availableStreams.length} streams for screen ${screen}`, 'StreamManager');
 
       if (availableStreams.length > 0) {
-        // Sort streams by priority (lower number = higher priority)
+        // Sort streams:
+        // 1. By priority (lower number = higher priority)
+        // 2. By "newness" within same priority (newer streams first)
+        // 3. By viewer count for same priority and similar age
         const sortedStreams = availableStreams.sort((a, b) => {
           // First by priority (undefined priority goes last)
           const aPriority = a.priority ?? 999;
           const bPriority = b.priority ?? 999;
           if (aPriority !== bPriority) return aPriority - bPriority;
           
-          // Then by viewer count for same priority
-          return 0;
+          // Then by start time (newer first) if we have timestamps
+          if (a.startTime && b.startTime) {
+            const aTime = typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime;
+            const bTime = typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime;
+            const timeDiff = Math.abs(aTime - bTime);
+            // If streams started within 30 minutes of each other, consider them in the same time group
+            if (timeDiff > 30 * 60 * 1000) {
+              return bTime - aTime;
+            }
+          }
+          
+          // Finally by viewer count for streams in same priority and time group
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         });
 
         // Debug: Log watched status of streams

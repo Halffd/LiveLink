@@ -68,7 +68,7 @@ export class HolodexService implements StreamService {
           this.client!.getLiveVideos({
             channel_id: channelId,
             status: 'live' as VideoStatus,
-            type: 'stream' as VideoType,
+            type: 'live' as VideoType,
             max_upcoming_hours: 0,
             sort: 'live_viewers' as keyof VideoRaw & string,
           }).catch(error => {
