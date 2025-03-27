@@ -797,12 +797,18 @@ export class StreamManager extends EventEmitter {
                 const basePriority = source.priority || 999;
                 streams.forEach(s => {
                   s.priority = basePriority - 100; // Make favorites 100 points higher priority
+                  s.screen = screenNumber; // Assign screen number
                 });
               } else if (source.subtype === 'organization' && source.name) {
                 streams = await this.holodexService.getLiveStreams({
                   organization: source.name,
                   limit: limit,
                   sort: 'start_scheduled'  // Sort by scheduled start time
+                });
+                // Assign screen number and source priority to organization streams
+                streams.forEach(s => {
+                  s.screen = screenNumber;
+                  s.priority = source.priority || 999;
                 });
               }
             } else if (source.type === 'twitch') {
@@ -811,16 +817,21 @@ export class StreamManager extends EventEmitter {
                   channels: this.favoriteChannels.twitch,
                   limit: limit
                 });
-                
-                // For favorites, assign a higher priority based on source priority
-                const basePriority = source.priority || 999;
+                // Assign screen number and source priority to Twitch favorite streams
                 streams.forEach(s => {
-                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
+                  s.screen = screenNumber;
+                  s.priority = source.priority || 999;
                 });
-              } else if (source.tags?.map(tag => tag.toLowerCase()).includes('vtuber')) {
-                streams = await this.twitchService.getVTuberStreams(limit);
-                // Sort VTuber streams by viewer count
-                streams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
+              } else {
+                streams = await this.twitchService.getStreams({
+                  tags: source.tags,
+                  limit: limit
+                });
+                // Assign screen number and source priority to Twitch streams
+                streams.forEach(s => {
+                  s.screen = screenNumber;
+                  s.priority = source.priority || 999;
+                });
               }
             } else if (source.type === 'youtube') {
               if (source.subtype === 'favorites') {
@@ -837,47 +848,37 @@ export class StreamManager extends EventEmitter {
               }
             }
             
-            // Add source metadata to each stream
-            const streamsWithMetadata = streams.map(stream => ({
-              ...stream,
-              screen: screenNumber,
-              sourceName: `${source.type}:${source.subtype || 'other'}`,
-              // Only set priority if not already set (favorites already have priority)
-              priority: stream.priority !== undefined ? stream.priority : source.priority || 999
-            }));
-
-            results.push(...streamsWithMetadata);
+            // Add streams to results
+            if (streams.length > 0) {
+              results.push(...streams);
+            }
           } catch (error) {
             logger.error(
-              `Failed to fetch streams for ${source.type}:${source.subtype || 'other'}`,
+              `Failed to fetch streams for source ${source.type}:${source.subtype || 'other'} on screen ${screenNumber}`,
               'StreamManager',
               error instanceof Error ? error : new Error(String(error))
             );
-            continue;
+            
+            // If this is a retry and we still failed, increment error count
+            if (retryCount > 0) {
+              this.streamRetries.set(screenNumber, (this.streamRetries.get(screenNumber) || 0) + 1);
+            }
           }
         }
       }
 
-      // Final sorting of all streams
-      const sortedResults = results
-        .filter(stream => stream.sourceStatus === "live")
-        .sort((a, b) => (a.priority || 999) - (b.priority || 999));
-
       // Update cache
-      this.cachedStreams = sortedResults;
       this.lastStreamFetch = now;
+      this.cachedStreams = results;
 
-      return sortedResults;
+      return results;
     } catch (error) {
-      logger.error(
-        'Failed to fetch live streams',
-        'StreamManager', 
-        error instanceof Error ? error : new Error(String(error))
-      );
+      logger.error('Failed to fetch live streams', 'StreamManager');
+      logger.debug(error instanceof Error ? error.message : String(error), 'StreamManager');
       
+      // If we haven't exceeded max retries, try again
       if (retryCount < 3) {
-        logger.info(`Retrying getLiveStreams (attempt ${retryCount + 1})`, 'StreamManager');
-        await new Promise(resolve => setTimeout(resolve, this.RETRY_INTERVAL));
+        logger.info(`Retrying stream fetch (attempt ${retryCount + 1}/3)`, 'StreamManager');
         return this.getLiveStreams(retryCount + 1);
       }
       
@@ -1322,6 +1323,14 @@ export class StreamManager extends EventEmitter {
     this.config.player.screens.forEach(screen => {
       this.queues.set(screen.screen, []);
     });
+    // Force update all queues after initialization
+    this.updateAllQueues(true).catch(error => {
+      logger.error(
+        'Failed to initialize queues',
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+    });
   }
 
   /**
@@ -1401,7 +1410,7 @@ export class StreamManager extends EventEmitter {
         try {
           // Skip screens that are already being processed
           if (this.queueProcessing.has(screen)) {
-            logger.info(`Skipping queue update for screen ${screen} - queue is being processed`, 'StreamManager');
+            logger.info(`Queue processing already in progress for screen ${screen}, skipping`, 'StreamManager');
             continue;
           }
 
@@ -1421,8 +1430,26 @@ export class StreamManager extends EventEmitter {
                 // Mark as processing to prevent concurrent queue processing
                 this.queueProcessing.add(screen);
                 try {
-                  await this.handleEmptyQueue(screen);
+                  // Reset last stream fetch to force fresh data
+                  this.lastStreamFetch = 0;
+                  const streams = await this.getLiveStreams();
+                  const availableStreams = streams.filter(s => s.screen === screen);
+                  
+                  if (availableStreams.length > 0) {
+                    // Update the queue with new streams
+                    queueService.setQueue(screen, availableStreams);
+                    this.lastStreamRefresh.set(screen, now);
+                  } else {
+                    logger.info(`No available streams found for screen ${screen}`, 'StreamManager');
+                  }
+                } catch (error) {
+                  logger.error(
+                    `Failed to fetch streams for screen ${screen}`,
+                    'StreamManager',
+                    error instanceof Error ? error : new Error(String(error))
+                  );
                 } finally {
+                  // Always clear the processing flag
                   this.queueProcessing.delete(screen);
                 }
               } else {
@@ -1431,55 +1458,6 @@ export class StreamManager extends EventEmitter {
             } else {
               logger.info(`Screen ${screen} was manually closed, not starting new streams`, 'StreamManager');
             }
-          } else {
-            // If there's an active stream, just update the queue without starting new stream
-            logger.info(`Active stream on screen ${screen}, updating queue only`, 'StreamManager');
-            
-            // Only fetch new streams if the refresh interval has elapsed
-            const now = Date.now();
-            const lastRefresh = this.lastStreamRefresh.get(screen) || 0;
-            const timeSinceLastRefresh = now - lastRefresh;
-            
-            let streams = this.cachedStreams;
-            if (timeSinceLastRefresh >= this.STREAM_REFRESH_INTERVAL || streams.length === 0) {
-              logger.info(`Refresh interval elapsed for screen ${screen}, fetching new streams for queue update`, 'StreamManager');
-              streams = await this.getLiveStreams();
-              this.lastStreamRefresh.set(screen, now);
-            } else {
-              logger.info(`Using cached streams for queue update on screen ${screen} (last refresh: ${timeSinceLastRefresh}ms ago)`, 'StreamManager');
-            }
-            
-            const availableStreams = streams.filter(s => s.screen === screen);
-            
-            if (availableStreams.length > 0) {
-              // Get existing queue
-              const existingQueue = queueService.getQueue(screen);
-              
-              // Combine existing queue URLs with available streams
-              const existingUrls = new Set(existingQueue.map(s => s.url));
-              
-              // Add new streams that aren't in the existing queue
-              const newStreams = availableStreams.filter(s => !existingUrls.has(s.url));
-              
-              if (newStreams.length > 0) {
-                // Filter unwatched from new streams only
-                const unwatchedNewStreams = queueService.filterUnwatchedStreams(newStreams);
-                
-                if (unwatchedNewStreams.length > 0) {
-                  // Add unwatched new streams to end of existing queue
-                  const updatedQueue = [...existingQueue, ...unwatchedNewStreams];
-                  queueService.setQueue(screen, updatedQueue);
-                  logger.info(
-                    `Updated queue for screen ${screen} with ${unwatchedNewStreams.length} new streams. Total queue size: ${updatedQueue.length}`,
-                    'StreamManager'
-                  );
-                } else {
-                  logger.info(`No new unwatched streams for screen ${screen}`, 'StreamManager');
-                }
-              } else {
-                logger.info(`No new streams available for screen ${screen}`, 'StreamManager');
-              }
-            }
           }
         } catch (error) {
           logger.error(
@@ -1487,6 +1465,8 @@ export class StreamManager extends EventEmitter {
             'StreamManager',
             error instanceof Error ? error : new Error(String(error))
           );
+          // Ensure processing flag is cleared on error
+          this.queueProcessing.delete(screen);
         }
       }
     };
@@ -1618,10 +1598,34 @@ export class StreamManager extends EventEmitter {
       // Check if there's an active stream on this screen
       const activeStream = this.getActiveStreams().find(s => s.screen === screen);
       
-      if (forceRefresh) {
+      // Check if queue is empty - if so, treat this as a forced refresh
+      const currentQueue = queueService.getQueue(screen);
+      const isEmptyQueue = currentQueue.length === 0;
+      
+      if (forceRefresh || isEmptyQueue) {
         // Force refresh - set last refresh to 0 to ensure new data is fetched
         this.lastStreamRefresh.set(screen, 0);
-        logger.info(`Forcing refresh for screen ${screen}`, 'StreamManager');
+        logger.info(`${forceRefresh ? 'Forcing refresh' : 'Queue empty, refreshing'} for screen ${screen}`, 'StreamManager');
+        
+        // Fetch fresh streams
+        const streams = await this.getLiveStreams();
+        this.lastStreamRefresh.set(screen, Date.now());
+        
+        const availableStreams = streams.filter(s => s.screen === screen);
+        
+        if (availableStreams.length > 0) {
+          // Filter unwatched streams
+          const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
+          
+          if (unwatchedStreams.length > 0) {
+            // For empty queue or force refresh, replace entire queue
+            queueService.setQueue(screen, unwatchedStreams);
+            logger.info(
+              `Set queue for screen ${screen} with ${unwatchedStreams.length} streams`,
+              'StreamManager'
+            );
+          }
+        }
         
         // If no active stream and not manually closed, try to start a new one
         if (!activeStream && !this.manuallyClosedScreens.has(screen)) {
@@ -1631,45 +1635,6 @@ export class StreamManager extends EventEmitter {
             await this.handleEmptyQueue(screen);
           } finally {
             this.queueProcessing.delete(screen);
-          }
-        } else if (activeStream) {
-          // If active stream, just update the queue
-          logger.info(`Active stream on screen ${screen}, updating queue only`, 'StreamManager');
-          
-          // Fetch fresh streams
-          const streams = await this.getLiveStreams();
-          this.lastStreamRefresh.set(screen, Date.now());
-          
-          const availableStreams = streams.filter(s => s.screen === screen);
-          
-          if (availableStreams.length > 0) {
-            // Get existing queue
-            const existingQueue = queueService.getQueue(screen);
-            
-            // Combine existing queue URLs with available streams
-            const existingUrls = new Set(existingQueue.map(s => s.url));
-            
-            // Add new streams that aren't in the existing queue
-            const newStreams = availableStreams.filter(s => !existingUrls.has(s.url));
-            
-            if (newStreams.length > 0) {
-              // Filter unwatched from new streams only
-              const unwatchedNewStreams = queueService.filterUnwatchedStreams(newStreams);
-              
-              if (unwatchedNewStreams.length > 0) {
-                // Add unwatched new streams to end of existing queue
-                const updatedQueue = [...existingQueue, ...unwatchedNewStreams];
-                queueService.setQueue(screen, updatedQueue);
-                logger.info(
-                  `Updated queue for screen ${screen} with ${unwatchedNewStreams.length} new streams. Total queue size: ${updatedQueue.length}`,
-                  'StreamManager'
-                );
-              } else {
-                logger.info(`No new unwatched streams for screen ${screen}`, 'StreamManager');
-              }
-            } else {
-              logger.info(`No new streams available for screen ${screen}`, 'StreamManager');
-            }
           }
         }
       } else {

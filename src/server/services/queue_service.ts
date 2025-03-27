@@ -69,13 +69,44 @@ class QueueService extends EventEmitter {
     });
 
     // Sort the queue using the node chain for comparison
-    const sortfedQueue = validQueue.sort((a, b) => {
+    const sortedQueue = validQueue.sort((a, b) => {
       const aPriority = a.priority ?? 999;
       const bPriority = b.priority ?? 999;
+
+      // If priorities are different, sort by priority
       if (aPriority !== bPriority) {
         return aPriority - bPriority;
       }
-      return 0;
+
+      // If both are favorites (priority < 900), use node chain for ordering
+      if (aPriority < 900 && bPriority < 900) {
+        // Find nodes for both streams
+        let node: FavoritesNode | null = rootNode;
+        let aNode: FavoritesNode | null = null;
+        let bNode: FavoritesNode | null = null;
+
+        while (node && (!aNode || !bNode)) {
+          if (node.priority === aPriority) aNode = node;
+          if (node.priority === bPriority) bNode = node;
+          node = node.nextNode;
+        }
+
+        if (aNode && bNode) {
+          // Compare based on node order
+          return aNode.currentIndex - bNode.currentIndex;
+        }
+      }
+
+      // For non-favorites or if nodes not found, sort by start time and viewer count
+      const aTime = a.startTime ? (typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime) : 0;
+      const bTime = b.startTime ? (typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime) : 0;
+      
+      if (aTime !== bTime) {
+        return bTime - aTime; // Newer streams first
+      }
+
+      // Finally sort by viewer count
+      return (b.viewerCount || 0) - (a.viewerCount || 0);
     });
     
     this.queues.set(screen, sortedQueue);
