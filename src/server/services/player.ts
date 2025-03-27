@@ -966,26 +966,10 @@ export class PlayerService {
 			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
 		].filter(Boolean);
 
-		// Common arguments for all platforms
-		const commonArgs = [
-			'--ringbuffer-size=16M',          // Reduced ring buffer size
-			'--stream-segment-threads=1',     // Reduced from 2 to 1
-			'--stream-segment-attempts=2',    // Reduced attempts
-			'--hls-live-edge=1',              // Minimum edge buffer
-			'--hls-segment-stream-data',      // Stream segments directly
-			'--player-no-close',              // Don't close player on stream end
-			'--stream-timeout=30',            // Reduced timeout
-			'--http-timeout=20',              // HTTP timeout in seconds
-			'--retry-open=2',                 // Limit retry attempts
-			'--retry-max=1',                  // Only retry once
-			'--retry-streams=1',              // Only retry once
-		];
-
 		// Streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
 			'best', // Quality selection
-			...commonArgs,
 			'--player',
 			this.mpvPath,
 			'--player-args',
