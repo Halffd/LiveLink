@@ -28,6 +28,11 @@ import { EventEmitter } from 'events';
 import { KeyboardService, keyboardEvents } from './services/keyboard_service.js';
 import './types/events.js';
 
+interface ScreenConfig {
+  enabled: boolean;
+  maxStreams: number;
+}
+
 /**
  * Manages multiple video streams across different screens
  */
@@ -63,7 +68,8 @@ export class StreamManager extends EventEmitter {
   private queueProcessing: Set<number> = new Set(); // Track screens where queue is being processed
   private lastStreamRefresh: Map<number, number> = new Map(); // Track last refresh time per screen
   private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
-
+  private screenConfigs: Map<number, ScreenConfig>;
+  
   /**
    * Creates a new StreamManager instance
    */
@@ -191,6 +197,35 @@ export class StreamManager extends EventEmitter {
         );
       }
     });
+
+    this.screenConfigs = new Map();
+    
+    // Initialize screen configs based on startup args
+    const startScreens = process.env.START_SCREENS;
+    if (startScreens) {
+      const count = parseInt(startScreens);
+      if (!isNaN(count)) {
+        for (let i = 1; i <= count; i++) {
+          this.screenConfigs.set(i, { enabled: true, maxStreams: 1 });
+        }
+      }
+    } else {
+      const screen1Count = parseInt(process.env.START_SCREEN_1 || '1');
+      const screen2Count = parseInt(process.env.START_SCREEN_2 || '1');
+      
+      if (!isNaN(screen1Count) && screen1Count > 0) {
+        this.screenConfigs.set(1, { enabled: true, maxStreams: screen1Count });
+      }
+      if (!isNaN(screen2Count) && screen2Count > 0) {
+        this.screenConfigs.set(2, { enabled: true, maxStreams: screen2Count });
+      }
+    }
+    
+    // Default configuration if no args provided
+    if (this.screenConfigs.size === 0) {
+      this.screenConfigs.set(1, { enabled: true, maxStreams: 1 });
+      this.screenConfigs.set(2, { enabled: true, maxStreams: 1 });
+    }
   }
 
   private async handleStreamEnd(screen: number): Promise<void> {
@@ -1214,11 +1249,11 @@ export class StreamManager extends EventEmitter {
     }
   }
 
-  public getScreenConfig(screen: number): StreamConfig | undefined {
-    return this.config.player.screens.find(s => s.screen === screen);
+  public getScreenConfig(screen: number): ScreenConfig | undefined {
+    return this.screenConfigs.get(screen);
   }
 
-  public updateScreenConfig(screen: number, config: Partial<StreamConfig>): void {
+  public updateScreenConfig(screen: number, config: Partial<ScreenConfig>): void {
     const screenConfig = this.getScreenConfig(screen);
     if (!screenConfig) {
       throw new Error(`Screen ${screen} not found`);
@@ -1227,26 +1262,8 @@ export class StreamManager extends EventEmitter {
     // Update the config
     Object.assign(screenConfig, config);
     
-    // If enabling a screen and force_player is set, ensure player is running
-    if (config.enabled === true && this.config.player.force_player) {
-      const isPlayerRunning = this.playerService.getActiveStreams().some(s => s.screen === screen);
-      if (!isPlayerRunning && !this.manuallyClosedScreens.has(screen)) {
-        logger.info(`Screen ${screen} enabled with force_player active, starting player`, 'StreamManager');
-        // Start player with blank page
-        this.playerService.startStream({
-          url: 'about:blank',
-          screen,
-          quality: screenConfig.quality || this.config.player.defaultQuality,
-          volume: screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume,
-          windowMaximized: screenConfig.windowMaximized !== undefined ? screenConfig.windowMaximized : this.config.player.windowMaximized
-        }).catch(error => {
-          logger.error(`Failed to start player for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'StreamManager');
-        });
-      }
-    }
-    
-    this.emit('screenUpdate', screen, screenConfig);
-    this.saveConfig();
+    this.screenConfigs.set(screen, screenConfig);
+    this.emit('screenConfigChanged', { screen, config });
   }
 
   public getConfig() {

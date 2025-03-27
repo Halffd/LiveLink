@@ -26,7 +26,6 @@ export class TwitchService implements StreamService {
     this.filters = filters;
 
     try {
-      // Initialize with client credentials flow for non-user-specific requests
       this.authProvider = new RefreshingAuthProvider({
         clientId,
         clientSecret,
@@ -111,23 +110,36 @@ export class TwitchService implements StreamService {
           channelOrderMap.set(channelId.toLowerCase(), index);
         });
         
+        // Get the current time to check for new streams
+        const now = Date.now();
+        const NEW_STREAM_THRESHOLD = 5 * 60 * 1000; // 5 minutes
+        
         // Sort streams by their channel's position in the favorites array
         results.sort((a, b) => {
-          const aOrder = a.channelId ? channelOrderMap.get(a.channelId) ?? 999 : 999;
-          const bOrder = b.channelId ? channelOrderMap.get(b.channelId) ?? 999 : 999;
-          
-          // If both are non-favorites (order 999), maintain viewer count order
-          if (aOrder === 999 && bOrder === 999) {
-            return (b.viewerCount || 0) - (a.viewerCount || 0);
+          // 1. Sort by priority (higher first)
+          const aPriority = a.priority ?? 999;
+          const bPriority = b.priority ?? 999;
+          if (aPriority !== bPriority) {
+              return bPriority - aPriority;
           }
-          
-          // First sort by channel order (favorites order)
+
+          // 2. Sort by favorite order
+          const aOrder = channelOrderMap.get(a.channelId ?? '') ?? 9999;
+          const bOrder = channelOrderMap.get(b.channelId ?? '') ?? 9999;
           if (aOrder !== bOrder) {
-            return aOrder - bOrder;
+              return aOrder - bOrder;
           }
-          
-          // Then by viewer count for streams from the same channel
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+
+          // 3. If a stream is "new," prioritize it
+          const aStartTime = typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : Number(a.startTime ?? 0);
+          const bStartTime = typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : Number(b.startTime ?? 0);
+          const aIsNew = (now - aStartTime) < NEW_STREAM_THRESHOLD;
+          const bIsNew = (now - bStartTime) < NEW_STREAM_THRESHOLD;
+          if (aIsNew && !bIsNew) return -1;
+          if (bIsNew && !aIsNew) return 1;
+
+          // 4. Last fallback: Sort by viewer count (higher first)
+          return (b.viewerCount ?? 0) - (a.viewerCount ?? 0);
         });
       }
 
@@ -264,7 +276,7 @@ export class TwitchService implements StreamService {
     }
   }
 
-  public updateFavorites(channels: string[]): void {
+  updateFavorites(channels: string[]): void {
     this.favoriteChannels = channels;
   }
 } 

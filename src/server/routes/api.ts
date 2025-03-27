@@ -909,4 +909,60 @@ function formatUptime(seconds: number): string {
   return parts.join(' ');
 }
 
+// Add new routes for screen management
+router.post('/screens/:screen/toggle', async (ctx) => {
+  const screen = parseInt(ctx.params.screen);
+  if (isNaN(screen)) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  const isEnabled = !streamManager.getScreenConfig(screen)?.enabled;
+  if (isEnabled) {
+    await streamManager.enableScreen(screen);
+  } else {
+    await streamManager.disableScreen(screen);
+  }
+  
+  ctx.body = { screen, enabled: isEnabled };
+});
+
+router.post('/screens/new-player', async (ctx) => {
+  const { screen } = ctx.request.body as { screen?: number };
+  
+  // Get active streams to avoid duplicates
+  const activeStreams = streamManager.getActiveStreams();
+  const activeUrls = new Set(activeStreams.map(s => s.url));
+  
+  // Get all queues
+  const queues = [1, 2].map(s => streamManager.getQueueForScreen(s)).flat();
+  
+  // Find first stream that's not already playing
+  const newStream = queues.find(stream => !activeUrls.has(stream.url));
+  
+  if (!newStream) {
+    ctx.status = 404;
+    ctx.body = { error: 'No available streams found in queues' };
+    return;
+  }
+  
+  // If no specific screen provided, find first available screen
+  const targetScreen = screen || activeStreams.length + 1;
+  if (targetScreen > 2) {
+    ctx.status = 400;
+    ctx.body = { error: 'No available screens' };
+    return;
+  }
+  
+  // Start the stream
+  const result = await streamManager.startStream({
+    url: newStream.url,
+    screen: targetScreen,
+    quality: 'best'
+  });
+  
+  ctx.body = result;
+});
+
 export const apiRouter = router; 

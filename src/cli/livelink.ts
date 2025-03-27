@@ -294,6 +294,62 @@ screenCommands
     }
   });
 
+screenCommands
+  .command('toggle')
+  .description('Toggle a screen (enable/disable)')
+  .argument('<screen>', 'Screen number')
+  .action(async (screen) => {
+    try {
+      console.log(chalk.blue(`Toggling screen ${screen}...`));
+      const response = await fetch(`${API_URL}/screens/${screen}/toggle`, {
+        method: 'POST'
+      });
+      const result = await handleResponse(response);
+      console.log(chalk.green('Screen toggled:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
+    }
+  });
+
+screenCommands
+  .command('new-player')
+  .description('Open a new player on a screen with a stream that is not already playing')
+  .argument('[screen]', 'Specific screen to use (optional)')
+  .action(async (screen) => {
+    try {
+      console.log(chalk.blue('Opening new player...'));
+      const response = await fetch(`${API_URL}/screens/new-player`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(screen ? { screen: parseInt(screen) } : {})
+      });
+      const result = await handleResponse(response);
+      console.log(chalk.green('New player opened:'), result);
+    } catch (error) {
+      console.error(chalk.red('Error:'), error);
+    }
+  });
+
+// Helper function to format uptime
+function formatUptime(startTime: number | string): string {
+  const start = typeof startTime === 'string' ? new Date(startTime).getTime() : startTime;
+  const now = Date.now();
+  const uptimeSeconds = Math.floor((now - start) / 1000);
+  
+  const days = Math.floor(uptimeSeconds / (3600 * 24));
+  const hours = Math.floor((uptimeSeconds % (3600 * 24)) / 3600);
+  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
+  const seconds = Math.floor(uptimeSeconds % 60);
+  
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
+  
+  return parts.join(' ');
+}
+
 // Queue Management Commands
 queueCommands
   .command('show')
@@ -316,6 +372,11 @@ queueCommands
         console.log(`URL: ${stream.url}`);
         if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
         if (stream.priority !== undefined) console.log(`Priority: ${stream.priority}`);
+        if (stream.startTime) {
+          const startTimeStr = new Date(stream.startTime).toLocaleString();
+          const uptime = formatUptime(stream.startTime);
+          console.log(`Started: ${startTimeStr} (${uptime} ago)`);
+        }
       });
     } catch (error) {
       console.error(chalk.red('Error:'), error);
@@ -796,3 +857,24 @@ streamCommands
       console.error(chalk.red('Error:'), error);
     }
   });
+
+// Add startup argument handling at the end of the file
+if (process.argv.length === 3 && !process.argv[2].startsWith('-')) {
+  // Single argument format: "0" or "1" or "2"
+  const screens = process.argv[2];
+  const count = parseInt(screens);
+  if (!isNaN(count) && count >= 0 && count <= 2) {
+    console.log(chalk.blue(`Starting server with ${count} screen${count !== 1 ? 's' : ''}...`));
+    process.env.START_SCREENS = count.toString();
+  }
+} else if (process.argv.length === 4 && !process.argv[2].startsWith('-') && !process.argv[3].startsWith('-')) {
+  // Two argument format: "1 3" or "1 0" etc.
+  const screen1Count = parseInt(process.argv[2]);
+  const screen2Count = parseInt(process.argv[3]);
+  if (!isNaN(screen1Count) && !isNaN(screen2Count) && 
+      screen1Count >= 0 && screen2Count >= 0) {
+    console.log(chalk.blue(`Starting server with ${screen1Count} on screen 1 and ${screen2Count} on screen 2...`));
+    process.env.START_SCREEN_1 = screen1Count.toString();
+    process.env.START_SCREEN_2 = screen2Count.toString();
+  }
+}
