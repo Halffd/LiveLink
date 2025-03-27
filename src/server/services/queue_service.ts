@@ -98,8 +98,14 @@ class QueueService extends EventEmitter {
             return aNode.currentIndex - bNode.currentIndex;
           }
           
-          // Same favorite, newer streams first
-          return bTime - aTime;
+          // Same favorite, check time groups
+          const timeDiff = Math.abs(aTime - bTime);
+          if (timeDiff > 30 * 60 * 1000) {
+            // If more than 30 minutes apart, newer first
+            return bTime - aTime;
+          }
+          // Within same time group, sort by viewers
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         }
       }
       
@@ -115,8 +121,12 @@ class QueueService extends EventEmitter {
           if (isNewA && !isNewB) return -1;
           if (!isNewA && isNewB) return 1;
           
-          // Prioritize the favorite
-          return aPriority < 900 ? -1 : 1;
+          // Both new or both old from same favorite
+          const timeDiff = Math.abs(aTime - bTime);
+          if (timeDiff > 30 * 60 * 1000) {
+            return bTime - aTime; // Newer first if significant time difference
+          }
+          return (b.viewerCount || 0) - (a.viewerCount || 0); // Otherwise by viewers
         }
       }
 
@@ -125,16 +135,13 @@ class QueueService extends EventEmitter {
         return aPriority - bPriority;
       }
 
-      // Then by start time (newer first) if we have timestamps
-      if (aTime && bTime) {
-        const timeDiff = Math.abs(aTime - bTime);
-        // If streams started within 30 minutes of each other, consider them in the same time group
-        if (timeDiff > 30 * 60 * 1000) {
-          return bTime - aTime;
-        }
+      // For streams with same priority, group by time windows
+      const timeDiff = Math.abs(aTime - bTime);
+      if (timeDiff > 30 * 60 * 1000) {
+        return bTime - aTime; // Newer first
       }
 
-      // Finally by viewer count for streams in same priority and time group
+      // Within same time group (30 min), sort by viewers
       return (b.viewerCount || 0) - (a.viewerCount || 0);
     });
     

@@ -109,25 +109,6 @@ export class TwitchService implements StreamService {
         channels.forEach((channelId, index) => {
           channelOrderMap.set(channelId.toLowerCase(), index);
         });
-        
-        // Get the current time to check for new streams
-        // Sort streams by their channel's position in the favorites array
-        results.sort((a, b) => {
-          // 1. Sort by priority (higher first)
-          const aPriority = a.priority ?? 999;
-          const bPriority = b.priority ?? 999;
-          if (aPriority !== bPriority) {
-              return bPriority - aPriority;
-          }
-
-          // 2. Sort by favorite order
-          const aOrder = channelOrderMap.get(a.channelId ?? '') ?? 9999;
-          const bOrder = channelOrderMap.get(b.channelId ?? '') ?? 9999;
-          if (aOrder !== bOrder) {
-              return aOrder - bOrder;
-          }
-          return 0;
-        });
       }
 
       logger.info(`Found ${results.length} Twitch streams`, 'TwitchService');
@@ -190,7 +171,7 @@ export class TwitchService implements StreamService {
       }
 
       // Sort by viewer count
-      vtuberStreams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
+      //vtuberStreams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
 
       logger.info(`Found ${vtuberStreams.length} VTuber streams on Twitch`, 'TwitchService');
       return vtuberStreams;

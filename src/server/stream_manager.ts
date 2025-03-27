@@ -442,20 +442,7 @@ export class StreamManager extends EventEmitter {
           const aPriority = a.priority ?? 999;
           const bPriority = b.priority ?? 999;
           if (aPriority !== bPriority) return aPriority - bPriority;
-          
-          // Then by start time (newer first) if we have timestamps
-          if (a.startTime && b.startTime) {
-            const aTime = typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime;
-            const bTime = typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime;
-            const timeDiff = Math.abs(aTime - bTime);
-            // If streams started within 30 minutes of each other, consider them in the same time group
-            if (timeDiff > 30 * 60 * 1000) {
-              return bTime - aTime;
-            }
-          }
-          
-          // Finally by viewer count for streams in same priority and time group
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          return 0;
         });
 
         // Debug: Log watched status of streams
