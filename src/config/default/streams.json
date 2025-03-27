@@ -58,32 +58,17 @@
 			"screen": 2,
 			"sources": [
 				{
-					"type": "holodex",
-					"subtype": "favorites",
-					"enabled": true,
-					"limit": 25,
-					"priority": 1
-				},
-				{
 					"type": "twitch",
 					"subtype": "favorites",
 					"enabled": true,
 					"limit": 100,
-					"priority": 2
-				},
-				{
-					"type": "holodex",
-					"subtype": "organization",
-					"name": "Hololive",
-					"enabled": true,
-					"limit": 25,
-					"priority": 3
+					"priority": 1
 				},
 				{
 					"type": "twitch",
 					"enabled": true,
 					"limit": 2,
-					"priority": 4,
+					"priority": 2,
 					"tags": ["vtuber"]
 				}
 			],

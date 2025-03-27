@@ -55,6 +55,8 @@ export class PlayerService {
 	private outputCallback?: (data: StreamOutput) => void;
 	private errorCallback?: (data: StreamError) => void;
 
+	private readonly DUMMY_SOURCE = '';  // Empty string instead of black screen URL
+
 	constructor() {
 		this.BASE_LOG_DIR = path.join(process.cwd(), 'logs');
 		this.mpvPath = this.findMpvPath();
@@ -1149,68 +1151,12 @@ export class PlayerService {
 		return this.streamRetries.has(screen);
 	}
 
-	public async ensurePlayersRunning(): Promise<void> {
-		try {
-			// Check all screen configs and ensure they have players running if enabled
-			for (const screen of this.config.player.screens) {
-				// Skip if screen is disabled
-				if (!screen.enabled || this.disabledScreens.has(screen.screen) || 
-					this.manuallyClosedScreens.has(screen.screen)) {
-					logger.debug(`Skipping disabled or manually closed screen ${screen.screen}`, 'PlayerService');
-					continue;
-				}
-				
-				// Skip if a stream is already running on this screen
-				const isStreamRunning = this.streams.has(screen.screen);
-				if (isStreamRunning) {
-					continue;
-				}
-				
-				// Start a player with a dummy source
-				const options: StreamOptions & { screen: number } = {
-					url: 'av://lavfi:color=c=black', // Use a black screen as dummy source
-					screen: screen.screen,
-					quality: 'best',
-					volume: screen.volume || this.config.player.defaultVolume
-				};
-				
-				try {
-					await this.startStream(options);
-					logger.info(`Started player for screen ${screen.screen}`, 'PlayerService');
-				} catch (error) {
-					logger.error(
-						`Failed to start player for screen ${screen.screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				}
-			}
-		} catch (error) {
-			logger.error(
-				'Failed to ensure players are running',
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
-		}
-	}
-
 	public disableScreen(screen: number): void {
-		logger.debug(`PlayerService: Disabling screen ${screen}`, 'PlayerService');
 		this.disabledScreens.add(screen);
-		
-		// Stop any running stream for this screen
-		this.stopStream(screen, true).catch(error => {
-			logger.error(`Failed to stop stream when disabling screen ${screen}`, 'PlayerService', error);
-		});
 	}
 
 	public enableScreen(screen: number): void {
-		logger.debug(`PlayerService: Enabling screen ${screen}`, 'PlayerService');
 		this.disabledScreens.delete(screen);
-		this.manuallyClosedScreens.delete(screen);
-		
-		// Ensure players get restarted on this screen in the next ensurePlayersRunning call
-		// We don't start it immediately to allow for proper initialization
 	}
 
 	// Helper method to extract title from URL
