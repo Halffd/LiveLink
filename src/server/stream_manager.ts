@@ -442,7 +442,7 @@ export class StreamManager extends EventEmitter {
           if (isPlaying) {
             return false;
           }
-
+          
           // Check if this stream matches the screen's configured sources
           const matchesSource = streamConfig.sources?.some(source => {
             if (!source.enabled) return false;
@@ -458,13 +458,9 @@ export class StreamManager extends EventEmitter {
                 if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
                 if (!source.subtype && source.tags?.includes('vtuber')) return true;
                 break;
-              case 'youtube':
-                if (stream.platform !== 'youtube') return false;
-                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.youtube.includes(stream.channelId)) return true;
-                break;
             }
             return false;
-          }) || false;
+          });
 
           return matchesSource;
         });
@@ -921,6 +917,13 @@ export class StreamManager extends EventEmitter {
         // Reset the last refresh time to force a fresh start
         this.lastStreamRefresh.set(screen, 0);
         
+        // Get stream configuration for this screen
+        const streamConfig = this.config.streams.find(s => s.screen === screen);
+        if (!streamConfig) {
+          logger.warn(`No stream configuration found for screen ${screen}`, 'StreamManager');
+          continue;
+        }
+        
         // Filter and sort streams for this screen
         const screenStreams = allStreams.filter(stream => {
           // Only include streams that are actually live
@@ -937,7 +940,26 @@ export class StreamManager extends EventEmitter {
             return false;
           }
           
-          return true;
+          // Check if this stream matches the screen's configured sources
+          const matchesSource = streamConfig.sources?.some(source => {
+            if (!source.enabled) return false;
+
+            switch (source.type) {
+              case 'holodex':
+                if (stream.platform !== 'youtube') return false;
+                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.holodex.includes(stream.channelId)) return true;
+                if (source.subtype === 'organization' && source.name && stream.organization === source.name) return true;
+                break;
+              case 'twitch':
+                if (stream.platform !== 'twitch') return false;
+                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
+                if (!source.subtype && source.tags?.includes('vtuber')) return true;
+                break;
+            }
+            return false;
+          });
+
+          return matchesSource;
         }).sort((a, b) => {
           // Sort by priority first
           const aPriority = a.priority ?? 999;
