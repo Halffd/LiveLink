@@ -8,6 +8,15 @@ export interface QueueEvents {
   'all:watched': (screen: number) => void;
 }
 
+interface FavoritesNode {
+  priority: number;
+  startTime: number;
+  currentIndex: number;
+  totalFavorites: number;
+  nextNode: FavoritesNode | null;
+  prevNode: FavoritesNode | null;
+}
+
 class QueueService extends EventEmitter {
   private queues: Map<number, StreamSource[]> = new Map();
   private watchedStreams: Set<string> = new Set();
@@ -27,17 +36,97 @@ class QueueService extends EventEmitter {
     // Filter out any null or undefined entries
     const validQueue = queue.filter(item => item && item.url);
 
-    // Sort the queue by priority first, then by viewer count
+    // Initialize favorites tracking
+    const favorites = validQueue.filter(s => (s.priority ?? 999) < 900)
+      .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+    
+    // Create root node
+    const rootNode: FavoritesNode = {
+      priority: 999,
+      startTime: 0,
+      currentIndex: -1,
+      totalFavorites: favorites.length,
+      nextNode: null,
+      prevNode: null
+    };
+
+    // Build initial node chain from favorites
+    let currentNode = rootNode;
+    favorites.forEach((fav, idx) => {
+      const favTime = fav.startTime ? 
+        (typeof fav.startTime === 'string' ? new Date(fav.startTime).getTime() : fav.startTime) : 0;
+      
+      const newNode: FavoritesNode = {
+        priority: fav.priority ?? 999,
+        startTime: favTime,
+        currentIndex: idx,
+        totalFavorites: favorites.length,
+        nextNode: null,
+        prevNode: currentNode
+      };
+      currentNode.nextNode = newNode;
+      currentNode = newNode;
+    });
+
+    // Sort the queue using the node chain for comparison
     const sortedQueue = validQueue.sort((a, b) => {
-      // First by priority (undefined priority goes last)
       const aPriority = a.priority ?? 999;
       const bPriority = b.priority ?? 999;
-      if (aPriority !== bPriority) return aPriority - bPriority;
+      const aTime = a.startTime ? 
+        (typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime) : 0;
+      const bTime = b.startTime ? 
+        (typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime) : 0;
+
+      // Helper function to find node for a priority
+      const findNodeForPriority = (priority: number): FavoritesNode | null => {
+        let current: FavoritesNode | null = rootNode;
+        while (current !== null) {
+          if (current.priority === priority) return current;
+          current = current.nextNode;
+        }
+        return null;
+      };
+
+      // If both are favorites, compare their positions in the chain
+      if (aPriority < 900 && bPriority < 900) {
+        const aNode = findNodeForPriority(aPriority);
+        const bNode = findNodeForPriority(bPriority);
+        
+        if (aNode && bNode) {
+          // If they're from different favorites, maintain favorite order
+          if (aNode.currentIndex !== bNode.currentIndex) {
+            return aNode.currentIndex - bNode.currentIndex;
+          }
+          
+          // Same favorite, newer streams first
+          return bTime - aTime;
+        }
+      }
+      
+      // If only one is a favorite
+      if (aPriority < 900 || bPriority < 900) {
+        // Get the favorite's node
+        const favNode = findNodeForPriority(aPriority < 900 ? aPriority : bPriority);
+        if (favNode) {
+          // If this is a new stream from an earlier favorite
+          const isNewA = aTime > favNode.startTime;
+          const isNewB = bTime > favNode.startTime;
+          
+          if (isNewA && !isNewB) return -1;
+          if (!isNewA && isNewB) return 1;
+          
+          // Prioritize the favorite
+          return aPriority < 900 ? -1 : 1;
+        }
+      }
+
+      // If neither is a favorite or no special cases apply
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
 
       // Then by start time (newer first) if we have timestamps
-      if (a.startTime && b.startTime) {
-        const aTime = typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime;
-        const bTime = typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime;
+      if (aTime && bTime) {
         const timeDiff = Math.abs(aTime - bTime);
         // If streams started within 30 minutes of each other, consider them in the same time group
         if (timeDiff > 30 * 60 * 1000) {
@@ -52,7 +141,21 @@ class QueueService extends EventEmitter {
     this.queues.set(screen, sortedQueue);
     
     logger.info(`Set queue for screen ${screen}. Queue size: ${sortedQueue.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(sortedQueue)}`, 'QueueService');
+    logger.debug(`Queue contents: ${JSON.stringify(sortedQueue.map(s => ({
+      url: s.url,
+      priority: s.priority,
+      startTime: s.startTime,
+      viewerCount: s.viewerCount,
+      isFavorite: (s.priority ?? 999) < 900,
+      favoriteIndex: favorites.findIndex(f => f.priority === s.priority)
+    })))}`, 'QueueService');
+    
+    // Log favorites chain
+    let node: FavoritesNode | null = rootNode;
+    while (node) {
+      logger.debug(`Favorites node: Priority ${node.priority}, Index ${node.currentIndex}/${node.totalFavorites}, Time ${new Date(node.startTime).toISOString()}`, 'QueueService');
+      node = node.nextNode;
+    }
     
     if (sortedQueue.length === 0) {
       logger.info(`Queue for screen ${screen} is empty, emitting all:watched event`, 'QueueService');
