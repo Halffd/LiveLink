@@ -69,80 +69,13 @@ class QueueService extends EventEmitter {
     });
 
     // Sort the queue using the node chain for comparison
-    const sortedQueue = validQueue.sort((a, b) => {
+    const sortfedQueue = validQueue.sort((a, b) => {
       const aPriority = a.priority ?? 999;
       const bPriority = b.priority ?? 999;
-      const aTime = a.startTime ? 
-        (typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime) : 0;
-      const bTime = b.startTime ? 
-        (typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime) : 0;
-
-      // Helper function to find node for a priority
-      const findNodeForPriority = (priority: number): FavoritesNode | null => {
-        let current: FavoritesNode | null = rootNode;
-        while (current !== null) {
-          if (current.priority === priority) return current;
-          current = current.nextNode;
-        }
-        return null;
-      };
-
-      // If both are favorites, compare their positions in the chain
-      if (aPriority < 900 && bPriority < 900) {
-        const aNode = findNodeForPriority(aPriority);
-        const bNode = findNodeForPriority(bPriority);
-        
-        if (aNode && bNode) {
-          // If they're from different favorites, maintain favorite order
-          if (aNode.currentIndex !== bNode.currentIndex) {
-            return aNode.currentIndex - bNode.currentIndex;
-          }
-          
-          // Same favorite, check time groups
-          const timeDiff = Math.abs(aTime - bTime);
-          if (timeDiff > 30 * 60 * 1000) {
-            // If more than 30 minutes apart, newer first
-            return bTime - aTime;
-          }
-          // Within same time group, sort by viewers
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
-        }
-      }
-      
-      // If only one is a favorite
-      if (aPriority < 900 || bPriority < 900) {
-        // Get the favorite's node
-        const favNode = findNodeForPriority(aPriority < 900 ? aPriority : bPriority);
-        if (favNode) {
-          // If this is a new stream from an earlier favorite
-          const isNewA = aTime > favNode.startTime;
-          const isNewB = bTime > favNode.startTime;
-          
-          if (isNewA && !isNewB) return -1;
-          if (!isNewA && isNewB) return 1;
-          
-          // Both new or both old from same favorite
-          const timeDiff = Math.abs(aTime - bTime);
-          if (timeDiff > 30 * 60 * 1000) {
-            return bTime - aTime; // Newer first if significant time difference
-          }
-          return (b.viewerCount || 0) - (a.viewerCount || 0); // Otherwise by viewers
-        }
-      }
-
-      // If neither is a favorite or no special cases apply
       if (aPriority !== bPriority) {
         return aPriority - bPriority;
       }
-
-      // For streams with same priority, group by time windows
-      const timeDiff = Math.abs(aTime - bTime);
-      if (timeDiff > 30 * 60 * 1000) {
-        return bTime - aTime; // Newer first
-      }
-
-      // Within same time group (30 min), sort by viewers
-      return (b.viewerCount || 0) - (a.viewerCount || 0);
+      return 0;
     });
     
     this.queues.set(screen, sortedQueue);
