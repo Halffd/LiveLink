@@ -65,6 +65,13 @@
 					"priority": 1
 				},
 				{
+					"type": "twitch",
+					"subtype": "favorites",
+					"enabled": true,
+					"limit": 100,
+					"priority": 2
+				},
+				{
 					"type": "holodex",
 					"subtype": "organization",
 					"name": "Hololive",
@@ -78,18 +85,13 @@
 					"limit": 2,
 					"priority": 4,
 					"tags": ["vtuber"]
-				},
-				{
-					"type": "twitch",
-					"subtype": "favorites",
-					"enabled": true,
-					"limit": 100,
-					"priority": 2
 				}
 			],
 			"sorting": {
-				"field": "viewerCount",
-				"order": "desc"
+				"fields": [
+					{ "field": "priority", "order": "asc" },
+					{ "field": "viewerCount", "order": "desc" }
+				]
 			},
 			"refresh": 300,
 			"autoStart": true

@@ -26,18 +26,40 @@ class QueueService extends EventEmitter {
 
     // Filter out any null or undefined entries
     const validQueue = queue.filter(item => item && item.url);
+
+    // Sort the queue by priority first, then by viewer count
+    const sortedQueue = validQueue.sort((a, b) => {
+      // First by priority (undefined priority goes last)
+      const aPriority = a.priority ?? 999;
+      const bPriority = b.priority ?? 999;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+
+      // Then by start time (newer first) if we have timestamps
+      if (a.startTime && b.startTime) {
+        const aTime = typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime;
+        const bTime = typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime;
+        const timeDiff = Math.abs(aTime - bTime);
+        // If streams started within 30 minutes of each other, consider them in the same time group
+        if (timeDiff > 30 * 60 * 1000) {
+          return bTime - aTime;
+        }
+      }
+
+      // Finally by viewer count for streams in same priority and time group
+      return (b.viewerCount || 0) - (a.viewerCount || 0);
+    });
     
-    this.queues.set(screen, validQueue);
+    this.queues.set(screen, sortedQueue);
     
-    logger.info(`Set queue for screen ${screen}. Queue size: ${validQueue.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(validQueue)}`, 'QueueService');
+    logger.info(`Set queue for screen ${screen}. Queue size: ${sortedQueue.length}`, 'QueueService');
+    logger.debug(`Queue contents: ${JSON.stringify(sortedQueue)}`, 'QueueService');
     
-    if (validQueue.length === 0) {
+    if (sortedQueue.length === 0) {
       logger.info(`Queue for screen ${screen} is empty, emitting all:watched event`, 'QueueService');
       this.emit('all:watched', screen);
     } else {
-      logger.info(`Queue for screen ${screen} updated with ${validQueue.length} items`, 'QueueService');
-      this.emit('queue:updated', screen, validQueue);
+      logger.info(`Queue for screen ${screen} updated with ${sortedQueue.length} items`, 'QueueService');
+      this.emit('queue:updated', screen, sortedQueue);
     }
   }
 

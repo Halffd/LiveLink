@@ -1168,7 +1168,7 @@ export class PlayerService {
 				
 				// Start a player with a dummy source
 				const options: StreamOptions & { screen: number } = {
-					url: 'about:blank', // Use about:blank as dummy source
+					url: 'av://lavfi:color=c=black', // Use a black screen as dummy source
 					screen: screen.screen,
 					quality: 'best',
 					volume: screen.volume || this.config.player.defaultVolume

@@ -590,6 +590,32 @@ playerCommands
 
 // Server Control Commands
 serverCommands
+  .command('start')
+  .description('Start only the LiveLink server (no frontend)')
+  .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
+  .action(async (players: string[]) => {
+    try {
+      // Convert arguments to numbers
+      const screenPlayers = players.map(Number);
+      
+      // Set environment variables for screen configuration
+      if (screenPlayers.length > 0) {
+        process.env.START_SCREENS = screenPlayers.length.toString();
+        screenPlayers.forEach((numPlayers: number, index: number) => {
+          process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
+        });
+      }
+
+      // Import and start the server
+      await import('../server/api.js');
+      console.log(chalk.green('LiveLink server started'));
+    } catch (error) {
+      console.error(chalk.red('Failed to start server:'), error);
+      process.exit(1);
+    }
+  });
+
+serverCommands
   .command('stop')
   .description('Stop the LiveLink server')
   .action(async () => {
@@ -724,6 +750,66 @@ serverCommands
     }
   });
 
+// Web Control Commands
+const webCommands = program.command('web').description('Web frontend control commands');
+
+webCommands
+  .command('start')
+  .description('Start only the web frontend')
+  .action(async () => {
+    try {
+      console.log(chalk.blue('Starting web frontend...'));
+      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
+      process.exit(1);
+    } catch (error) {
+      console.error(chalk.red('Failed to start web frontend:'), error);
+      process.exit(1);
+    }
+  });
+
+webCommands
+  .command('stop')
+  .description('Stop the web frontend')
+  .action(async () => {
+    try {
+      console.log(chalk.blue('Stopping web frontend...'));
+      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
+      process.exit(1);
+    } catch (error) {
+      console.error(chalk.red('Failed to stop web frontend:'), error);
+      process.exit(1);
+    }
+  });
+
+// Add start command at root level
+program
+  .command('start')
+  .description('Start both server and web frontend')
+  .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
+  .action(async (players: string[]) => {
+    try {
+      // Convert arguments to numbers
+      const screenPlayers = players.map(Number);
+      
+      // Set environment variables for screen configuration
+      if (screenPlayers.length > 0) {
+        process.env.START_SCREENS = screenPlayers.length.toString();
+        screenPlayers.forEach((numPlayers: number, index: number) => {
+          process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
+        });
+      }
+
+      // Start both server and frontend
+      console.log(chalk.blue('Starting LiveLink server and web frontend...'));
+      await import('../server/api.js');
+      console.log(chalk.green('LiveLink server started'));
+      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
+    } catch (error) {
+      console.error(chalk.red('Failed to start:'), error);
+      process.exit(1);
+    }
+  });
+
 // Add backwards compatibility for old command structure
 program
   .command('list-streams')
@@ -805,8 +891,31 @@ if (options.debug) {
 // Parse command line arguments
 program.parse(process.argv);
 
-// Show help if no arguments provided
-if (process.argv.length <= 2) {
+// Start both server and frontend if no arguments provided (except for help)
+if (process.argv.length <= 2 && !process.argv.includes('-h') && !process.argv.includes('--help')) {
+  // Get the number of players to start on each screen from arguments
+  const args = process.argv.slice(2);
+  const screenPlayers = args.map(Number);
+  
+  // Set environment variables for screen configuration
+  if (screenPlayers.length > 0) {
+    process.env.START_SCREENS = screenPlayers.length.toString();
+    screenPlayers.forEach((numPlayers: number, index: number) => {
+      process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
+    });
+  }
+
+  // Start both server and frontend
+  console.log(chalk.blue('Starting LiveLink server and web frontend...'));
+  import('../server/api.js').then(() => {
+    console.log(chalk.green('LiveLink server started'));
+    console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
+  }).catch((error) => {
+    console.error(chalk.red('Failed to start:'), error);
+    process.exit(1);
+  });
+} else if (process.argv.length <= 2) {
+  // Show help if only -h or --help is provided
   program.help();
 }
 
@@ -857,24 +966,3 @@ streamCommands
       console.error(chalk.red('Error:'), error);
     }
   });
-
-// Add startup argument handling at the end of the file
-if (process.argv.length === 3 && !process.argv[2].startsWith('-')) {
-  // Single argument format: "0" or "1" or "2"
-  const screens = process.argv[2];
-  const count = parseInt(screens);
-  if (!isNaN(count) && count >= 0 && count <= 2) {
-    console.log(chalk.blue(`Starting server with ${count} screen${count !== 1 ? 's' : ''}...`));
-    process.env.START_SCREENS = count.toString();
-  }
-} else if (process.argv.length === 4 && !process.argv[2].startsWith('-') && !process.argv[3].startsWith('-')) {
-  // Two argument format: "1 3" or "1 0" etc.
-  const screen1Count = parseInt(process.argv[2]);
-  const screen2Count = parseInt(process.argv[3]);
-  if (!isNaN(screen1Count) && !isNaN(screen2Count) && 
-      screen1Count >= 0 && screen2Count >= 0) {
-    console.log(chalk.blue(`Starting server with ${screen1Count} on screen 1 and ${screen2Count} on screen 2...`));
-    process.env.START_SCREEN_1 = screen1Count.toString();
-    process.env.START_SCREEN_2 = screen2Count.toString();
-  }
-}
