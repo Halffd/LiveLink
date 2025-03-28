@@ -46,48 +46,55 @@ export class TwitchService implements StreamService {
       const channels = options.channels || [];
       let results: StreamSource[] = [];
       
-      // If we have more than 100 channels, we need to batch the requests
-      if (channels.length > 100) {
-        logger.info(`Batching ${channels.length} channels into multiple requests (max 100 per request)`, 'TwitchService');
-        
-        // Process channels in batches of 100
+      // If we have channels to fetch
+      if (channels.length > 0) {
+        // Process channels in batches of 100 (Twitch API limit)
+        const batches: string[][] = [];
         for (let i = 0; i < channels.length; i += 100) {
           const batchChannels = channels.slice(i, i + 100);
-          logger.debug(`Processing batch ${Math.floor(i/100) + 1} with ${batchChannels.length} channels`, 'TwitchService');
-          
-          const batchStreams = await this.client.streams.getStreams({
-            userName: batchChannels,
-            language: options.language
-          });
-          
-          // Convert to StreamSource format and add to results
-          const batchResults = batchStreams.data.map(stream => ({
+          batches.push(batchChannels);
+        }
+
+        // Fetch all batches in parallel
+        const batchResults = await Promise.all(
+          batches.map(batchChannels =>
+            this.client!.streams.getStreams({
+              userName: batchChannels,
+              ...(options.language ? { language: options.language } : {})
+            }).catch(error => {
+              logger.error(
+                `Failed to fetch batch of streams: ${error instanceof Error ? error.message : String(error)}`,
+                'TwitchService'
+              );
+              return { data: [] };
+            })
+          )
+        );
+
+        // Combine all batch results
+        results = batchResults.flatMap(batch => 
+          batch.data.map(stream => ({
             url: `https://twitch.tv/${stream.userName}`,
             title: stream.title,
             platform: 'twitch' as const,
             viewerCount: stream.viewers,
             startTime: stream.startDate.getTime(),
             sourceStatus: 'live' as const,
-            channelId: stream.userName.toLowerCase() // Add channelId for sorting
-          }));
-          
-          results = [...results, ...batchResults];
-          
-          // If we've reached the desired limit, stop processing batches
-          if (limit && results.length >= limit) {
-            results = results.slice(0, limit);
-            break;
-          }
+            channelId: stream.userName.toLowerCase()
+          }))
+        );
+
+        // If we have a limit, apply it after combining all results
+        if (limit) {
+          results = results.slice(0, limit);
         }
       } else {
-        // Original logic for <= 100 channels
+        // No specific channels, just fetch by limit and language
         const streams = await this.client.streams.getStreams({
           limit,
-          userName: channels,
-          language: options.language
+          ...(options.language ? { language: options.language } : {})
         });
 
-        // Convert to StreamSource format
         results = streams.data.map(stream => ({
           url: `https://twitch.tv/${stream.userName}`,
           title: stream.title,
@@ -95,12 +102,9 @@ export class TwitchService implements StreamService {
           viewerCount: stream.viewers,
           startTime: stream.startDate.getTime(),
           sourceStatus: 'live' as const,
-          channelId: stream.userName.toLowerCase() // Add channelId for sorting
+          channelId: stream.userName.toLowerCase()
         }));
       }
-
-      // Sort all results by viewer count first
-      //results.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
 
       // If these are favorite channels, then re-sort preserving favorite order
       if (channels && channels.length > 0) {
@@ -108,6 +112,13 @@ export class TwitchService implements StreamService {
         const channelOrderMap = new Map<string, number>();
         channels.forEach((channelId, index) => {
           channelOrderMap.set(channelId.toLowerCase(), index);
+        });
+
+        // Sort results based on original channel order
+        results.sort((a, b) => {
+          const aOrder = channelOrderMap.get(a.channelId) ?? Number.MAX_SAFE_INTEGER;
+          const bOrder = channelOrderMap.get(b.channelId) ?? Number.MAX_SAFE_INTEGER;
+          return aOrder - bOrder;
         });
       }
 

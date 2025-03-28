@@ -64,6 +64,8 @@ export interface StreamSource {
   screen?: number;
   /** Organization the stream belongs to */
   organization?: string;
+  /** Source subtype (favorites, organization, etc.) */
+  subtype?: string;
 }
 
 /**

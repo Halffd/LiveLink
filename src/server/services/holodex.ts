@@ -92,7 +92,7 @@ export class HolodexService implements StreamService {
             channelVideos.sort((a, b) => {
               if (a.status === 'live' && b.status !== 'live') return -1;
               if (a.status !== 'live' && b.status === 'live') return 1;
-              return (b.liveViewers || 0) - (a.liveViewers || 0);
+              return 0;
             });
             videos.push(...channelVideos);
           }
@@ -169,8 +169,7 @@ export class HolodexService implements StreamService {
           if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
           if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
           
-          // Then by viewer count
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          return 0;
         });
       } else {
         // For non-favorite streams, sort by:

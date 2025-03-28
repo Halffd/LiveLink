@@ -37,7 +37,7 @@ class QueueService extends EventEmitter {
     const validQueue = queue.filter(item => item && item.url);
 
     // Initialize favorites tracking
-    const favorites = validQueue.filter(s => (s.priority ?? 999) < 900)
+    const favorites = validQueue.filter(s => s.subtype === 'favorites')
       .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
     
     // Create root node
@@ -72,14 +72,20 @@ class QueueService extends EventEmitter {
     const sortedQueue = validQueue.sort((a, b) => {
       const aPriority = a.priority ?? 999;
       const bPriority = b.priority ?? 999;
+      const aIsFavorite = a.subtype === 'favorites';
+      const bIsFavorite = b.subtype === 'favorites';
+
+      // If one is a favorite and the other isn't, favorite comes first
+      if (aIsFavorite && !bIsFavorite) return -1;
+      if (!aIsFavorite && bIsFavorite) return 1;
 
       // If priorities are different, sort by priority
       if (aPriority !== bPriority) {
         return aPriority - bPriority;
       }
 
-      // If both are favorites (priority < 900), use node chain for ordering
-      if (aPriority < 900 && bPriority < 900) {
+      // If both are favorites, use node chain for ordering
+      if (aIsFavorite && bIsFavorite) {
         // Find nodes for both streams
         let node: FavoritesNode | null = rootNode;
         let aNode: FavoritesNode | null = null;
@@ -117,7 +123,7 @@ class QueueService extends EventEmitter {
       priority: s.priority,
       startTime: s.startTime,
       viewerCount: s.viewerCount,
-      isFavorite: (s.priority ?? 999) < 900,
+      isFavorite: s.subtype === 'favorites',
       favoriteIndex: favorites.findIndex(f => f.priority === s.priority)
     })))}`, 'QueueService');
     
@@ -239,12 +245,12 @@ class QueueService extends EventEmitter {
   public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
     // First check if we have any unwatched non-favorite streams
     const hasUnwatchedNonFavorites = streams.some(stream => {
-      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      const isFavorite = stream.subtype === 'favorites';
       return !isFavorite && !this.watchedStreams.has(stream.url);
     });
 
     return streams.filter(stream => {
-      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      const isFavorite = stream.subtype === 'favorites';
       const isWatched = this.isStreamWatched(stream.url);
       
       // If it's not watched, always include it
