@@ -296,7 +296,7 @@ screenCommands
 
 screenCommands
   .command('toggle')
-  .description('Toggle a screen (enable/disable)')
+  .description('Toggle screen enabled/disabled state')
   .argument('<screen>', 'Screen number')
   .action(async (screen) => {
     try {
@@ -304,8 +304,8 @@ screenCommands
       const response = await fetch(`${API_URL}/screens/${screen}/toggle`, {
         method: 'POST'
       });
-      const result = await handleResponse(response);
-      console.log(chalk.green('Screen toggled:'), result);
+      const result = await handleResponse<{ success: boolean; enabled: boolean }>(response);
+      console.log(chalk.green(`Screen ${screen} ${result.enabled ? 'enabled' : 'disabled'}`));
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }
@@ -313,18 +313,20 @@ screenCommands
 
 screenCommands
   .command('new-player')
-  .description('Open a new player on a screen with a stream that is not already playing')
-  .argument('[screen]', 'Specific screen to use (optional)')
+  .description('Start a new player instance for a screen')
+  .argument('<screen>', 'Screen number')
   .action(async (screen) => {
     try {
       console.log(chalk.blue('Opening new player...'));
-      const response = await fetch(`${API_URL}/screens/new-player`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(screen ? { screen: parseInt(screen) } : {})
+      const response = await fetch(`${API_URL}/screens/${screen}/new-player`, {
+        method: 'POST'
       });
-      const result = await handleResponse(response);
-      console.log(chalk.green('New player opened:'), result);
+      const result = await handleResponse<{ success: boolean }>(response);
+      if (result.success) {
+        console.log(chalk.green('New player started successfully'));
+      } else {
+        console.log(chalk.yellow('Failed to start new player'));
+      }
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }

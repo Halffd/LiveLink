@@ -965,4 +965,56 @@ router.post('/screens/new-player', async (ctx) => {
   ctx.body = result;
 });
 
+// Add new routes for screen toggle and new player
+router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+    const config = streamManager.getScreenConfig(screen);
+    if (!config) {
+      ctx.status = 404;
+      ctx.body = { error: 'Screen not found' };
+      return;
+    }
+    if (config.enabled) {
+      await streamManager.disableScreen(screen);
+    } else {
+      await streamManager.enableScreen(screen);
+    }
+    ctx.body = { success: true, enabled: !config.enabled };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.post('/api/screens/:screen/new-player', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+    const config = streamManager.getScreenConfig(screen);
+    if (!config) {
+      ctx.status = 404;
+      ctx.body = { error: 'Screen not found' };
+      return;
+    }
+    // Stop current stream if any
+    await streamManager.stopStream(screen);
+    // Start a new player instance
+    await streamManager.enableScreen(screen);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
 export const apiRouter = router; 

@@ -116,6 +116,10 @@ export class TwitchService implements StreamService {
 
         // Sort results based on original channel order
         results.sort((a, b) => {
+          // If either stream doesn't have a channelId, put it last
+          if (!a.channelId) return 1;
+          if (!b.channelId) return -1;
+          
           const aOrder = channelOrderMap.get(a.channelId) ?? Number.MAX_SAFE_INTEGER;
           const bOrder = channelOrderMap.get(b.channelId) ?? Number.MAX_SAFE_INTEGER;
           return aOrder - bOrder;
