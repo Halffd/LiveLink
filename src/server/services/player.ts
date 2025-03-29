@@ -878,7 +878,7 @@ export class PlayerService {
 		}
 	}
 
-	private getMpvArgs(options: StreamOptions & { screen: number }): string[] {
+	private getMpvArgs(options: StreamOptions & { screen: number }, includeUrl: boolean = true): string[] {
 		const screenConfig = this.config.player.screens.find((s) => s.screen === options.screen);
 		if (!screenConfig) {
 			throw new Error(`Invalid screen number: ${options.screen}`);
@@ -924,7 +924,7 @@ export class PlayerService {
 			titleArg,
 			
 			// URL must be last
-			options.url
+			includeUrl ? options.url : ''
 		];
 
 		// Combine all arguments
@@ -937,10 +937,15 @@ export class PlayerService {
 	}
 
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
-		const mpvArgs = this.getMpvArgs(options);
+		const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
+		if (!screenConfig) {
+			throw new Error(`No screen config found for screen ${options.screen}`);
+		}
+
+		// Start with streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
-			options.quality || 'best',
+			options.quality || screenConfig.quality || this.config.player.defaultQuality || 'best',
 			'--player',
 			this.mpvPath
 		];
@@ -963,8 +968,14 @@ export class PlayerService {
 			});
 		}
 
+		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
+		const mpvOptions = { ...options };
+		// eslint-disable-next-line @typescript-eslint/no-unused-vars
+		const { url: urlToOmit, ...finalMpvOptions } = mpvOptions;
+		const mpvArgs = this.getMpvArgs(finalMpvOptions as StreamOptions & { screen: number }, false);
+
 		// Add player arguments properly quoted
-		streamlinkArgs.push('--player-args', `"${mpvArgs.join(' ')}"`);
+		streamlinkArgs.push(`--player-args="${mpvArgs.join(' ').replace(/"/g, '\\\'')}"`);
 
 		return streamlinkArgs;
 	}

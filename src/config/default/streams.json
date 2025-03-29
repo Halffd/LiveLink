@@ -81,9 +81,5 @@
 			"refresh": 300,
 			"autoStart": true
 		}
-	],
-	"organizations": [],
-	"twitch": {
-		"streamersFile": "config/streamers.txt"
-	}
+	]
 }
