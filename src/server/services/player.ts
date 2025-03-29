@@ -297,39 +297,42 @@ export class PlayerService {
 		}
 	}
 
-	private async startMpvProcess(
-		options: StreamOptions & { screen: number }
-	): Promise<ChildProcess> {
+	private async startMpvProcess(options: StreamOptions & { screen: number }): Promise<ChildProcess> {
+		logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
+
+		// Ensure IPC path is initialized
+		if (!this.ipcPaths.has(options.screen)) {
+			const homedir = process.env.HOME || process.env.USERPROFILE;
+			const ipcPath = homedir
+				? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
+				: `/tmp/mpv-ipc-${options.screen}`;
+			this.ipcPaths.set(options.screen, ipcPath);
+		}
+
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
 
-		// Add screen-specific environment variables
-		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-		env.SCREEN = options.screen.toString();
-		env.DATE = timestamp;
+		logger.debug(`Starting MPV with command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
 
-		// Sanitize title components to avoid issues with shell escaping
-		const streamTitle = (options.title || 'Unknown Title').replace(/['"]/g, '');
-		const viewerCount =
-			options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
-		const startTime = options.startTime
-			? new Date(options.startTime).toLocaleTimeString()
-			: 'Unknown time';
-
-		// Set environment variables without quotes
-		env.TITLE = `${streamTitle} - ${viewerCount} - ${startTime} - Screen ${options.screen}`;
-		env.STREAM_URL = options.url;
-
-		logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
-		logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
-
-		const process = spawn(this.mpvPath, args, {
+		const mpvProcess = spawn(this.mpvPath, args, {
 			env,
 			stdio: ['ignore', 'pipe', 'pipe']
 		});
 
-		this.setupProcessHandlers(process, options.screen);
-		return process;
+		// Set up logging for the process
+		if (mpvProcess.stdout) {
+			mpvProcess.stdout.on('data', (data: Buffer) => {
+				logger.debug(`MPV stdout (screen ${options.screen}): ${data.toString().trim()}`, 'PlayerService');
+			});
+		}
+
+		if (mpvProcess.stderr) {
+			mpvProcess.stderr.on('data', (data: Buffer) => {
+				logger.debug(`MPV stderr (screen ${options.screen}): ${data.toString().trim()}`, 'PlayerService');
+			});
+		}
+
+		return mpvProcess;
 	}
 
 	private async startStreamlinkProcess(
@@ -658,7 +661,20 @@ export class PlayerService {
 				code: 0
 			});
 		} else if (code === 2) {
-			// Streamlink error (usually temporary) - retry with backoff
+			// Exit code 2 typically means a permanent error (like members-only content)
+			// Don't retry, just move to next stream
+			this.streamRetries.delete(screen);
+			logger.error(
+				`Stream failed with permanent error on screen ${screen} (code ${code}), moving to next stream`,
+				'PlayerService'
+			);
+			this.errorCallback?.({
+				screen,
+				error: 'Stream unavailable (possibly members-only content)',
+				code: -1
+			});
+		} else {
+			// Other error codes - retry with backoff if under max retries
 			if (retryCount < MAX_RETRIES && streamOptions) {
 				const backoffTime = Math.min(1000 * Math.pow(2, retryCount), 10000); // Max 10 second backoff
 				this.streamRetries.set(screen, retryCount + 1);
@@ -688,18 +704,6 @@ export class PlayerService {
 					code: -1
 				});
 			}
-		} else {
-			// Other error codes - move to next stream
-			this.streamRetries.delete(screen);
-			logger.error(
-				`Stream ended with error code ${code} on screen ${screen}, moving to next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: `Stream ended with error code ${code}`,
-				code: -1
-			});
 		}
 	}
 
@@ -913,74 +917,73 @@ export class PlayerService {
 	private getMpvArgs(options: StreamOptions & { screen: number }, includeUrl: boolean = true): string[] {
 		const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
 		if (!screenConfig) {
-			throw new Error(`No screen config found for screen ${options.screen}`);
+			throw new Error(`No screen configuration found for screen ${options.screen}`);
 		}
 
-		// Get the log file path
-		const logFile = path.join(this.BASE_LOG_DIR, `screen_${options.screen}.log`);
+		// Initialize IPC path if not already set
+		if (!this.ipcPaths.has(options.screen)) {
+			const homedir = process.env.HOME || process.env.USERPROFILE;
+			const ipcPath = homedir
+				? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
+				: `/tmp/mpv-ipc-${options.screen}`;
+			this.ipcPaths.set(options.screen, ipcPath);
+		}
 
-		// Get IPC path for this screen
+		// Ensure log directory exists
+		if (!fs.existsSync(this.BASE_LOG_DIR)) {
+			fs.mkdirSync(this.BASE_LOG_DIR, { recursive: true });
+		}
+
+		const logFile = path.join(this.BASE_LOG_DIR, `screen_${options.screen}.log`);
 		const ipcPath = this.ipcPaths.get(options.screen);
+
 		if (!ipcPath) {
 			throw new Error(`No IPC path found for screen ${options.screen}`);
 		}
 
-		// Construct title argument
-		const title = options.title ? 
-			`${options.screen}: ${options.title}` : 
-			`Screen ${options.screen}`;
-		const titleArg = `--title="${title}"`;
-
-		// Start with base MPV arguments from config
 		const baseArgs: string[] = [];
 
 		// Add global MPV arguments from config
 		if (this.config.mpv) {
-			Object.entries(this.config.mpv).forEach(([key, value]) => {
+			for (const [key, value] of Object.entries(this.config.mpv)) {
 				if (value !== undefined && value !== null) {
 					baseArgs.push(`--${key}=${value}`);
 				}
-			});
+			}
 		}
 
 		// Add screen-specific MPV arguments from streamlink config
 		if (this.config.streamlink?.mpv) {
-			Object.entries(this.config.streamlink.mpv).forEach(([key, value]) => {
+			for (const [key, value] of Object.entries(this.config.streamlink.mpv)) {
 				if (value !== undefined && value !== null) {
 					baseArgs.push(`--${key}=${value}`);
 				}
-			});
+			}
 		}
 
-		// Add essential arguments
+		// Essential arguments
 		baseArgs.push(
-			// IPC and script settings
-			`--input-ipc-server=${ipcPath}`,
-			`--config-dir=${this.SCRIPTS_PATH}`,
-			
-			// Logging
-			`--log-file=${logFile}`,
-			
-			// Window position and size
-			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			
-			// Audio settings
-			`--volume=${options.volume !== undefined ? options.volume : screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
-			
-			// Title
-			titleArg
+			'--input-ipc-server=' + ipcPath,
+			'--config-dir=' + path.join(process.cwd(), 'scripts', 'mpv'),
+			'--log-file=' + logFile,
+			'--msg-level=all=v',  // Increase logging verbosity
+			'--force-window=no',  // Don't create window until we have content
+			'--idle=yes',        // Stay open when playlist is empty
+			'--geometry=' + `${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+			'--volume=' + (options.volume || 0).toString(),
+			'--title=' + `${options.screen}: ${options.title || 'No Title'}`
 		);
+
+		if (options.windowMaximized) {
+			baseArgs.push('--window-maximized=yes');
+		}
 
 		// Add URL if requested
 		if (includeUrl && options.url) {
 			baseArgs.push(options.url);
 		}
 
-		// Add window maximized setting if enabled
-		if (options.windowMaximized || screenConfig.windowMaximized) {
-			baseArgs.push('--window-maximized=yes');
-		}
-
+		logger.debug(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
 		return baseArgs;
 	}
 

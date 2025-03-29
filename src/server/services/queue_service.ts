@@ -250,6 +250,14 @@ class QueueService extends EventEmitter {
     });
 
     return streams.filter(stream => {
+      // Filter out members-only streams
+      if (stream.title?.toLowerCase().includes('membership') || 
+          stream.title?.toLowerCase().includes('grembership') ||
+          stream.title?.toLowerCase().includes('member')) {
+        logger.info(`Filtering out members-only stream: ${stream.title}`, 'QueueService');
+        return false;
+      }
+
       const isFavorite = stream.subtype === 'favorites';
       const isWatched = this.isStreamWatched(stream.url);
       
