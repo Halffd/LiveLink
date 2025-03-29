@@ -1818,7 +1818,7 @@ const twitchService = new TwitchService(
 const youtubeService = new YouTubeService(
   config.favoriteChannels.youtube
 );
-const playerService = new PlayerService();
+const playerService = new PlayerService(config);
 
 export const streamManager = new StreamManager(
   config,

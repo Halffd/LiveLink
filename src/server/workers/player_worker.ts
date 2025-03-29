@@ -1,5 +1,6 @@
 import { isMainThread, parentPort, workerData } from 'worker_threads';
 import { PlayerService } from '../services/player.js';
+import { loadAllConfigs } from '../../config/loader.js';
 import type { 
   WorkerMessage, 
   WorkerResponse
@@ -11,7 +12,11 @@ import type {
 import { logger } from '../services/logger.js';
 
 if (!isMainThread) {
-  const player = new PlayerService();
+  // Load config
+  const config = loadAllConfigs();
+
+  // Initialize player service with config
+  const player = new PlayerService(config);
   const { streamId } = workerData;
   
   parentPort?.on('message', async (message: WorkerMessage) => {

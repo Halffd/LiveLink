@@ -1,20 +1,14 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import type { StreamOptions } from '../../types/stream.js';
-import type {
-	StreamOutput,
-	StreamError,
-	StreamResponse
-} from '../../types/stream_instance.js';
-import { logger } from '../services/logger/index.js';
-import { loadAllConfigs } from '../../config/loader.js';
-import { exec } from 'child_process';
+import type { Config, StreamlinkConfig, StreamOptions } from '../../types/stream.js';
+import type { StreamOutput, StreamError, StreamResponse } from '../../types/stream_instance.js';
+import { logger } from './logger.js';
+import { exec, execSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { execSync } from 'child_process';
 import net from 'net';
 
-interface StreamInstance {
+interface LocalStreamInstance {
 	id: number;
 	screen: number;
 	url: string;
@@ -37,7 +31,7 @@ export class PlayerService {
 	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
 	private readonly SHUTDOWN_TIMEOUT = 2000; // Increased from 100ms to 1 second
 	private readonly SCRIPTS_PATH: string;
-	private streams: Map<number, StreamInstance> = new Map();
+	private streams: Map<number, LocalStreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
 	private streamStartTimes: Map<number, number> = new Map();
 	private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
@@ -48,7 +42,7 @@ export class PlayerService {
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
 
-	private config = loadAllConfigs();
+	private config: Config;
 	private mpvPath: string;
 	private isShuttingDown = false;
 	private events = new EventEmitter();
@@ -57,10 +51,31 @@ export class PlayerService {
 
 	private readonly DUMMY_SOURCE = '';  // Empty string instead of black screen URL
 
-	constructor() {
+	private readonly streamlinkConfig: StreamlinkConfig;
+	private readonly retryTimers: Map<number, NodeJS.Timeout>;
+
+	constructor(config: Config) {
+		this.config = config;
+		this.streamlinkConfig = config.streamlink || {
+			path: 'streamlink',
+			options: {},
+			http_header: {}
+		};
+		this.streams = new Map();
+		this.ipcPaths = new Map();
+		this.disabledScreens = new Set();
+		this.retryTimers = new Map();
+		
+		// Set up paths
 		this.BASE_LOG_DIR = path.join(process.cwd(), 'logs');
-		this.mpvPath = this.findMpvPath();
-		this.SCRIPTS_PATH = path.join(process.cwd(), 'scripts', 'mpv');
+		this.SCRIPTS_PATH = path.join(process.cwd(), 'scripts');
+		this.mpvPath = 'mpv';
+
+		// Create log directory if it doesn't exist
+		if (!fs.existsSync(this.BASE_LOG_DIR)) {
+			fs.mkdirSync(this.BASE_LOG_DIR, { recursive: true });
+		}
+
 		this.initializeDirectories();
 		this.registerSignalHandlers();
 	}
@@ -230,7 +245,7 @@ export class PlayerService {
 				: await this.startMpvProcess(options);
 
 			// Create stream instance
-			const instance: StreamInstance = {
+			const instance: LocalStreamInstance = {
 				id: Date.now(),
 				screen,
 				url: options.url,
@@ -343,7 +358,7 @@ export class PlayerService {
 				logger.warn(
 					`Error stopping existing process on screen ${options.screen}`,
 					'PlayerService',
-					error instanceof Error ? error : new Error(String(error))
+					error instanceof Error ? error.message : String(error)
 				);
 			}
 		}
@@ -351,7 +366,7 @@ export class PlayerService {
 		// Clear any existing state
 		this.clearMonitoring(options.screen);
 		this.streams.delete(options.screen);
-
+		logger.info(`Starting Streamlink for screen ${options.screen} Command: streamlink ${args.join(' ')}`, 'PlayerService');
 		// Start new process
 		const process = spawn('streamlink', args, {
 			env,
@@ -478,11 +493,10 @@ export class PlayerService {
 		}
 
 		process.on('error', (err: Error) => {
-			const errorMessage = err.message;
-			logger.error(`Process error on screen ${screen}`, 'PlayerService', errorMessage);
+			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
 			this.errorCallback?.({
 				screen,
-				error: errorMessage,
+				error: err.message,
 				code: 0  // Changed to 0 to always trigger next stream
 			});
 		});
@@ -752,13 +766,12 @@ export class PlayerService {
 					try {
 						execSync(`kill -9 ${player.process.pid}`);
 					} catch (error) {
-						logger.error(`System kill failed for screen ${screen}`, 'PlayerService', 
-							error instanceof Error ? error : String(error));
+						this.logError(`System kill failed for screen ${screen}`, 'PlayerService', error);
 					}
 				}
 			}
 		} catch (error) {
-			logger.error(`Error killing process for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+			this.logError(`Error killing process for screen ${screen}`, 'PlayerService', error);
 		}
 		
 		// Clean up regardless of kill success
@@ -924,57 +937,34 @@ export class PlayerService {
 	}
 
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
-		const screen = options.screen;
-		const screenConfig = this.config.player.screens.find((s) => s.screen === screen);
-		if (!screenConfig) {
-			throw new Error(`Invalid screen number: ${screen}`);
-		}
-
-		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-		const logFile = path.join(this.BASE_LOG_DIR, 'mpv', `mpv-screen${screen}-${timestamp}.log`);
-		const homedir = process.env.HOME || process.env.USERPROFILE;
-		const ipcPath = homedir
-			? path.join(homedir, '.livelink', `mpv-ipc-${screen}`)
-			: `/tmp/mpv-ipc-${screen}`;
-		this.ipcPaths.set(screen, ipcPath);
-
-		// Get stream metadata for title
-		const streamTitle = options.title || 'Unknown Title';
-		const viewerCount =
-			options.viewerCount !== undefined ? `${options.viewerCount} viewers` : 'Unknown viewers';
-		const sanitizedTitle = streamTitle.replace(/['"]/g, '');
-		const titleArg = `--title="${sanitizedTitle} - ${viewerCount} - Screen ${options.screen}"`;
-
-		// MPV arguments specifically for Streamlink
-		const mpvArgs = [
-			// Window position and size
-			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			// Audio settings
-			`--volume=${screenConfig.volume !== undefined ? screenConfig.volume : this.config.player.defaultVolume}`,
-			
-			// IPC and config
-			`--input-ipc-server=${ipcPath}`,
-			`--config-dir=${this.SCRIPTS_PATH}`,
-			`--log-file=${logFile}`,
-			
-			`--profile=streamlink`,
-			
-			// Title
-			titleArg,
-			
-			// Window state
-			...(options.windowMaximized || screenConfig.windowMaximized ? ['--window-maximized=yes'] : [])
-		].filter(Boolean);
-
-		// Streamlink-specific arguments
+		const mpvArgs = this.getMpvArgs(options);
 		const streamlinkArgs = [
 			url,
-			'best', // Quality selection
+			options.quality || 'best',
 			'--player',
-			this.mpvPath,
-			'--player-args',
-			mpvArgs.join(' ')
+			this.mpvPath
 		];
+
+		// Add streamlink options from config
+		if (this.config.streamlink?.options) {
+			Object.entries(this.config.streamlink.options).forEach(([key, value]) => {
+				if (value === true) {
+					streamlinkArgs.push(`--${key}`);
+				} else if (value !== false && value !== undefined && value !== null) {
+					streamlinkArgs.push(`--${key}`, String(value));
+				}
+			});
+		}
+
+		// Add HTTP headers if configured
+		if (this.config.streamlink?.http_header) {
+			Object.entries(this.config.streamlink.http_header).forEach(([key, value]) => {
+				streamlinkArgs.push('--http-header', `${key}=${value}`);
+			});
+		}
+
+		// Add player arguments properly quoted
+		streamlinkArgs.push('--player-args', `"${mpvArgs.join(' ')}"`);
 
 		return streamlinkArgs;
 	}
@@ -1012,15 +1002,11 @@ export class PlayerService {
 		try {
 			exec(`echo "${command}" | socat - ${ipcPath}`, (err) => {
 				if (err) {
-					logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err as Error);
+					this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
 				}
 			});
 		} catch (err) {
-			if (err instanceof Error) {
-				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err);
-			} else {
-				logger.error(`Command send error for screen ${screen}`, 'PlayerService', String(err));
-			}
+			this.logError(`Command send error for screen ${screen}`, 'PlayerService', err);
 		}
 	}
 
@@ -1089,11 +1075,7 @@ export class PlayerService {
 						fs.unlinkSync(ipcPath);
 					}
 				} catch (error) {
-					logger.warn(
-						`Failed to remove IPC socket ${ipcPath}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
+					this.logError(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
 				}
 			});
 			
@@ -1175,11 +1157,7 @@ export class PlayerService {
 			const hostname = new URL(url).hostname;
 			return hostname ? `Stream from ${hostname}` : 'Unknown Stream';
 		} catch (err) {
-			logger.warn(
-				`Failed to extract title from URL: ${url}`,
-				'PlayerService',
-				err instanceof Error ? err : new Error(String(err))
-			);
+			this.logError('Failed to extract title from URL', 'PlayerService', err);
 			return 'Unknown Stream';
 		}
 	}
@@ -1207,7 +1185,7 @@ export class PlayerService {
 				});
 				
 				socket.on('error', (err: Error) => {
-					logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err);
+					this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
 					reject(err);
 				});
 				
@@ -1218,9 +1196,17 @@ export class PlayerService {
 					reject(new Error('Socket timeout'));
 				});
 			} catch (err) {
-				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err instanceof Error ? err : String(err));
+				this.logError(`Command send error for screen ${screen}`, 'PlayerService', err instanceof Error ? err : String(err));
 				reject(err);
 			}
 		});
+	}
+
+	private logError(message: string, service: string, error: unknown): void {
+		if (error instanceof Error) {
+			logger.error(message, service, error);
+		} else {
+			logger.error(message, service, new Error(String(error)));
+		}
 	}
 }

@@ -18,8 +18,8 @@
     "twitch-disable-hosting": true,
     "twitch-disable-ads": true,
     "twitch-low-latency": true,
-    "retry-max": "1",
-    "retry-streams": "1",
+    "retry-max": "3",
+    "retry-streams": "3",
     "ringbuffer-size": "32M",
     "player-continuous-http": true,
     "stream-segment-attempts": "3"
