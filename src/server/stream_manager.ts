@@ -68,6 +68,7 @@ export class StreamManager extends EventEmitter {
   private lastStreamRefresh: Map<number, number> = new Map(); // Track last refresh time per screen
   private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
   private screenConfigs: Map<number, ScreenConfig>;
+  private watchedStreams: Set<string> = new Set();
   
   /**
    * Creates a new StreamManager instance
@@ -1600,97 +1601,149 @@ export class StreamManager extends EventEmitter {
    * @param screen Screen number
    * @param forceRefresh Whether to force a refresh regardless of time elapsed
    */
-  async updateQueue(screen: number, forceRefresh = false): Promise<void> {
-    if (this.isShuttingDown) {
-      return;
+  async updateQueue(screen: number): Promise<void> {
+    // Check if screen is enabled
+    const screenConfig = this.screenConfigs.get(screen);
+    if (!screenConfig?.enabled) {
+        logger.debug(`Screen ${screen} is disabled, skipping queue update`, 'StreamManager');
+        return;
+    }
+
+    // Check if queue is already being processed
+    if (this.queueProcessing.has(screen)) {
+        logger.debug(`Queue update already in progress for screen ${screen}`, 'StreamManager');
+        return;
     }
 
     try {
-      // Check if queue is being processed
-      if (this.queueProcessing.has(screen)) {
-        logger.info(`Queue processing already in progress for screen ${screen}, skipping update`, 'StreamManager');
-        return;
-      }
+        this.queueProcessing.add(screen);
+        logger.info(`Updating queue for screen ${screen}`, 'StreamManager');
 
-      const activeStream = this.getActiveStreams().find(s => s.screen === screen);
-      const currentQueue = queueService.getQueue(screen);
-      const isEmptyQueue = currentQueue.length === 0;
-      
-      if (forceRefresh || isEmptyQueue) {
-        // Force refresh - set last refresh to 0 to ensure new data is fetched
-        this.lastStreamRefresh.set(screen, 0);
-        logger.info(`${forceRefresh ? 'Forcing refresh' : 'Queue empty, refreshing'} for screen ${screen}`, 'StreamManager');
-        
-        // Fetch fresh streams
+        // Clear existing queue to ensure fresh state
+        this.queues.set(screen, []);
+        logger.info(`Cleared existing queue for screen ${screen}`, 'StreamManager');
+
+        // Get screen configuration from streams config
+        const streamConfig = this.config.streams.find(s => s.screen === screen);
+        const sources = streamConfig?.sources;
+        if (!sources || sources.length === 0) {
+            logger.warn(`No valid stream configuration found for screen ${screen}`, 'StreamManager');
+            return;
+        }
+
+        // Get all streams based on sources
         const streams = await this.getLiveStreams();
-        this.lastStreamRefresh.set(screen, Date.now());
-        
-        const availableStreams = streams.filter(s => s.screen === screen);
-        
-        // Create a map of live stream URLs for quick lookup
-        const liveStreamUrls = new Set(availableStreams.map(s => s.url));
-        
-        // Filter out streams that are no longer live from the current queue
-        if (currentQueue.length > 0) {
-          const updatedQueue = currentQueue.filter(stream => {
-            const isStillLive = liveStreamUrls.has(stream.url);
-            if (!isStillLive) {
-              logger.info(`Removing stream ${stream.url} from queue as it is no longer live`, 'StreamManager');
+        logger.debug(`Found ${streams.length} total streams`, 'StreamManager');
+
+        // Filter streams based on screen sources
+        const screenStreams = streams.filter(stream => {
+            // Check if stream matches any source for this screen
+            return sources.some(source => {
+                if (!source.enabled) return false;
+
+                // Match by platform and organization
+                if (source.type === 'holodex' && stream.platform === 'youtube') {
+                    if (source.subtype === 'organization' && source.name === stream.organization) {
+                        return true;
+                    }
+                    if (source.subtype === 'favorites' && this.favoriteChannels.holodex.includes(stream.channelId || '')) {
+                        stream.subtype = 'favorites';
+                        stream.priority = source.priority;
+                        return true;
+                    }
+                }
+
+                if (source.type === 'twitch' && stream.platform === 'twitch') {
+                    if (source.subtype === 'favorites' && this.favoriteChannels.twitch.includes(stream.channelId || '')) {
+                        stream.subtype = 'favorites';
+                        stream.priority = source.priority;
+                        return true;
+                    }
+                    // For non-favorite Twitch streams, check tags
+                    if (!source.subtype && source.tags?.some(tag => stream.tags?.includes(tag))) {
+                        stream.priority = source.priority;
+                        return true;
+                    }
+                }
+
+                return false;
+            });
+        });
+
+        // Filter out unwatched streams
+        const unwatchedStreams = this.filterUnwatchedStreams(screenStreams);
+        logger.debug(`Found ${unwatchedStreams.length} unwatched streams for screen ${screen}`, 'StreamManager');
+
+        // Update queue
+        this.queues.set(screen, unwatchedStreams);
+
+        // Log queue contents
+        const queue = this.queues.get(screen) || [];
+        logger.info(`Current queue for screen ${screen} has ${queue.length} items`, 'StreamManager');
+        queue.forEach((item, index) => {
+            logger.info(`  Queue item ${index}: ${item.url} (watched: ${this.isStreamWatched(item.url)})`, 'StreamManager');
+        });
+
+        // Check if current stream should be stopped (if it's finished/not in new queue)
+        const currentStream = this.streams.get(screen);
+        if (currentStream) {
+            const isStreamInQueue = unwatchedStreams.some(s => s.url === currentStream.url);
+            if (!isStreamInQueue) {
+                logger.info(`Current stream ${currentStream.url} is not in new queue, stopping it`, 'StreamManager');
+                await this.playerService.stopStream(screen);
             }
-            return isStillLive;
-          });
-          
-          // Update the queue with only live streams
-          if (updatedQueue.length !== currentQueue.length) {
-            queueService.setQueue(screen, updatedQueue);
-            logger.info(`Removed ${currentQueue.length - updatedQueue.length} streams that are no longer live`, 'StreamManager');
-          }
         }
-        
-        if (availableStreams.length > 0) {
-          // Filter unwatched streams
-          const unwatchedStreams = queueService.filterUnwatchedStreams(availableStreams);
-          
-          if (unwatchedStreams.length > 0) {
-            // For empty queue or force refresh, replace entire queue
-            queueService.setQueue(screen, unwatchedStreams);
-            logger.info(
-              `Set queue for screen ${screen} with ${unwatchedStreams.length} streams`,
-              'StreamManager'
-            );
-          }
+
+        // Start next stream if needed
+        if (queue.length > 0 && !this.streams.get(screen)) {
+            const nextStream = queue[0];
+            logger.info(`Starting next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
+            await this.startStream(nextStream);
         }
-        
-        // If no active stream and not manually closed, try to start a new one
-        if (!activeStream && !this.manuallyClosedScreens.has(screen)) {
-          // Mark as processing to prevent concurrent queue processing
-          this.queueProcessing.add(screen);
-          try {
-            await this.handleEmptyQueue(screen);
-          } finally {
-            this.queueProcessing.delete(screen);
-          }
-        }
-      } else {
-        // Non-forced update - follow normal refresh interval
-        const now = Date.now();
-        const lastRefresh = this.lastStreamRefresh.get(screen) || 0;
-        const timeSinceLastRefresh = now - lastRefresh;
-        
-        if (timeSinceLastRefresh >= this.STREAM_REFRESH_INTERVAL) {
-          logger.info(`Refresh interval elapsed for screen ${screen}, updating queue`, 'StreamManager');
-          await this.updateQueue(screen, true);
-        } else {
-          logger.info(`Refresh interval not elapsed for screen ${screen}, skipping queue update`, 'StreamManager');
-        }
-      }
+
+        // Update last refresh timestamp
+        this.lastStreamRefresh.set(screen, Date.now());
     } catch (error) {
-      logger.error(
-        `Failed to update queue for screen ${screen}`,
-        'StreamManager',
-        error instanceof Error ? error : new Error(String(error))
-      );
+        logger.error(
+            `Failed to update queue for screen ${screen}`,
+            'StreamManager',
+            error instanceof Error ? error : new Error(String(error))
+        );
+    } finally {
+        this.queueProcessing.delete(screen);
     }
+  }
+
+  private filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
+    // First check if we have any unwatched non-favorite streams
+    const hasUnwatchedNonFavorites = streams.some(stream => {
+        const isFavorite = stream.subtype === 'favorites';
+        return !isFavorite && !this.isStreamWatched(stream.url);
+    });
+
+    return streams.filter(stream => {
+        const isFavorite = stream.subtype === 'favorites';
+        const isWatched = this.isStreamWatched(stream.url);
+        
+        // If it's not watched, always include it
+        if (!isWatched) {
+            return true;
+        }
+        
+        // If it's watched and a favorite, only include if all non-favorites are watched
+        if (isFavorite && !hasUnwatchedNonFavorites) {
+            logger.debug(`Including watched favorite stream ${stream.url} because all non-favorites are watched`, 'StreamManager');
+            return true;
+        }
+        
+        // Otherwise, don't include watched streams
+        logger.debug(`Filtering out watched stream ${stream.url}`, 'StreamManager');
+        return false;
+    });
+  }
+
+  private isStreamWatched(url: string): boolean {
+    return this.watchedStreams.has(url);
   }
 
   /**
@@ -1709,7 +1762,7 @@ export class StreamManager extends EventEmitter {
 
     // Update queues for each screen
     for (const screen of enabledScreens) {
-      await this.updateQueue(screen, forceRefresh);
+      await this.updateQueue(screen);
     }
   }
 
@@ -1799,6 +1852,13 @@ export class StreamManager extends EventEmitter {
         }
       }
     }, 10000); // Check every 10 seconds
+  }
+
+  async refreshStreams(): Promise<void> {
+    logger.info('Refreshing streams for all screens', 'StreamManager');
+    for (const screen of this.screenConfigs.keys()) {
+        await this.updateQueue(screen);
+    }
   }
 }
 

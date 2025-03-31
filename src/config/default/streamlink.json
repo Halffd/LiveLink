@@ -1,14 +1,7 @@
 {
   "path": "streamlink",
   "mpv": {
-    "vo": "gpu",
-    "hwdec": "auto-copy",
-    "force-window": "immediate",
-    "border": "no",
-    "keep-open": "no",
-    "stop-screensaver": "yes",
-    "demuxer-max-bytes": "500M",
-    "demuxer-max-back-bytes": "100M"
+    "border": "no"
   },
   "options": {
     "player": "mpv",

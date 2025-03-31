@@ -844,8 +844,9 @@ router.post('/api/streams/refresh/:screen', async (ctx: Context) => {
     // Reset the refresh timestamp for this screen
     streamManager.resetRefreshTimestamps([screen]);
     
-    // Update queue for this screen
-    await streamManager.updateQueue(screen, true);
+    // Force refresh queue for screen
+    logger.info(`Force refreshing queue for screen ${screen}`, 'API');
+    await streamManager.updateQueue(screen);
     
     ctx.body = { success: true, message: `Stream data refresh initiated for screen ${screen}` };
   } catch (error) {

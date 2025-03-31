@@ -46,10 +46,20 @@ streamCommands
       console.log(chalk.blue('Active Streams:'));
       streams.forEach((stream) => {
         console.log(chalk.green(`\nScreen ${stream.screen}:`));
+        console.log(`Title: ${stream.title || 'No Title'}`);
         console.log(`URL: ${stream.url}`);
+        console.log(`Platform: ${stream.platform || 'Unknown'}`);
+        if (stream.organization) console.log(`Organization: ${stream.organization}`);
+        if (stream.channel) console.log(`Channel: ${stream.channel}`);
+        if (stream.channelId) console.log(`Channel ID: ${stream.channelId}`);
         console.log(`Quality: ${stream.quality}`);
-        if (stream.title) console.log(`Title: ${stream.title}`);
         if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
+        if (stream.startTime) {
+          const startTimeStr = new Date(stream.startTime).toLocaleString();
+          console.log(`Started: ${startTimeStr}`);
+        }
+        if (stream.duration) console.log(`Duration: ${formatDuration(stream.duration)}`);
+        if (stream.tags && stream.tags.length > 0) console.log(`Tags: ${stream.tags.join(', ')}`);
         console.log(`Status: ${stream.status || 'playing'}`);
       });
     } catch (error) {
@@ -352,6 +362,20 @@ function formatUptime(startTime: number | string): string {
   return parts.join(' ');
 }
 
+// Helper function to format duration in seconds to human readable string
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
+  
+  return parts.join(' ');
+}
+
 // Queue Management Commands
 queueCommands
   .command('show')
@@ -371,6 +395,10 @@ queueCommands
       console.log(chalk.blue(`\nQueue for Screen ${screen} (${queue.length} items):`));
       queue.forEach((stream, index) => {
         console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}`));
+        console.log(`Platform: ${stream.platform || 'Unknown'}`);
+        if (stream.organization) console.log(`Organization: ${stream.organization}`);
+        if (stream.channel) console.log(`Channel: ${stream.channel}`);
+        if (stream.channelId) console.log(`Channel ID: ${stream.channelId}`);
         console.log(`URL: ${stream.url}`);
         if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
         if (stream.priority !== undefined) console.log(`Priority: ${stream.priority}`);
@@ -379,6 +407,10 @@ queueCommands
           const uptime = formatUptime(stream.startTime);
           console.log(`Started: ${startTimeStr} (${uptime} ago)`);
         }
+        if (stream.duration) console.log(`Duration: ${formatDuration(stream.duration)}`);
+        if (stream.sourceStatus) console.log(`Source Status: ${stream.sourceStatus}`);
+        if (stream.tags && stream.tags.length > 0) console.log(`Tags: ${stream.tags.join(', ')}`);
+        if (stream.subtype) console.log(`Source: ${stream.subtype}`);
       });
     } catch (error) {
       console.error(chalk.red('Error:'), error);
