@@ -103,44 +103,45 @@ class QueueService extends EventEmitter {
         }
       }
 
-      // For non-favorites or if nodes not found, sort by start time and viewer count
-      const aTime = a.startTime ? (typeof a.startTime === 'string' ? new Date(a.startTime).getTime() : a.startTime) : 0;
-      const bTime = b.startTime ? (typeof b.startTime === 'string' ? new Date(b.startTime).getTime() : b.startTime) : 0;
-      
-      if (aTime !== bTime) {
-        return bTime - aTime; // Newer streams first
-      }
-
       // Finally sort by viewer count
       return (b.viewerCount || 0) - (a.viewerCount || 0);
     });
     
-    this.queues.set(screen, sortedQueue);
+    // Check if the queue has actually changed before updating and emitting events
+    const currentQueue = this.queues.get(screen) || [];
+    const hasChanged = this.hasQueueChanged(currentQueue, sortedQueue);
     
-    logger.info(`Set queue for screen ${screen}. Queue size: ${sortedQueue.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(sortedQueue.map(s => ({
-      url: s.url,
-      priority: s.priority,
-      startTime: s.startTime,
-      viewerCount: s.viewerCount,
-      isFavorite: s.subtype === 'favorites',
-      favoriteIndex: favorites.findIndex(f => f.priority === s.priority)
-    })))}`, 'QueueService');
-    
-    // Log favorites chain
-    let node: FavoritesNode | null = rootNode;
-    while (node) {
-      logger.debug(`Favorites node: Priority ${node.priority}, Index ${node.currentIndex}/${node.totalFavorites}, Time ${new Date(node.startTime).toISOString()}`, 'QueueService');
-      node = node.nextNode;
+    if (hasChanged) {
+      this.queues.set(screen, sortedQueue);
+      logger.info(`Queue updated for screen ${screen}. Size: ${sortedQueue.length}`, 'QueueService');
+      
+      // Only log detailed queue info at debug level
+      logger.debug(`Queue contents for screen ${screen}: ${JSON.stringify(sortedQueue.map(s => ({
+        url: s.url,
+        priority: s.priority,
+        startTime: s.startTime,
+        viewerCount: s.viewerCount,
+        isFavorite: s.subtype === 'favorites'
+      })))}`, 'QueueService');
+      
+      if (sortedQueue.length === 0) {
+        this.emit('all:watched', screen);
+      } else {
+        this.emit('queue:updated', screen, sortedQueue);
+      }
     }
+  }
+
+  private hasQueueChanged(currentQueue: StreamSource[], newQueue: StreamSource[]): boolean {
+    if (currentQueue.length !== newQueue.length) return true;
     
-    if (sortedQueue.length === 0) {
-      logger.info(`Queue for screen ${screen} is empty, emitting all:watched event`, 'QueueService');
-      this.emit('all:watched', screen);
-    } else {
-      logger.info(`Queue for screen ${screen} updated with ${sortedQueue.length} items`, 'QueueService');
-      this.emit('queue:updated', screen, sortedQueue);
-    }
+    return currentQueue.some((current, index) => {
+      const next = newQueue[index];
+      return current.url !== next.url || 
+             current.priority !== next.priority ||
+             current.viewerCount !== next.viewerCount ||
+             current.sourceStatus !== next.sourceStatus;
+    });
   }
 
   public getQueue(screen: number): StreamSource[] {

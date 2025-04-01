@@ -807,40 +807,63 @@ export class PlayerService {
 	 * Kill child processes of a given parent process
 	 */
 	private killChildProcesses(parentPid?: number): void {
-		if (!parentPid) return;
+		if (!parentPid) {
+			logger.debug('No parent PID provided to kill child processes', 'PlayerService');
+			return;
+		}
 
 		try {
-			// Get child processes
-			const psOutput = execSync(`ps -o pid --ppid ${parentPid} --no-headers`).toString();
-			const childPids = psOutput.trim().split('\n').filter(Boolean).map(pid => parseInt(pid.trim()));
-			
-			// Kill each child with increasing force
-			for (const pid of childPids) {
-				if (isNaN(pid)) continue;
-				
-				try {
-					// Try SIGTERM first
-					process.kill(pid, 'SIGTERM');
-					setTimeout(() => {
-						try {
-							// Check if still running and use SIGKILL if needed
-							if (this.isProcessRunning(pid)) {
-								process.kill(pid, 'SIGKILL');
-							}
-						} catch {
-							// Process might already be gone
-						}
-					}, 300);
-				} catch {
-					// Process might already be gone
+			// First try to kill the parent process
+			try {
+				process.kill(parentPid, 'SIGTERM');
+				logger.debug(`Sent SIGTERM to parent process ${parentPid}`, 'PlayerService');
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+					logger.warn(`Error sending SIGTERM to parent process ${parentPid}`, 'PlayerService');
 				}
 			}
+
+			// Give parent process time to clean up
+			setTimeout(() => {
+				try {
+					// Check if parent is still running
+					try {
+						process.kill(parentPid, 0);
+						// If we get here, process is still running, try SIGKILL
+						process.kill(parentPid, 'SIGKILL');
+						logger.debug(`Sent SIGKILL to parent process ${parentPid}`, 'PlayerService');
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+							logger.warn(`Error checking/killing parent process ${parentPid}`, 'PlayerService');
+						}
+					}
+
+					// Try to get child processes
+					const childPidsStr = execSync(`pgrep -P ${parentPid}`, { encoding: 'utf8' }).trim();
+					if (childPidsStr) {
+						const childPids = childPidsStr.split('\n').map(Number);
+						for (const pid of childPids) {
+							try {
+								process.kill(pid, 'SIGTERM');
+								logger.debug(`Sent SIGTERM to child process ${pid}`, 'PlayerService');
+							} catch (error) {
+								if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+									logger.warn(`Error killing child process ${pid}`, 'PlayerService');
+								}
+							}
+						}
+					}
+				} catch (error) {
+					// Ignore pgrep errors as the parent process might already be gone
+					if (!(error as NodeJS.ErrnoException).message?.includes('Command failed: pgrep')) {
+						const errorMsg = error instanceof Error ? error.message : String(error);
+						logger.warn(`Error killing child processes: ${errorMsg}`, 'PlayerService');
+					}
+				}
+			}, 500); // Wait 500ms before checking/killing remaining processes
 		} catch (error) {
-			logger.error(
-				'Error killing child processes',
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			logger.error(`Error in killChildProcesses: ${errorMsg}`, 'PlayerService');
 		}
 	}
 	
@@ -849,67 +872,34 @@ export class PlayerService {
 	 */
 	private cleanup_after_stop(screen: number): void {
 		try {
-			// Get the stream instance
-			const stream = this.streams.get(screen);
-			
-			// Clear all monitoring and timers
+			// Clear monitoring and state
 			this.clearMonitoring(screen);
-			
-			// Kill the process if it's still running
-			if (stream?.process) {
-				try {
-					// Check if process is still running
-					if (this.isProcessRunning(stream.process.pid)) {
-						logger.info(`Killing process for screen ${screen} (PID: ${stream.process.pid})`, 'PlayerService');
-						stream.process.kill('SIGTERM');
-						
-						// Give it a moment to close gracefully
-						setTimeout(() => {
-							if (this.isProcessRunning(stream.process?.pid)) {
-								logger.warn(`Process ${stream.process?.pid} still running, forcing kill`, 'PlayerService');
-								stream.process?.kill('SIGKILL');
-							}
-						}, 1000);
-					}
-				} catch (error) {
-					logger.error(
-						`Error killing process for screen ${screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				}
-			}
+			const stream = this.streams.get(screen);
+			this.streams.delete(screen);
 
-			// Clean up IPC socket
+			// Clean up IPC socket if it exists
 			const ipcPath = this.ipcPaths.get(screen);
 			if (ipcPath && fs.existsSync(ipcPath)) {
 				try {
 					fs.unlinkSync(ipcPath);
-					logger.debug(`Removed IPC socket for screen ${screen}: ${ipcPath}`, 'PlayerService');
+					logger.debug(`Removed IPC socket for screen ${screen}`, 'PlayerService');
 				} catch (error) {
-					logger.error(
-						`Failed to remove IPC socket for screen ${screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
+					// Only log as warning if file still exists
+					if (fs.existsSync(ipcPath)) {
+						const errorMsg = error instanceof Error ? error.message : String(error);
+						logger.warn(`Failed to remove IPC socket for screen ${screen}: ${errorMsg}`, 'PlayerService');
+					}
 				}
 			}
+			this.ipcPaths.delete(screen);
 
-			// Remove stream from tracking
-			this.streams.delete(screen);
-			this.streamRetries.delete(screen);
-			this.streamStartTimes.delete(screen);
-			this.streamRefreshTimers.delete(screen);
-			this.inactiveTimers.delete(screen);
-			this.healthCheckIntervals.delete(screen);
-
-			logger.info(`Cleanup completed for screen ${screen}`, 'PlayerService');
+			// Kill any remaining processes
+			if (stream?.process?.pid) {
+				this.killChildProcesses(stream.process.pid);
+			}
 		} catch (error) {
-			logger.error(
-				`Error during cleanup for screen ${screen}`,
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			logger.error(`Error during cleanup for screen ${screen}: ${errorMsg}`, 'PlayerService');
 		}
 	}
 	

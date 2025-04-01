@@ -927,8 +927,7 @@ export class StreamManager extends EventEmitter {
           const bPriority = b.priority ?? 999;
           if (aPriority !== bPriority) return aPriority - bPriority;
           
-          // Then by viewer count if available
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          return 0; //(b.viewerCount || 0) - (a.viewerCount || 0);
         });
         
         if (screenStreams.length > 0) {
