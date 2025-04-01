@@ -320,91 +320,98 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
+		
+		try {
+			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
+				env,
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
 
-		logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
-		logger.debug(`Streamlink command: streamlink ${args.join(' ')}`, 'PlayerService');
+			return new Promise((resolve, reject) => {
+				let errorOutput = '';
+				let hasStarted = false;
+				const startTimeout = setTimeout(() => {
+					const error = new Error('Stream start timeout exceeded');
+					this.logError(
+						`Stream start timeout on screen ${options.screen}`,
+						'PlayerService',
+						error
+					);
+					process.kill();
+					reject(error);
+				}, this.STARTUP_TIMEOUT);
 
-		// Check if there's already a process for this screen
-		const existingStream = this.streams.get(options.screen);
-		if (existingStream?.process) {
-			try {
-				existingStream.process.kill('SIGTERM');
-				await new Promise<void>((resolve) => {
-					const timeout = setTimeout(() => {
-						try {
-							existingStream.process?.kill('SIGKILL');
-						} catch {
-							// Process might already be gone
+				const onData = (data: Buffer) => {
+					const output = data.toString();
+					if (output.includes('Starting player')) {
+						hasStarted = true;
+						clearTimeout(startTimeout);
+						resolve(process);
+					}
+					// Check for common error patterns
+					if (output.toLowerCase().includes('error')) {
+						errorOutput += output + '\n';
+					}
+				};
+
+				const onError = (error: Error) => {
+					clearTimeout(startTimeout);
+					this.logError(
+						`Failed to start streamlink for screen ${options.screen}`,
+						'PlayerService',
+						error
+					);
+					reject(error);
+				};
+
+				const onExit = (code: number | null) => {
+					clearTimeout(startTimeout);
+					if (!hasStarted) {
+						let errorMessage = 'Stream failed to start';
+						
+						// Enhanced error detection
+						if (errorOutput.toLowerCase().includes('members-only')) {
+							errorMessage = 'Stream unavailable (members-only content)';
+						} else if (errorOutput.toLowerCase().includes('no playable streams')) {
+							errorMessage = 'No playable streams found';
+						} else if (errorOutput.toLowerCase().includes('404')) {
+							errorMessage = 'Stream not found (404)';
+						} else if (errorOutput.toLowerCase().includes('private')) {
+							errorMessage = 'Stream is private';
+						} else if (code === 1) {
+							errorMessage = 'Stream unavailable (possibly members-only content)';
+						} else if (code === 130) {
+							errorMessage = 'Stream process interrupted';
+						} else if (code === 2) {
+							errorMessage = 'Stream unavailable or invalid URL';
 						}
-						resolve();
-					}, this.SHUTDOWN_TIMEOUT);
+						
+						const error = new Error(errorMessage);
+						this.logError(
+							`Stream failed to start on screen ${options.screen} (code ${code})`,
+							'PlayerService',
+							error
+						);
+						reject(error);
+					}
+				};
 
-					existingStream.process?.once('exit', () => {
-						clearTimeout(timeout);
-						resolve();
-					});
+				process.stdout.on('data', onData);
+				process.stderr.on('data', (data: Buffer) => {
+					errorOutput += data.toString() + '\n';
+					onData(data);
 				});
-			} catch (error) {
-				logger.warn(
-					`Error stopping existing process on screen ${options.screen}`,
-					'PlayerService',
-					error instanceof Error ? error.message : String(error)
-				);
-			}
-		}
-
-		// Clear any existing state
-		this.clearMonitoring(options.screen);
-		this.streams.delete(options.screen);
-		logger.info(`Starting Streamlink for screen ${options.screen} Command: streamlink ${args.join(' ')}`, 'PlayerService');
-		// Start new process
-		const process = spawn('streamlink', args, {
-			env,
-			stdio: ['ignore', 'pipe', 'pipe']
-		});
-
-		// Set up process handlers
-		this.setupProcessHandlers(process, options.screen);
-
-		// Wait for streamlink to initialize
-		await new Promise<void>((resolve, reject) => {
-			const timeout = setTimeout(() => {
-				reject(new Error('Streamlink startup timeout'));
-			}, this.STARTUP_TIMEOUT);
-
-			const onData = (data: Buffer) => {
-				const output = data.toString();
-				if (output.includes('Available streams:')) {
-					cleanup();
-					resolve();
-				}
-			};
-
-			const onError = (error: Error) => {
-				cleanup();
-				reject(error);
-			};
-
-			const onExit = (code: number | null) => {
-				cleanup();
-				if (code !== null && code !== 0) {
-					reject(new Error(`Streamlink exited with code ${code}`));
-				}
-			};
-
-			const cleanup = () => {
-				clearTimeout(timeout);
-				process.stdout?.removeListener('data', onData);
-				process.removeListener('error', onError);
+				process.on('error', onError);
 				process.on('exit', onExit);
-			};
-
-			process.stdout?.on('data', onData);
-			process.on('error', onError);
-			process.on('exit', onExit);
-		});
-
-		return process;
+			});
+		} catch (error) {
+			this.logError(
+				`Failed to spawn streamlink process for screen ${options.screen}`,
+				'PlayerService',
+				error
+			);
+			throw error;
+		}
 	}
 
 	private setupProcessHandlers(process: ChildProcess, screen: number): void {

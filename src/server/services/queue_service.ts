@@ -250,11 +250,23 @@ class QueueService extends EventEmitter {
     });
 
     return streams.filter(stream => {
-      // Filter out members-only streams
-      if (stream.title?.toLowerCase().includes('membership') || 
-          stream.title?.toLowerCase().includes('grembership') ||
-          stream.title?.toLowerCase().includes('member')) {
+      // Enhanced members-only detection
+      const isMembersOnly = (stream.title?.toLowerCase() || '').match(
+        /(membership|member['']?s|grembership|限定|メン限|member only)/i
+      ) !== null;
+
+      if (isMembersOnly) {
         logger.info(`Filtering out members-only stream: ${stream.title}`, 'QueueService');
+        return false;
+      }
+
+      // Check for common error indicators in title
+      const hasErrorIndicators = (stream.title?.toLowerCase() || '').match(
+        /(unavailable|private|deleted|removed|error)/i
+      ) !== null;
+
+      if (hasErrorIndicators) {
+        logger.info(`Filtering out potentially unavailable stream: ${stream.title}`, 'QueueService');
         return false;
       }
 
@@ -268,12 +280,11 @@ class QueueService extends EventEmitter {
       
       // If it's watched and a favorite, only include if all non-favorites are watched
       if (isFavorite && !hasUnwatchedNonFavorites) {
-        logger.debug(`QueueService: Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
+        logger.debug(`Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
         return true;
       }
       
-      // Otherwise, don't include watched streams
-      logger.debug(`QueueService: Filtering out watched stream ${stream.url}`, 'QueueService');
+      logger.debug(`Filtering out watched stream ${stream.url}`, 'QueueService');
       return false;
     });
   }
