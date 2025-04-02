@@ -338,6 +338,7 @@ export class PlayerService {
 						error
 					);
 					process.kill();
+					this.startupLocks.set(options.screen, false);
 					reject(error);
 				}, this.STARTUP_TIMEOUT);
 
@@ -361,6 +362,7 @@ export class PlayerService {
 						'PlayerService',
 						error
 					);
+					this.startupLocks.set(options.screen, false);
 					reject(error);
 				};
 
@@ -392,6 +394,7 @@ export class PlayerService {
 							'PlayerService',
 							error
 						);
+						this.startupLocks.set(options.screen, false);
 						reject(error);
 					}
 				};
@@ -405,6 +408,7 @@ export class PlayerService {
 				process.on('exit', onExit);
 			});
 		} catch (error) {
+			this.startupLocks.set(options.screen, false);
 			this.logError(
 				`Failed to spawn streamlink process for screen ${options.screen}`,
 				'PlayerService',

@@ -2,17 +2,41 @@
 import { program } from 'commander';
 import fetch, { Response } from 'node-fetch';
 import chalk from 'chalk';
-import type { Stream } from '../types/stream.js';
+import type { Stream, StreamSource } from '../types/stream.js';
 import { logger } from '../server/services/logger.js';
 
 const API_URL = 'http://localhost:3001/api';
+
+function getTimestamp(): string {
+  const now = new Date();
+  return now.toLocaleTimeString();
+}
+
+function formatUptime(startTime: number | string): string {
+  const start = typeof startTime === 'string' ? new Date(startTime).getTime() : startTime;
+  const now = Date.now();
+  const diff = Math.floor((now - start) / 1000);
+  
+  const hours = Math.floor(diff / 3600);
+  const minutes = Math.floor((diff % 3600) / 60);
+  const seconds = diff % 60;
+  
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${seconds}s`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  } else {
+    return `${seconds}s`;
+  }
+}
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
   }
-  return response.json() as Promise<T>;
+  const data = await response.json();
+  return data as T;
 }
 
 program
@@ -32,75 +56,7 @@ const serverCommands = program.command('server').description('Server control com
 streamCommands
   .command('list')
   .description('List all active streams')
-  .action(async () => {
-    try {
-      logger.info('Fetching active streams', 'CLI');
-      const streams = await fetch(`${API_URL}/streams/active`)
-        .then(res => handleResponse<Stream[]>(res));
-
-      if (streams.length === 0) {
-        console.log(chalk.yellow('No active streams found.'));
-        return;
-      }
-
-      console.log(chalk.blue('Active Streams:'));
-      streams.forEach((stream) => {
-        // Screen header with status indicator
-        const status = stream.status || 'playing';
-        const statusColor = status === 'error' ? chalk.red :
-                          status === 'buffering' ? chalk.yellow :
-                          status === 'paused' ? chalk.blue :
-                          chalk.green;
-        const statusIndicator = statusColor('●');
-        console.log(chalk.green(`\nScreen ${stream.screen} ${statusIndicator}`));
-
-        // Basic stream info
-        const title = stream.title || 'No Title';
-        console.log(`Title: ${title}`);
-        console.log(`URL: ${stream.url}`);
-        console.log(`Platform: ${stream.platform || 'Unknown'}`);
-
-        // Channel info if available
-        if (stream.organization || stream.channel || stream.channelId) {
-          if (stream.organization) console.log(`Organization: ${stream.organization}`);
-          if (stream.channel) console.log(`Channel: ${stream.channel}`);
-          if (stream.channelId) console.log(`Channel ID: ${stream.channelId}`);
-        }
-
-        // Stream quality and viewer count
-        console.log(`Quality: ${stream.quality || 'Unknown'}`);
-        if (stream.viewerCount !== undefined) {
-          console.log(`Viewers: ${stream.viewerCount.toLocaleString()}`);
-        }
-
-        // Timing information
-        if (stream.startTime) {
-          const startTimeStr = new Date(stream.startTime).toLocaleString();
-          const uptime = formatUptime(stream.startTime);
-          console.log(`Started: ${startTimeStr} (${uptime} ago)`);
-        }
-        if (stream.duration) {
-          console.log(`Duration: ${formatDuration(stream.duration)}`);
-        }
-
-        // Tags if available
-        if (stream.tags && stream.tags.length > 0) {
-          console.log(`Tags: ${stream.tags.join(', ')}`);
-        }
-        
-        // Status and process information
-        console.log(`Status: ${statusColor(status)}`);
-        if (stream.error) {
-          console.log(chalk.red(`Error: ${stream.error}`));
-        }
-        if (stream.pid) {
-          console.log(`Process: ${stream.pid}`);
-        }
-      });
-    } catch (error) {
-      console.error(chalk.red('Error:'), error);
-    }
-  });
+  .action(handleStreamList);
 
 streamCommands
   .command('start')
@@ -377,170 +333,12 @@ screenCommands
     }
   });
 
-// Helper function to format uptime
-function formatUptime(startTime: number | string): string {
-  const start = typeof startTime === 'string' ? new Date(startTime).getTime() : startTime;
-  const now = Date.now();
-  const uptimeSeconds = Math.floor((now - start) / 1000);
-  
-  const days = Math.floor(uptimeSeconds / (3600 * 24));
-  const hours = Math.floor((uptimeSeconds % (3600 * 24)) / 3600);
-  const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-  const seconds = Math.floor(uptimeSeconds % 60);
-  
-  const parts: string[] = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (seconds > 0 || parts.length === 0) parts.push(`${seconds}s`);
-  
-  return parts.join(' ');
-}
-
-// Helper function to format duration in seconds to human readable string
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const remainingSeconds = seconds % 60;
-  
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
-  
-  return parts.join(' ');
-}
-
-interface ScreenInfo {
-  enabled: boolean;
-  queueProcessing?: boolean;
-}
-
 // Queue Management Commands
 queueCommands
   .command('show')
   .description('Show queue for a screen')
   .argument('<screen>', 'Screen number')
-  .action(async (screen) => {
-    try {
-      console.log(chalk.blue(`Fetching queue for screen ${screen}...`));
-      
-      // First get screen info to show enabled/disabled status
-      const screenInfoResponse = await fetch(`${API_URL}/screens/${screen}`);
-      const screenInfo = await handleResponse<ScreenInfo>(screenInfoResponse);
-      
-      // Get queue info
-      const queueResponse = await fetch(`${API_URL}/streams/queue/${screen}`);
-      const queue = await handleResponse<Stream[]>(queueResponse);
-      
-      // Get active streams to show what's currently playing
-      const activeStreamsResponse = await fetch(`${API_URL}/streams/active`);
-      const activeStreams = await handleResponse<Stream[]>(activeStreamsResponse);
-      const currentStream = activeStreams.find(s => s.screen === parseInt(screen));
-      
-      // Display screen status
-      const screenStatus = screenInfo.enabled ? chalk.green('Enabled') : chalk.red('Disabled');
-      console.log(chalk.blue(`\nScreen ${screen} Status: ${screenStatus}`));
-      
-      // Display current stream if any
-      if (currentStream) {
-        console.log(chalk.blue('\nCurrently Playing:'));
-        const status = currentStream.status || 'playing';
-        const statusColor = status === 'error' ? chalk.red :
-                          status === 'buffering' ? chalk.yellow :
-                          status === 'paused' ? chalk.blue :
-                          chalk.green;
-        
-        console.log(chalk.green('Title:'), currentStream.title || 'No Title');
-        console.log('URL:', currentStream.url);
-        console.log('Platform:', currentStream.platform || 'Unknown');
-        if (currentStream.organization) console.log('Organization:', currentStream.organization);
-        if (currentStream.channel) console.log('Channel:', currentStream.channel);
-        if (currentStream.viewerCount !== undefined) console.log('Viewers:', currentStream.viewerCount.toLocaleString());
-        console.log('Status:', statusColor(status));
-        if (currentStream.error) console.log(chalk.red('Error:'), currentStream.error);
-        if (currentStream.pid) console.log('Process ID:', currentStream.pid);
-        if (currentStream.startTime) {
-          const uptime = formatUptime(currentStream.startTime);
-          console.log('Uptime:', uptime);
-        }
-      } else {
-        console.log(chalk.yellow('\nNo stream currently playing'));
-      }
-      
-      // Display queue
-      if (queue.length === 0) {
-        console.log(chalk.yellow(`\nQueue is empty`));
-        return;
-      }
-      
-      console.log(chalk.blue(`\nQueue (${queue.length} items):`));
-      queue.forEach((stream, index) => {
-        // Title with source type and priority indicator
-        const sourceType = stream.subtype === 'favorites' ? chalk.magenta('[FAV]') :
-                         stream.organization ? chalk.cyan(`[${stream.organization}]`) :
-                         '';
-        const priorityIndicator = stream.priority !== undefined ? 
-          chalk.gray(`(P${stream.priority})`) : '';
-        
-        console.log(chalk.green(`\n${index + 1}. ${sourceType} ${priorityIndicator} ${stream.title || 'Untitled'}`));
-        
-        // Platform and channel info
-        console.log(`Platform: ${stream.platform || 'Unknown'}`);
-        if (stream.organization) console.log(`Organization: ${stream.organization}`);
-        if (stream.channel) console.log(`Channel: ${stream.channel}`);
-        if (stream.channelId) console.log(`Channel ID: ${stream.channelId}`);
-        
-        // Stream details
-        console.log(`URL: ${stream.url}`);
-        if (stream.viewerCount !== undefined) {
-          console.log(`Viewers: ${stream.viewerCount.toLocaleString()}`);
-        }
-        
-        // Priority and status
-        if (stream.priority !== undefined) {
-          const priorityColor = stream.priority <= 2 ? chalk.green :
-                              stream.priority <= 4 ? chalk.blue :
-                              chalk.gray;
-          console.log(`Priority: ${priorityColor(stream.priority)}`);
-        }
-        
-        // Timing information
-        if (stream.startTime) {
-          const startTimeStr = new Date(stream.startTime).toLocaleString();
-          const uptime = formatUptime(stream.startTime);
-          console.log(`Started: ${startTimeStr} (${uptime} ago)`);
-        }
-        if (stream.duration) {
-          console.log(`Duration: ${formatDuration(stream.duration)}`);
-        }
-        
-        // Stream status
-        if (stream.sourceStatus) {
-          const statusColor = stream.sourceStatus === 'live' ? chalk.green :
-                            stream.sourceStatus === 'upcoming' ? chalk.yellow :
-                            chalk.red;
-          console.log(`Source Status: ${statusColor(stream.sourceStatus)}`);
-        }
-        
-        // Additional metadata
-        if (stream.tags && stream.tags.length > 0) {
-          console.log(`Tags: ${stream.tags.join(', ')}`);
-        }
-        if (stream.subtype) {
-          console.log(`Source Type: ${stream.subtype}`);
-        }
-      });
-      
-      // Show queue processing status if available
-      if (screenInfo.queueProcessing) {
-        console.log(chalk.yellow('\nQueue is currently being processed...'));
-      }
-      
-    } catch (error) {
-      console.error(chalk.red('Error:'), error);
-    }
-  });
+  .action(async (screen: string) => handleQueueShow(parseInt(screen, 10)));
 
 queueCommands
   .command('reorder')
@@ -1125,3 +923,122 @@ streamCommands
       console.error(chalk.red('Error:'), error);
     }
   });
+
+interface ScreenInfo {
+  enabled: boolean;
+  queueProcessing?: boolean;
+}
+
+async function handleQueueShow(screen: number) {
+  console.log(chalk.blue(`Fetching queue for screen ${screen}...`));
+  try {
+    // First, trigger a queue refresh
+    const refreshResponse = await fetch(`${API_URL}/streams/queue/${screen}/refresh`, {
+      method: 'POST'
+    });
+    if (!refreshResponse.ok) {
+      console.log(chalk.yellow('Warning: Could not refresh queue'));
+    }
+
+    // Then get the queue
+    const response = await fetch(`${API_URL}/streams/queue/${screen}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log(chalk.yellow(`No queue found for screen ${screen}`));
+        return;
+      }
+      throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
+    }
+
+    const queue = await response.json() as StreamSource[];
+    if (!queue || queue.length === 0) {
+      console.log(chalk.yellow('Queue is empty'));
+      return;
+    }
+
+    // Get screen info to show enabled/disabled status
+    const screenInfoResponse = await fetch(`${API_URL}/screens/${screen}`);
+    const screenInfo = screenInfoResponse.ok ? await screenInfoResponse.json() as ScreenInfo : null;
+    
+    // Display screen status if available
+    if (screenInfo) {
+      const screenStatus = screenInfo.enabled ? chalk.green('Enabled') : chalk.red('Disabled');
+      console.log(chalk.blue(`\nScreen ${screen} Status: ${screenStatus}`));
+    }
+
+    console.log(chalk.blue(`\nQueue for Screen ${screen} (${queue.length} items):`));
+    console.log(chalk.gray('----------------------------------------'));
+    
+    queue.forEach((stream: StreamSource, index: number) => {
+      // Title with source type and priority indicator
+      const sourceType = stream.subtype === 'favorites' ? chalk.magenta('[FAV]') :
+                        stream.organization ? chalk.cyan(`[${stream.organization}]`) :
+                        '';
+      const priorityIndicator = stream.priority !== undefined ? 
+        chalk.gray(`(P${stream.priority})`) : '';
+      
+      console.log(chalk.green(`\n${index + 1}. ${sourceType} ${priorityIndicator} ${stream.title || 'No Title'}`));
+      console.log(`Platform: ${stream.platform || 'Unknown'}`);
+      console.log(`URL: ${stream.url}`);
+      if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount.toLocaleString()}`);
+      if (stream.organization) console.log(`Organization: ${stream.organization}`);
+      if (stream.sourceStatus) {
+        const statusColor = stream.sourceStatus === 'live' ? chalk.green :
+                          stream.sourceStatus === 'upcoming' ? chalk.yellow :
+                          chalk.red;
+        console.log(`Status: ${statusColor(stream.sourceStatus)}`);
+      }
+      console.log(chalk.gray('----------------------------------------'));
+    });
+
+    // Show queue processing status if available
+    if (screenInfo?.queueProcessing) {
+      console.log(chalk.yellow('\nQueue is currently being processed...'));
+    }
+  } catch (error) {
+    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleStreamList() {
+  console.log(getTimestamp(), '[INFO] [CLI] Fetching active streams');
+  try {
+    const response = await fetch(`${API_URL}/streams/active`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const streams = await response.json() as Stream[];
+    if (!streams || streams.length === 0) {
+      console.log('No active streams');
+      return;
+    }
+
+    console.log('\nActive Streams:\n');
+
+    for (const stream of streams) {
+      // Get additional details for each stream
+      const detailsResponse = await fetch(`${API_URL}/streams/${stream.screen}/details`);
+      const details = detailsResponse.ok ? await detailsResponse.json() as Stream : null;
+      
+      console.log(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`);
+      console.log(`Title: ${stream.title || details?.title || 'No Title'}`);
+      console.log(`URL: ${stream.url}`);
+      console.log(`Platform: ${stream.platform}`);
+      console.log(`Quality: ${stream.quality}`);
+      console.log(`Status: ${stream.status}`);
+      
+      if (details) {
+        if (details.viewerCount) console.log(`Viewers: ${details.viewerCount.toLocaleString()}`);
+        if (details.organization) console.log(`Organization: ${details.organization}`);
+        if (stream.startTime) {
+          const uptime = formatUptime(stream.startTime);
+          console.log(`Uptime: ${uptime}`);
+        }
+      }
+      console.log('');
+    }
+  } catch (error) {
+    console.error('Error:', error instanceof Error ? error.message : String(error));
+  }
+}
