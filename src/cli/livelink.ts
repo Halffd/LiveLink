@@ -1042,3 +1042,60 @@ async function handleStreamList() {
     console.error('Error:', error instanceof Error ? error.message : String(error));
   }
 }
+
+program
+  .command('force-start')
+  .description('Force start a stream on a specific screen')
+  .argument('<screen>', 'Screen number')
+  .argument('<url>', 'Stream URL to start')
+  .action(async (screen: string, url: string) => {
+    console.log(getTimestamp(), `[INFO] [CLI] Forcing stream start on screen ${screen} with URL: ${url}`);
+    try {
+      const response = await fetch(`${API_URL}/streams/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url,
+          screen: parseInt(screen, 10),
+          quality: 'best',
+          manual: true
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
+      }
+
+      const result = await response.json() as { success: boolean; error?: string };
+      if (result.success) {
+        console.log(chalk.green(`Stream started successfully on screen ${screen}`));
+      } else {
+        console.log(chalk.yellow(`Failed to start stream: ${result.error || 'Unknown error'}`));
+      }
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+    }
+  });
+
+// Add command to force refresh queues
+program
+  .command('refresh')
+  .description('Force refresh all stream queues')
+  .action(async () => {
+    console.log(getTimestamp(), '[INFO] [CLI] Forcing queue refresh');
+    try {
+      const response = await fetch(`${API_URL}/streams/refresh`, {
+        method: 'POST'
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
+      }
+
+      console.log(chalk.green('Queue refresh triggered successfully'));
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+    }
+  });

@@ -1075,7 +1075,11 @@ router.post('/streams/queue/:screen/refresh', async (ctx: Context) => {
     const errorObj = error instanceof Error ? error : new Error(String(error));
     logger.error('Failed to refresh queue', 'API', errorObj);
     ctx.status = 500;
-    ctx.body = { error: 'Internal server error' };
+    ctx.body = { 
+      error: 'Failed to refresh queue', 
+      message: errorObj.message || 'Internal server error',
+      details: 'Check server logs for more information'
+    };
   }
 });
 

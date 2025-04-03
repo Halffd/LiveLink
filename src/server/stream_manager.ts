@@ -1669,6 +1669,19 @@ export class StreamManager extends EventEmitter {
             });
         });
 
+        if (screenStreams.length === 0) {
+            logger.warn(`No streams found matching configuration criteria for screen ${screen}`, 'StreamManager');
+            // Log the first 5 streams to help with debugging
+            if (streams.length > 0) {
+                logger.debug(`First 5 streams available: ${JSON.stringify(streams.slice(0, 5).map(s => ({
+                    platform: s.platform,
+                    org: s.organization,
+                    channelId: s.channelId,
+                    title: s.title?.substring(0, 30)
+                })))}`, 'StreamManager');
+            }
+        }
+
         // Filter out unwatched streams
         const unwatchedStreams = this.filterUnwatchedStreams(screenStreams);
         logger.debug(`Found ${unwatchedStreams.length} unwatched streams for screen ${screen}`, 'StreamManager');
