@@ -169,7 +169,7 @@ export class PlayerService {
 			// Check if screen is disabled
 			if (this.disabledScreens.has(options.screen)) {
 				logger.warn(`Attempted to start stream on disabled screen ${options.screen}`, 'PlayerService');
-				return {
+			return {
 					screen: options.screen,
 					success: false,
 					error: 'Screen is disabled'
@@ -179,7 +179,7 @@ export class PlayerService {
 			// Check if we're already starting a stream on this screen
 			if (this.startupLocks.get(options.screen)) {
 				logger.warn(`Stream startup already in progress for screen ${options.screen}`, 'PlayerService');
-				return {
+			return {
 					screen: options.screen,
 					success: false,
 					error: 'Stream startup already in progress'
@@ -320,12 +320,12 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
-		
+
 		try {
 			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
-				env,
-				stdio: ['ignore', 'pipe', 'pipe']
-			});
+			env,
+			stdio: ['ignore', 'pipe', 'pipe']
+		});
 
 			return new Promise((resolve, reject) => {
 				let errorOutput = '';
@@ -338,12 +338,11 @@ export class PlayerService {
 						error
 					);
 					process.kill();
-					this.startupLocks.set(options.screen, false);
 					reject(error);
-				}, this.STARTUP_TIMEOUT);
+			}, this.STARTUP_TIMEOUT);
 
-				const onData = (data: Buffer) => {
-					const output = data.toString();
+			const onData = (data: Buffer) => {
+				const output = data.toString();
 					if (output.includes('Starting player')) {
 						hasStarted = true;
 						clearTimeout(startTimeout);
@@ -352,21 +351,20 @@ export class PlayerService {
 					// Check for common error patterns
 					if (output.toLowerCase().includes('error')) {
 						errorOutput += output + '\n';
-					}
-				};
+				}
+			};
 
-				const onError = (error: Error) => {
+			const onError = (error: Error) => {
 					clearTimeout(startTimeout);
 					this.logError(
 						`Failed to start streamlink for screen ${options.screen}`,
 						'PlayerService',
 						error
 					);
-					this.startupLocks.set(options.screen, false);
-					reject(error);
-				};
+				reject(error);
+			};
 
-				const onExit = (code: number | null) => {
+			const onExit = (code: number | null) => {
 					clearTimeout(startTimeout);
 					if (!hasStarted) {
 						let errorMessage = 'Stream failed to start';
@@ -394,7 +392,6 @@ export class PlayerService {
 							'PlayerService',
 							error
 						);
-						this.startupLocks.set(options.screen, false);
 						reject(error);
 					}
 				};
@@ -404,11 +401,10 @@ export class PlayerService {
 					errorOutput += data.toString() + '\n';
 					onData(data);
 				});
-				process.on('error', onError);
-				process.on('exit', onExit);
-			});
+			process.on('error', onError);
+			process.on('exit', onExit);
+		});
 		} catch (error) {
-			this.startupLocks.set(options.screen, false);
 			this.logError(
 				`Failed to spawn streamlink process for screen ${options.screen}`,
 				'PlayerService',
@@ -431,11 +427,11 @@ export class PlayerService {
 							logger.info(`[Screen ${screen}] YouTube stream is in post-live state (ended)`, 'PlayerService');
 							if (!hasEndedStream) {
 								hasEndedStream = true;
-								this.errorCallback?.({
-									screen,
-									error: 'Stream ended',
-									code: 0
-								});
+							this.errorCallback?.({
+								screen,
+								error: 'Stream ended',
+								code: 0
+							});
 							}
 						} else if (output.includes('Downloading MPD manifest')) {
 							logger.debug(`[Screen ${screen}] YouTube stream manifest download attempt`, 'PlayerService');
@@ -458,11 +454,11 @@ export class PlayerService {
 						logger.info(`Stream ended on screen ${screen}`, 'PlayerService');
 						if (!hasEndedStream) {
 							hasEndedStream = true;
-							this.errorCallback?.({
-								screen,
-								error: 'Stream ended',
-								code: 0
-							});
+						this.errorCallback?.({
+							screen,
+							error: 'Stream ended',
+							code: 0
+						});
 						}
 					}
 				}
@@ -485,21 +481,21 @@ export class PlayerService {
 							);
 							if (!hasEndedStream) {
 								hasEndedStream = true;
-								this.errorCallback?.({
-									screen,
-									error: 'Stream ended',
-									code: 0
-								});
+							this.errorCallback?.({
+								screen,
+								error: 'Stream ended',
+								code: 0
+							});
 							}
 						} else {
 							logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
 							if (!hasEndedStream) {
 								hasEndedStream = true;
-								this.errorCallback?.({
-									screen,
-									error: output,
-									code: 0  // Always use code 0 to trigger next stream
-								});
+							this.errorCallback?.({
+								screen,
+								error: output,
+								code: 0  // Always use code 0 to trigger next stream
+							});
 							}
 						}
 					}
@@ -511,11 +507,11 @@ export class PlayerService {
 			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
 			if (!hasEndedStream) {
 				hasEndedStream = true;
-				this.errorCallback?.({
-					screen,
+			this.errorCallback?.({
+				screen,
 					error: err.message,
-					code: 0  // Changed to 0 to always trigger next stream
-				});
+				code: 0  // Changed to 0 to always trigger next stream
+			});
 			}
 		});
 
@@ -523,7 +519,7 @@ export class PlayerService {
 			logger.info(`Process exited on screen ${screen} with code ${code}`, 'PlayerService');
 			// Only handle process exit if we haven't already handled stream end
 			if (!hasEndedStream) {
-				this.handleProcessExit(screen, code);
+			this.handleProcessExit(screen, code);
 			} else {
 				// Just clean up resources without triggering another stream end
 				this.clearMonitoring(screen);
@@ -848,16 +844,16 @@ export class PlayerService {
 						const childPids = childPidsStr.split('\n').map(Number);
 						for (const pid of childPids) {
 							try {
-								process.kill(pid, 'SIGTERM');
+					process.kill(pid, 'SIGTERM');
 								logger.debug(`Sent SIGTERM to child process ${pid}`, 'PlayerService');
 							} catch (error) {
 								if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
 									logger.warn(`Error killing child process ${pid}`, 'PlayerService');
 								}
 							}
-						}
-					}
-				} catch (error) {
+				}
+			}
+		} catch (error) {
 					// Ignore pgrep errors as the parent process might already be gone
 					if (!(error as NodeJS.ErrnoException).message?.includes('Command failed: pgrep')) {
 						const errorMsg = error instanceof Error ? error.message : String(error);
@@ -879,24 +875,24 @@ export class PlayerService {
 			// Clear monitoring and state
 			this.clearMonitoring(screen);
 			const stream = this.streams.get(screen);
-			this.streams.delete(screen);
-
-			// Clean up IPC socket if it exists
-			const ipcPath = this.ipcPaths.get(screen);
-			if (ipcPath && fs.existsSync(ipcPath)) {
-				try {
-					fs.unlinkSync(ipcPath);
+		this.streams.delete(screen);
+		
+		// Clean up IPC socket if it exists
+		const ipcPath = this.ipcPaths.get(screen);
+		if (ipcPath && fs.existsSync(ipcPath)) {
+			try {
+				fs.unlinkSync(ipcPath);
 					logger.debug(`Removed IPC socket for screen ${screen}`, 'PlayerService');
-				} catch (error) {
+			} catch (error) {
 					// Only log as warning if file still exists
 					if (fs.existsSync(ipcPath)) {
 						const errorMsg = error instanceof Error ? error.message : String(error);
 						logger.warn(`Failed to remove IPC socket for screen ${screen}: ${errorMsg}`, 'PlayerService');
 					}
-				}
 			}
-			this.ipcPaths.delete(screen);
-
+		}
+		this.ipcPaths.delete(screen);
+		
 			// Kill any remaining processes
 			if (stream?.process?.pid) {
 				this.killChildProcesses(stream.process.pid);
@@ -931,11 +927,11 @@ export class PlayerService {
 
 		// Initialize IPC path if not already set
 		if (!this.ipcPaths.has(options.screen)) {
-			const homedir = process.env.HOME || process.env.USERPROFILE;
-			const ipcPath = homedir
-				? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
-				: `/tmp/mpv-ipc-${options.screen}`;
-			this.ipcPaths.set(options.screen, ipcPath);
+		const homedir = process.env.HOME || process.env.USERPROFILE;
+		const ipcPath = homedir
+			? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
+			: `/tmp/mpv-ipc-${options.screen}`;
+		this.ipcPaths.set(options.screen, ipcPath);
 		}
 
 		// Ensure log directory exists
@@ -1253,7 +1249,7 @@ export class PlayerService {
 			logger.warn(`No IPC path found for screen ${screen}`, 'PlayerService');
 			throw new Error(`No IPC socket for screen ${screen}`);
 		}
-
+		
 		return new Promise((resolve, reject) => {
 			try {
 				const socket = net.createConnection(ipcPath);
@@ -1261,7 +1257,7 @@ export class PlayerService {
 
 				// Set a shorter connection timeout
 				socket.setTimeout(500);
-
+				
 				socket.on('connect', () => {
 					const mpvCommand = JSON.stringify({ command: [command] });
 					socket.write(mpvCommand + '\n', () => {
@@ -1269,28 +1265,28 @@ export class PlayerService {
 						setTimeout(() => {
 							if (!hasResponded) {
 								hasResponded = true;
-								socket.end();
-								resolve();
+					socket.end();
+					resolve();
 							}
 						}, 100);
 					});
 				});
-
+				
 				socket.on('error', (err: Error) => {
 					if (!hasResponded) {
 						hasResponded = true;
 						socket.destroy();
 						this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
-						reject(err);
+					reject(err);
 					}
 				});
-
+				
 				socket.on('timeout', () => {
 					if (!hasResponded) {
 						hasResponded = true;
-						socket.destroy();
-						logger.error(`Command send timeout for screen ${screen}`, 'PlayerService');
-						reject(new Error('Socket timeout'));
+					socket.destroy();
+					logger.error(`Command send timeout for screen ${screen}`, 'PlayerService');
+					reject(new Error('Socket timeout'));
 					}
 				});
 

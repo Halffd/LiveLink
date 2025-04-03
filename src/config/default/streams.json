@@ -63,13 +63,6 @@
 					"enabled": true,
 					"limit": 100,
 					"priority": 1
-				},
-				{
-					"type": "twitch",
-					"enabled": true,
-					"limit": 2,
-					"priority": 2,
-					"tags": ["vtuber"]
 				}
 			],
 			"sorting": {

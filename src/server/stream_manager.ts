@@ -69,7 +69,7 @@ export class StreamManager extends EventEmitter {
   private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
   private screenConfigs: Map<number, ScreenConfig>;
   private watchedStreams: Set<string> = new Set();
-  
+
   /**
    * Creates a new StreamManager instance
    */
@@ -343,22 +343,22 @@ export class StreamManager extends EventEmitter {
 
   private async handleEmptyQueue(screen: number): Promise<void> {
     try {
-      // Debounce queue processing - if already processing this screen's queue, return
-      if (this.queueProcessing.has(screen)) {
+    // Debounce queue processing - if already processing this screen's queue, return
+    if (this.queueProcessing.has(screen)) {
         logger.info(`Queue processing already in progress for screen ${screen}`, 'StreamManager');
-        return;
-      }
+      return;
+    }
 
       // Mark this screen as being processed
-      this.queueProcessing.add(screen);
+    this.queueProcessing.add(screen);
 
-      try {
-        // Get screen configuration
-        const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-        if (!screenConfig) {
-          logger.warn(`Invalid screen number: ${screen}`, 'StreamManager');
-          return;
-        }
+    try {
+      // Get screen configuration
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      if (!screenConfig) {
+        logger.warn(`Invalid screen number: ${screen}`, 'StreamManager');
+        return;
+      }
 
         // Check if screen is enabled
         if (!screenConfig.enabled) {
@@ -394,7 +394,7 @@ export class StreamManager extends EventEmitter {
             
             // Remove the started stream from queue
             queueService.removeFromQueue(screen, 0);
-            return;
+        return;
           }
         }
 
@@ -403,21 +403,21 @@ export class StreamManager extends EventEmitter {
         const allStreams = await this.getLiveStreams();
         
         // Filter and sort streams for this screen
-        const availableStreams = allStreams.filter(stream => {
+      const availableStreams = allStreams.filter(stream => {
           // Only include streams that are actually live
           if (!stream.sourceStatus || stream.sourceStatus !== 'live') {
-            return false;
-          }
-          
-          // Check if stream is already playing on another screen
-          const activeStreams = this.getActiveStreams();
-          const isPlaying = activeStreams.some(s => s.url === stream.url);
-          
+          return false;
+        }
+        
+        // Check if stream is already playing on another screen
+        const activeStreams = this.getActiveStreams();
+        const isPlaying = activeStreams.some(s => s.url === stream.url);
+        
           // Never allow duplicate streams across screens
           if (isPlaying) {
-            return false;
-          }
-          
+          return false;
+        }
+
           // Check if this stream matches the screen's configured sources
           const matchesSource = streamConfig.sources?.some(source => {
             if (!source.enabled) return false;
@@ -463,7 +463,7 @@ export class StreamManager extends EventEmitter {
         }
       } finally {
         // Always clean up the processing flag
-        this.queueProcessing.delete(screen);
+          this.queueProcessing.delete(screen);
       }
     } catch (error) {
       logger.error(
@@ -471,7 +471,7 @@ export class StreamManager extends EventEmitter {
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
-      this.queueProcessing.delete(screen);
+        this.queueProcessing.delete(screen);
     }
   }
 
@@ -799,9 +799,9 @@ export class StreamManager extends EventEmitter {
             // If this is a retry and we still failed, increment error count
             if (retryCount > 0) {
               this.streamRetries.set(screenNumber, (this.streamRetries.get(screenNumber) || 0) + 1);
-            }
           }
         }
+      }
       }
 
       // Update cache
@@ -1436,9 +1436,9 @@ export class StreamManager extends EventEmitter {
                   // Reset last stream fetch to force fresh data
                   this.lastStreamFetch = 0;
                   const streams = await this.getLiveStreams();
-                  const availableStreams = streams.filter(s => s.screen === screen);
-                  
-                  if (availableStreams.length > 0) {
+            const availableStreams = streams.filter(s => s.screen === screen);
+            
+            if (availableStreams.length > 0) {
                     // Start first stream immediately
                     const firstStream = availableStreams[0];
                     await this.startStream({
@@ -1469,10 +1469,10 @@ export class StreamManager extends EventEmitter {
                   // Always clear the processing flag
                   this.queueProcessing.delete(screen);
                 }
-              } else {
+                } else {
                 logger.info(`No active stream on screen ${screen}, but refresh interval not elapsed. Skipping refresh.`, 'StreamManager');
-              }
-            } else {
+                }
+              } else {
               logger.info(`Screen ${screen} was manually closed, not starting new streams`, 'StreamManager');
             }
           }
@@ -1605,13 +1605,13 @@ export class StreamManager extends EventEmitter {
     const screenConfig = this.screenConfigs.get(screen);
     if (!screenConfig?.enabled) {
         logger.debug(`Screen ${screen} is disabled, skipping queue update`, 'StreamManager');
-        return;
+      return;
     }
 
     // Check if queue is already being processed
     if (this.queueProcessing.has(screen)) {
         logger.debug(`Queue update already in progress for screen ${screen}`, 'StreamManager');
-        return;
+      return;
     }
 
     try {
@@ -1631,7 +1631,7 @@ export class StreamManager extends EventEmitter {
         }
 
         // Get all streams based on sources
-        const streams = await this.getLiveStreams();
+          const streams = await this.getLiveStreams();
         logger.debug(`Found ${streams.length} total streams`, 'StreamManager');
 
         // Filter streams based on screen sources
@@ -1703,11 +1703,11 @@ export class StreamManager extends EventEmitter {
         // Update last refresh timestamp
         this.lastStreamRefresh.set(screen, Date.now());
     } catch (error) {
-        logger.error(
-            `Failed to update queue for screen ${screen}`,
-            'StreamManager',
-            error instanceof Error ? error : new Error(String(error))
-        );
+      logger.error(
+        `Failed to update queue for screen ${screen}`,
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
     } finally {
         this.queueProcessing.delete(screen);
     }

@@ -103,8 +103,7 @@ class QueueService extends EventEmitter {
         }
       }
 
-      // Finally sort by viewer count
-      return (b.viewerCount || 0) - (a.viewerCount || 0);
+      return 0;
     });
     
     // Check if the queue has actually changed before updating and emitting events
