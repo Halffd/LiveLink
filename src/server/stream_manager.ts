@@ -894,6 +894,81 @@ export class StreamManager extends EventEmitter {
       
       // Process each screen
       for (const screen of autoStartScreens) {
+        // Check if a stream is already playing on this screen
+        const activeStreams = this.getActiveStreams();
+        const isStreamActive = activeStreams.some(s => s.screen === screen);
+        
+        if (isStreamActive) {
+          logger.info(`Stream already active on screen ${screen}, skipping auto-start`, 'StreamManager');
+          
+          // Still update the queue for this screen
+          const streamConfig = this.config.streams.find(s => s.screen === screen);
+          if (!streamConfig) {
+            logger.warn(`No stream configuration found for screen ${screen}`, 'StreamManager');
+            continue;
+          }
+          
+          // Filter streams for this screen but exclude the currently playing one
+          const currentStream = this.streams.get(screen);
+          const currentUrl = currentStream?.url;
+          
+          const screenStreams = allStreams.filter(stream => {
+            // Skip the currently playing stream
+            if (currentUrl && stream.url === currentUrl) {
+              return false;
+            }
+            
+            // Only include streams that are actually live
+            if (!stream.sourceStatus || stream.sourceStatus !== 'live') {
+              return false;
+            }
+            
+            // Check if stream is already playing on another screen
+            const isPlaying = activeStreams.some(s => s.url === stream.url);
+            
+            // Never allow duplicate streams across screens
+            if (isPlaying) {
+              return false;
+            }
+            
+            // Check if this stream matches the screen's configured sources
+            const matchesSource = streamConfig.sources?.some(source => {
+              if (!source.enabled) return false;
+
+              switch (source.type) {
+                case 'holodex':
+                  if (stream.platform !== 'youtube') return false;
+                  if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.holodex.includes(stream.channelId)) return true;
+                  if (source.subtype === 'organization' && source.name && stream.organization === source.name) return true;
+                  break;
+                case 'twitch':
+                  if (stream.platform !== 'twitch') return false;
+                  if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
+                  if (!source.subtype && source.tags?.includes('vtuber')) return true;
+                  break;
+              }
+              return false;
+            });
+
+            return matchesSource;
+          }).sort((a, b) => {
+            // Sort by priority first
+            const aPriority = a.priority ?? 999;
+            const bPriority = b.priority ?? 999;
+            if (aPriority !== bPriority) return aPriority - bPriority;
+            
+            return 0;
+          });
+          
+          // Set up the queue first
+          if (screenStreams.length > 0) {
+            queueService.setQueue(screen, screenStreams);
+            logger.info(`Initialized queue for screen ${screen} with ${screenStreams.length} streams`, 'StreamManager');
+          }
+          
+          continue; // Skip to next screen
+        }
+        
         // Reset the last refresh time to force a fresh start
         this.lastStreamRefresh.set(screen, 0);
         
@@ -912,7 +987,6 @@ export class StreamManager extends EventEmitter {
           }
           
           // Check if stream is already playing on another screen
-          const activeStreams = this.getActiveStreams();
           const isPlaying = activeStreams.some(s => s.url === stream.url);
           
           // Never allow duplicate streams across screens

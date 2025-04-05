@@ -1111,4 +1111,55 @@ router.get('/screens/:screen', async (ctx: Context) => {
   }
 });
 
+// Add a new endpoint for manually starting a stream with a URL
+router.post('/streams/manual-start', async (ctx: Context) => {
+  try {
+    const { url, screen, quality } = ctx.request.body as { url: string; screen: number; quality?: string };
+    
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'URL is required' };
+      return;
+    }
+    
+    if (!screen || isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'Valid screen number is required' };
+      return;
+    }
+    
+    // Use the logError helper function defined in this file
+    console.log(`Manually starting stream ${url} on screen ${screen}`);
+    
+    // First stop any existing stream on this screen
+    const activeStreams = streamManager.getActiveStreams();
+    const currentStream = activeStreams.find(s => s.screen === screen);
+    
+    if (currentStream) {
+      console.log(`Stopping current stream on screen ${screen} before starting new one`);
+      await streamManager.stopStream(screen, true);
+    }
+    
+    // Start the requested stream
+    const result = await streamManager.startStream({
+      url,
+      screen,
+      quality: quality || 'best',
+      windowMaximized: true
+    });
+    
+    if (result.success) {
+      ctx.body = { success: true, message: `Stream started on screen ${screen}` };
+    } else {
+      ctx.status = 500;
+      ctx.body = { success: false, error: result.error || 'Failed to start stream' };
+    }
+  } catch (error) {
+    // Use the logError helper function
+    logError('Failed to manually start stream', 'API', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Internal server error' };
+  }
+});
+
 export const apiRouter = router; 

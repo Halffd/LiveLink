@@ -932,15 +932,33 @@ interface ScreenInfo {
 async function handleQueueShow(screen: number) {
   console.log(chalk.blue(`Fetching queue for screen ${screen}...`));
   try {
-    // First, trigger a queue refresh
+    // First, get information about any active stream on this screen
+    const activeStreamsResponse = await fetch(`${API_URL}/streams/active`);
+    const activeStreams = await activeStreamsResponse.json() as Stream[];
+    const activeStream = activeStreams.find(s => s.screen === screen);
+    
+    if (activeStream) {
+      console.log(chalk.green(`\nActive stream on screen ${screen}:`));
+      console.log(chalk.bold(`Title: ${activeStream.title || 'No Title'}`));
+      console.log(`URL: ${activeStream.url}`);
+      console.log(`Platform: ${activeStream.platform}`);
+      console.log(`Status: ${activeStream.status}`);
+      console.log(chalk.gray('----------------------------------------'));
+    }
+    
+    // Next, trigger a queue refresh
+    console.log(chalk.yellow('Triggering queue refresh...'));
     const refreshResponse = await fetch(`${API_URL}/streams/queue/${screen}/refresh`, {
       method: 'POST'
     });
+    
     if (!refreshResponse.ok) {
       console.log(chalk.yellow('Warning: Could not refresh queue'));
+    } else {
+      console.log(chalk.green('Queue refresh successful'));
     }
 
-    // Then get the queue
+    // Now get the queue
     const response = await fetch(`${API_URL}/streams/queue/${screen}`);
     if (!response.ok) {
       if (response.status === 404) {
@@ -994,6 +1012,11 @@ async function handleQueueShow(screen: number) {
     // Show queue processing status if available
     if (screenInfo?.queueProcessing) {
       console.log(chalk.yellow('\nQueue is currently being processed...'));
+    }
+    
+    // If there's an active stream, show a note about what will happen next
+    if (activeStream) {
+      console.log(chalk.blue('\nNote:'), 'When the current stream ends, the next stream in the queue will automatically start.');
     }
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
