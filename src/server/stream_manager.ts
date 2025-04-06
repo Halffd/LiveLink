@@ -110,6 +110,13 @@ export class StreamManager extends EventEmitter {
     
     // Handle stream end events
     this.playerService.onStreamError(async (data) => {
+      // Check if this was a manual close
+      if (this.manuallyClosedScreens.has(data.screen)) {
+        logger.info(`Ignoring stream end for manually closed screen ${data.screen}`, 'StreamManager');
+        this.manuallyClosedScreens.delete(data.screen);
+        return;
+      }
+
       // Clear any existing processing timeout for this screen
       const existingTimeout = this.queueProcessingTimeouts.get(data.screen);
       if (existingTimeout) {
@@ -627,61 +634,33 @@ export class StreamManager extends EventEmitter {
    */
   async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
     try {
-        const stream = this.streams.get(screen);
-        logger.info(`Stopping stream on screen ${screen}`, 'StreamManager');
-        
-        // Check PlayerService state if no stream found in StreamManager
-        const playerStreams = this.playerService.getActiveStreams();
-        const playerStream = playerStreams.find(s => s.screen === screen);
-        
-        if (!stream && !playerStream) {
-            logger.info(`No active stream found for screen ${screen}`, 'StreamManager');
-            // If no active stream, emit a basic stopped state
-            this.emit('streamUpdate', {
-                screen,
-                url: '',
-                quality: '',
-                platform: 'twitch',  // Default platform
-                playerStatus: 'stopped',
-                volume: 0,
-                process: null
-            } as Stream);
-            return false;
-        }
-
-        // If manual stop, mark the screen as manually closed
-        if (isManualStop) {
-            this.manuallyClosedScreens.add(screen);
-            logger.info(`Screen ${screen} marked as manually closed`, 'StreamManager');
-        }
-
-        // Clear any pending retries
-        this.streamRetries.delete(screen);
-        this.clearInactiveTimer(screen);
-        this.clearStreamRefresh(screen);
-
-        logger.info(`Stopping player service for screen ${screen}`, 'StreamManager');
-        // Stop the stream in the player service
-        const result = await this.playerService.stopStream(screen, false, isManualStop);
-        
-        // Emit stopped state with stream info
-        this.emit('streamUpdate', {
-            ...(stream || { screen, url: playerStream?.url || '', quality: playerStream?.quality || '', platform: playerStream?.platform || 'twitch' }),
-            playerStatus: 'stopped',
-            error: undefined,
-            process: null
-        } as Stream);
-
-        return result;
+      if (isManualStop) {
+        // Add to manually closed screens set when manually stopping
+        this.manuallyClosedScreens.add(screen);
+        logger.info(`Screen ${screen} marked as manually closed`, 'StreamManager');
+      }
+      
+      const result = await this.playerService.stopStream(screen);
+      
+      // Clear any queue processing state for this screen
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      const timeout = this.queueProcessingTimeouts.get(screen);
+      if (timeout) {
+        clearTimeout(timeout);
+        this.queueProcessingTimeouts.delete(screen);
+      }
+      
+      return result;
     } catch (error) {
-        logger.error(
-            `Failed to stop stream on screen ${screen}`,
-            'StreamManager',
-            error instanceof Error ? error : new Error(String(error))
-        );
-        return false;
+      logger.error(
+        `Failed to stop stream on screen ${screen}`,
+        'StreamManager',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return false;
     }
-}
+  }
 
   /**
    * Gets information about all active streams
