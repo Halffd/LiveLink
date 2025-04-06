@@ -37,6 +37,8 @@ export interface StreamError {
   screen: number;
   error: string;
   code?: number;
+  /** Whether to move to the next stream in queue (true) or retry same stream (false) */
+  moveToNext?: boolean;
 }
 
 export interface StreamResponse {

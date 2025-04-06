@@ -626,72 +626,17 @@ export class PlayerService {
 		// Remove stream instance
 		this.streams.delete(screen);
 
-		// Initialize retry count if not exists
-		if (!this.streamRetries.has(screen)) {
-			this.streamRetries.set(screen, 0);
-		}
-
-		const retryCount = this.streamRetries.get(screen) || 0;
-		const MAX_RETRIES = 3;
-
-		// Handle different exit codes
-		if (code === 0) {
-			// Normal exit - clear retries and move to next stream
-			this.streamRetries.delete(screen);
-			logger.info(
-				`Stream ended normally on screen ${screen}, moving to next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: 'Stream ended normally',
-				code: 0
-			});
-		} else if (code === 2) {
-			// Exit code 2 typically means a permanent error (like members-only content)
-			// Don't retry, just move to next stream
-			this.streamRetries.delete(screen);
-			logger.error(
-				`Stream failed with permanent error on screen ${screen} (code ${code}), moving to next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: 'Stream unavailable (possibly members-only content)',
-				code: -1
-			});
-		} else {
-			// Other error codes - retry with backoff if under max retries
-			if (retryCount < MAX_RETRIES && streamOptions) {
-				const backoffTime = Math.min(1000 * Math.pow(2, retryCount), 10000); // Max 10 second backoff
-				this.streamRetries.set(screen, retryCount + 1);
-				logger.warn(
-					`Stream error on screen ${screen} (code ${code}), retry ${retryCount + 1}/${MAX_RETRIES} in ${backoffTime}ms`,
-					'PlayerService'
-				);
-				setTimeout(() => {
-					this.startStream(streamOptions).catch(error => {
-						logger.error(
-							`Failed to restart stream on screen ${screen}`,
-							'PlayerService',
-							error
-						);
-					});
-				}, backoffTime);
-			} else {
-				// Max retries reached or no options available - move to next stream
-				this.streamRetries.delete(screen);
-				logger.error(
-					`Stream failed after ${MAX_RETRIES} retries on screen ${screen}, moving to next stream`,
-					'PlayerService'
-				);
-				this.errorCallback?.({
-					screen,
-					error: `Stream failed after ${MAX_RETRIES} retries`,
-					code: -1
-				});
-			}
-		}
+		// Always move to next stream regardless of exit code
+		logger.info(
+			`Stream ended on screen ${screen} with code ${code}, moving to next stream`,
+			'PlayerService'
+		);
+		this.errorCallback?.({
+			screen,
+			error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
+			code: code || 0,
+			moveToNext: true // Always signal to move to next stream
+		});
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -724,7 +669,7 @@ export class PlayerService {
 	/**
 	 * Stop a stream that is currently playing on a screen
 	 */
-	async stopStream(screen: number, force: boolean = false): Promise<boolean> {
+	async stopStream(screen: number, force: boolean = false, isManualStop: boolean = false): Promise<boolean> {
 		logger.debug(`Stopping stream on screen ${screen}`, 'PlayerService');
 		
 		const player = this.streams.get(screen);
@@ -735,8 +680,10 @@ export class PlayerService {
 			return true; // Nothing to stop, so consider it a success
 		}
 		
-		// Track the stream being terminated so we don't restart it automatically
-		this.manuallyClosedScreens.add(screen);
+		// Only track manually closed screens when it's a manual stop
+		if (isManualStop) {
+			this.manuallyClosedScreens.add(screen);
+		}
 
 		// Try graceful shutdown via IPC first
 		let gracefulShutdown = false;
