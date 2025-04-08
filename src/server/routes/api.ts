@@ -1,7 +1,7 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamSource, PlayerSettings, StreamConfig, StreamOptions } from '../../types/stream.js';
+import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
 
@@ -29,7 +29,7 @@ interface ReorderQueueBody {
 }
 
 interface UpdateConfigBody {
-  streams?: StreamConfig[];
+  streams?: ScreenConfig[];
   organizations?: string[];
   favoriteChannels?: {
     holodex: string[];
@@ -664,7 +664,7 @@ router.put('/api/screens/:screen', async (ctx: Context) => {
       return;
     }
 
-    const config = ctx.request.body as Partial<StreamConfig>;
+    const config = ctx.request.body as Partial<ScreenConfig>;
     streamManager.updateScreenConfig(screen, config);
     ctx.body = { success: true };
   } catch (error) {

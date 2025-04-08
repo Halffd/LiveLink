@@ -1,6 +1,6 @@
 import path from 'path';
 import * as fs from 'fs';
-import type { FavoriteChannels, Config, PlayerSettings, StreamConfig } from '../types/stream.js';
+import type { FavoriteChannels, Config, PlayerSettings, ScreenConfig } from '../types/stream.js';
 import { logger } from '../server/services/logger.js';
 
 function loadJsonFile<T>(filename: string): T {
@@ -32,8 +32,8 @@ export function loadAllConfigs(): Config {
   try {
     // Load individual config files
     const favorites = loadJsonFile<FavoriteChannels>('favorites.json');
-    const streams = loadJsonFile<{ streams: StreamConfig[]; organizations: string[] }>('streams.json');
-    const player = loadJsonFile<PlayerSettings & { screens: StreamConfig[] }>('player.json');
+    const streams = loadJsonFile<{ streams: ScreenConfig[]; organizations: string[] }>('streams.json');
+    const player = loadJsonFile<PlayerSettings & { screens: ScreenConfig[] }>('player.json');
     const mpv = loadJsonFile<Config['mpv']>('mpv.json');
     const streamlink = loadJsonFile<Config['streamlink']>('streamlink.json');
     const filters = loadJsonFile<{ filters: string[] }>('filters.json');

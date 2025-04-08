@@ -1,9 +1,11 @@
 {
+	"skipWatchedStreams": false,
 	"streams": [
 		{
 			"id": 1,
 			"enabled": true,
 			"screen": 1,
+			"skipWatchedStreams": false,
 			"sources": [
 				{
 					"type": "holodex",
@@ -56,6 +58,7 @@
 			"id": 2,
 			"enabled": true,
 			"screen": 2,
+			"skipWatchedStreams": false,
 			"sources": [
 				{
 					"type": "twitch",

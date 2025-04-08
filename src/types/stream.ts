@@ -97,13 +97,15 @@ export interface Stream extends StreamSource {
 /**
  * Configuration for a stream screen
  */
-export interface StreamConfig {
+export interface ScreenConfig {
   /** Screen identifier */
   screen: number;
   /** Screen ID */
   id: number;
   /** Whether this screen is enabled */
   enabled: boolean;
+  /** Whether to skip streams that have been watched */
+  skipWatchedStreams?: boolean;
   /** Default volume level (0-100) */
   volume: number;
   /** Default quality setting */
@@ -131,7 +133,7 @@ export interface StreamConfig {
   /** Whether this is the primary screen */
   primary?: boolean;
   /** Stream sources for this screen */
-  sources?: {
+  sources?: Array<{
     /** Source type (holodex, twitch, youtube) */
     type: string;
     /** Source subtype (favorites, organization, etc.) */
@@ -146,7 +148,7 @@ export interface StreamConfig {
     name?: string;
     /** Tags to filter by */
     tags?: string[];
-  }[];
+  }>;
   /** Sorting configuration */
   sorting?: {
     /** Field to sort by */
@@ -291,6 +293,8 @@ export interface StreamlinkConfig {
  * Complete application configuration
  */
 export interface Config {
+  /** Whether to skip streams that have been watched (global setting) */
+  skipWatchedStreams?: boolean;
   /** Player settings */
   player: {
     /** Default quality setting */
@@ -308,10 +312,10 @@ export interface Config {
     /** Whether to force player to always be running for each enabled screen */
     force_player: boolean;
     /** Configuration for each screen */
-    screens: StreamConfig[];
+    screens: ScreenConfig[];
   };
   /** Stream source configurations */
-  streams: StreamConfig[];
+  streams: ScreenConfig[];
   /** Holodex API configuration */
   holodex: {
     /** Holodex API key */
@@ -401,7 +405,7 @@ export interface ScreenUpdate {
   type: 'screenUpdate';
   data: {
     screen: number;
-    config: StreamConfig;
+    config: ScreenConfig;
   };
 }
 

@@ -1,4 +1,4 @@
-import type { Stream, StreamSource, PlayerSettings, StreamConfig } from '../types/stream.js';
+import type { Stream, StreamSource, PlayerSettings, ScreenConfig } from '../types/stream.js';
 
 class ApiClient {
   private baseUrl = '/api';
@@ -174,11 +174,11 @@ class ApiClient {
     }, false);
   }
 
-  async getScreenConfigs(): Promise<StreamConfig[]> {
-    return this.request<StreamConfig[]>('/screens');
+  async getScreenConfigs(): Promise<ScreenConfig[]> {
+    return this.request<ScreenConfig[]>('/screens');
   }
 
-  async updateScreenConfig(screen: number, config: Partial<StreamConfig>): Promise<void> {
+  async updateScreenConfig(screen: number, config: Partial<ScreenConfig>): Promise<void> {
     await this.request<void>(`/screens/${screen}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

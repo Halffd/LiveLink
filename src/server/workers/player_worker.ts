@@ -26,7 +26,19 @@ if (!isMainThread) {
           const { screen, ...options } = message.data;
           const result = await player.startStream({
             ...options,
-            screen: screen || streamId // Use streamId as fallback
+            screen: screen || streamId, // Use streamId as fallback
+            config: {
+              screen: screen || streamId,
+              id: screen || streamId,
+              enabled: true,
+              volume: options.volume || 50,
+              quality: options.quality || 'best',
+              windowMaximized: options.windowMaximized || false,
+              sources: [],
+              sorting: { field: 'viewerCount', order: 'desc' },
+              refresh: 300,
+              autoStart: true
+            }
           });
           parentPort?.postMessage({ 
             type: 'startResult', 

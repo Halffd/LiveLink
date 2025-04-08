@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
-import type { Config, StreamlinkConfig, StreamOptions } from '../../types/stream.js';
+import type { Config, StreamlinkConfig, ScreenConfig } from '../../types/stream.js';
 import type { StreamOutput, StreamError, StreamResponse, StreamEnd } from '../../types/stream_instance.js';
 import { logger } from './logger.js';
 import { exec, execSync } from 'child_process';
@@ -20,6 +20,21 @@ interface LocalStreamInstance {
 	title?: string;
 	startTime?: number;
 	options: StreamOptions & { screen: number };
+}
+
+export interface StreamOptions {
+	screen: number;
+	config: ScreenConfig;
+	url: string;
+	isLive?: boolean;
+	isWatched?: boolean;
+	isRetry?: boolean;
+	title?: string;
+	viewerCount?: number;
+	startTime?: number;
+	quality?: string;
+	volume?: number;
+	windowMaximized?: boolean;
 }
 
 export class PlayerService {
