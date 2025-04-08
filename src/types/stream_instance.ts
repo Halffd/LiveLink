@@ -1,4 +1,3 @@
-import type { Stream } from './stream.js';
 import type { ChildProcess } from 'child_process';
 
 /** Platform type for streams */
@@ -39,6 +38,11 @@ export interface StreamError {
   code?: number;
   /** Whether to move to the next stream in queue (true) or retry same stream (false) */
   moveToNext?: boolean;
+}
+
+export interface StreamEnd {
+  screen: number;
+  code?: number;
 }
 
 export interface StreamResponse {

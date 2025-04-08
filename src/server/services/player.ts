@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { Config, StreamlinkConfig, StreamOptions } from '../../types/stream.js';
-import type { StreamOutput, StreamError, StreamResponse } from '../../types/stream_instance.js';
+import type { StreamOutput, StreamError, StreamResponse, StreamEnd } from '../../types/stream_instance.js';
 import { logger } from './logger.js';
 import { exec, execSync } from 'child_process';
 import path from 'path';
@@ -48,6 +48,7 @@ export class PlayerService {
 	private events = new EventEmitter();
 	private outputCallback?: (data: StreamOutput) => void;
 	private errorCallback?: (data: StreamError) => void;
+	private endCallback?: (data: StreamEnd) => void;
 
 	private readonly DUMMY_SOURCE = '';  // Empty string instead of black screen URL
 
@@ -616,27 +617,29 @@ export class PlayerService {
 	}
 
 	private handleProcessExit(screen: number, code: number | null): void {
+		// Get stream options before removing the instance
+		const stream = this.streams.get(screen);
+		
+		// Clean up resources first
+		this.cleanup_after_stop(screen);
+		
 		// Clear monitoring
 		this.clearMonitoring(screen);
 
-		// Get stream options before removing the instance
-		const stream = this.streams.get(screen);
-		const streamOptions = stream?.options;
-
-		// Remove stream instance
-		this.streams.delete(screen);
-
-		// Always move to next stream regardless of exit code
-		logger.info(
-			`Stream ended on screen ${screen} with code ${code}, moving to next stream`,
-			'PlayerService'
-		);
-		this.errorCallback?.({
-			screen,
-			error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
-			code: code || 0,
-			moveToNext: true // Always signal to move to next stream
-		});
+		// Only emit stream error if we still have a stream instance
+		// This prevents double notifications when a stream is manually stopped
+		if (stream) {
+			logger.info(
+				`Process exited on screen ${screen} with code ${code}`,
+				'PlayerService'
+			);
+			this.errorCallback?.({
+				screen,
+				error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
+				code: code || 0,
+				moveToNext: true // Always signal to move to next stream
+			});
+		}
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -682,7 +685,7 @@ export class PlayerService {
 		
 		// Only track manually closed screens when it's a manual stop
 		if (isManualStop) {
-			this.manuallyClosedScreens.add(screen);
+		this.manuallyClosedScreens.add(screen);
 		}
 
 		// Try graceful shutdown via IPC first
@@ -828,8 +831,16 @@ export class PlayerService {
 		const ipcPath = this.ipcPaths.get(screen);
 		if (ipcPath && fs.existsSync(ipcPath)) {
 			try {
+				// Close any existing socket connection
+				const socket = net.createConnection(ipcPath);
+				socket.end();
+				socket.destroy();
+				
+				// Remove the socket file
+				if (fs.existsSync(ipcPath)) {
 				fs.unlinkSync(ipcPath);
 					logger.debug(`Removed IPC socket for screen ${screen}`, 'PlayerService');
+				}
 			} catch (error) {
 					// Only log as warning if file still exists
 					if (fs.existsSync(ipcPath)) {
@@ -842,7 +853,11 @@ export class PlayerService {
 		
 			// Kill any remaining processes
 			if (stream?.process?.pid) {
-				this.killChildProcesses(stream.process.pid);
+				try {
+					this.killChildProcesses(stream.process.pid);
+				} catch (error) {
+					logger.debug(`Error killing processes for screen ${screen}: ${error}`, 'PlayerService');
+				}
 			}
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
@@ -1046,6 +1061,10 @@ export class PlayerService {
 
 	public onStreamError(callback: (data: StreamError) => void): void {
 		this.errorCallback = callback;
+	}
+
+	public onStreamEnd(callback: (data: StreamEnd) => void): void {
+		this.endCallback = callback;
 	}
 
 	public handleLuaMessage(screen: number, type: string, data: Record<string, unknown>): void {
