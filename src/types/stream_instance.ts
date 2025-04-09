@@ -36,6 +36,8 @@ export interface StreamError {
   screen: number;
   error: string;
   code?: number;
+  /** URL of the stream that caused the error (if available) */
+  url?: string;
   /** Whether to move to the next stream in queue (true) or retry same stream (false) */
   moveToNext?: boolean;
 }

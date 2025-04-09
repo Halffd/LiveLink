@@ -652,6 +652,7 @@ export class PlayerService {
 				screen,
 				error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
 				code: code || 0,
+				url: stream.url,
 				moveToNext: true // Always signal to move to next stream
 			});
 		}
