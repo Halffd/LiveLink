@@ -1,7 +1,7 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions } from '../../types/stream.js';
+import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
 
@@ -19,7 +19,7 @@ function logError(message: string, service: string, error: unknown): void {
 interface AddToQueueBody {
   url: string;
   title?: string;
-  platform?: string;
+  platform?: 'youtube' | 'twitch';
 }
 
 interface ReorderQueueBody {
@@ -190,16 +190,14 @@ router.post('/api/streams/url', async (ctx: Context) => {
 
     // Check if stream is already playing on this screen
     const activeStreams = streamManager.getActiveStreams();
-    const existingStream = activeStreams.find(s => s.screen === screen);
+    const existingStream = activeStreams.find((s: StreamInfo) => s.screen === screen);
     if (existingStream && existingStream.url === url) {
       ctx.body = { message: 'Stream already playing on this screen' };
       return;
     }
 
     // Check if stream is playing on a higher priority screen
-    const isStreamActive = activeStreams.some(s => 
-      s.url === url && s.screen < (screen || 1)
-    );
+    const isStreamActive = activeStreams.some((s: StreamInfo) => s.screen === screen);
     if (isStreamActive) {
       ctx.body = { message: 'Stream already playing on higher priority screen' };
       return;
@@ -267,6 +265,12 @@ router.post('/api/streams/queue/:screen', async (ctx: Context) => {
     if (!body.url) {
       ctx.status = 400;
       ctx.body = { error: 'URL is required' };
+      return;
+    }
+
+    if (body.platform && body.platform !== 'youtube' && body.platform !== 'twitch') {
+      ctx.status = 400;
+      ctx.body = { error: 'Platform must be either "youtube" or "twitch"' };
       return;
     }
 
@@ -472,7 +476,7 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
         if (activeStreams.length > 0) {
           logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
           
-          const stopPromises = activeStreams.map(stream => {
+          const stopPromises = activeStreams.map((stream: StreamInfo) => {
             logger.info(`Stopping player on screen ${stream.screen}`, 'API');
             return streamManager.stopStream(stream.screen, true);
           });
@@ -922,7 +926,7 @@ router.post('/screens/new-player', async (ctx) => {
   
   // Get active streams to avoid duplicates
   const activeStreams = streamManager.getActiveStreams();
-  const activeUrls = new Set(activeStreams.map(s => s.url));
+  const activeUrls = new Set(activeStreams.map((s: StreamInfo) => s.url));
   
   // Get all queues
   const queues = [1, 2].map(s => streamManager.getQueueForScreen(s)).flat();
@@ -1017,7 +1021,7 @@ router.get('/streams/:screen/details', async (ctx: Context) => {
 
   try {
     const streams = streamManager.getActiveStreams();
-    const stream = streams.find(s => s.screen === screen);
+    const stream = streams.find((s: StreamInfo) => s.screen === screen);
     
     if (!stream) {
       ctx.status = 404;
@@ -1095,7 +1099,7 @@ router.get('/screens/:screen', async (ctx: Context) => {
   try {
     const queue = queueService.getQueue(screen);
     const activeStreams = streamManager.getActiveStreams();
-    const isActive = activeStreams.some(s => s.screen === screen);
+    const isActive = activeStreams.some((s: StreamInfo) => s.screen === screen);
     
     ctx.status = 200;
     ctx.body = {
@@ -1133,7 +1137,7 @@ router.post('/streams/manual-start', async (ctx: Context) => {
     
     // First stop any existing stream on this screen
     const activeStreams = streamManager.getActiveStreams();
-    const currentStream = activeStreams.find(s => s.screen === screen);
+    const currentStream = activeStreams.find((s: StreamInfo) => s.screen === screen);
     
     if (currentStream) {
       console.log(`Stopping current stream on screen ${screen} before starting new one`);

@@ -1,6 +1,6 @@
 import type { HelixStream } from '@twurple/api';
 import type { Video, Channel } from 'holodex.js';
-import type { StreamOutput, StreamError } from './stream_instance.js';
+import type { StreamOutput, StreamError as StreamInstanceError } from './stream_instance.js';
 import type { ChildProcess } from 'child_process';
 
 export interface WorkerStreamOptions {
@@ -23,7 +23,7 @@ export type WorkerResponse =
   | { type: 'stopResult'; data: boolean }
   | { type: 'error'; error: string }
   | { type: 'output'; data: StreamOutput }
-  | { type: 'streamError'; data: StreamError };
+  | { type: 'streamError'; data: StreamInstanceError };
 
 export type StreamSourceStatus = 'live' | 'upcoming' | 'ended';
 export type PlayerStatus = 'playing' | 'paused' | 'stopped' | 'error';
@@ -39,7 +39,7 @@ export interface StreamSource {
   /** Title of the stream */
   title?: string;
   /** Platform the stream is from (twitch, youtube, etc.) */
-  platform?: string;
+  platform?: 'youtube' | 'twitch';
   /** Current viewer count */
   viewerCount?: number;
   /** Thumbnail URL */
@@ -51,7 +51,7 @@ export interface StreamSource {
   /** Status of the stream at source (live, upcoming, etc.) */
   sourceStatus?: 'live' | 'upcoming' | 'ended' | 'offline';
   /** Start time of the stream */
-  startTime?: string | number;
+  startTime?: number;
   /** End time of the stream */
   endTime?: string;
   /** Duration of the stream in seconds */
@@ -66,6 +66,12 @@ export interface StreamSource {
   organization?: string;
   /** Source subtype (favorites, organization, etc.) */
   subtype?: string;
+  /** Quality setting of the stream */
+  quality?: string;
+  /** Volume level (0-100) */
+  volume?: number;
+  /** Current playback status */
+  status?: string;
 }
 
 /**
@@ -436,4 +442,27 @@ export interface GetStreamsOptions {
   limit?: number;
   sort?: 'viewers' | 'start_scheduled';
   tags?: string[];
+}
+
+export interface StreamInfo {
+  screen: number;
+  url: string;
+  title?: string;
+  platform?: 'youtube' | 'twitch';
+  viewerCount?: number;
+  startTime?: number;
+  quality?: string;
+  volume?: number;
+  status?: string;
+}
+
+export interface StreamError {
+  screen: string;
+  url: string;
+  error: string;
+}
+
+export interface StreamEnd {
+  screen: string;
+  url: string;
 } 

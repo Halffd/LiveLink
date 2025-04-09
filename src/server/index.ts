@@ -2,6 +2,7 @@ import { logger } from './services/logger.js';
 import { streamManager } from './stream_manager.js';
 import type { StreamInstance } from '../types/stream_instance.js';
 import { exec } from 'child_process';
+import { StreamInfo } from '../types/stream.js';
 
 // Handle multiple termination signals
 const signals = ['SIGINT', 'SIGTERM', 'SIGQUIT'];
@@ -33,7 +34,7 @@ async function shutdown() {
   try {
     // Force kill all MPV processes
     const activeStreams = streamManager.getActiveStreams();
-    const killPromises = activeStreams.map(async (stream) => {
+    const killPromises = activeStreams.map(async (stream: StreamInfo) => {
       const processInstance = stream as unknown as StreamInstance;
       if (processInstance.process) {
         const childProcess = processInstance.process as unknown as { pid: number };

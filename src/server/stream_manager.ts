@@ -4,10 +4,8 @@ import type {
   PlayerSettings,
   Config,
   FavoriteChannels,
-  Stream,
   StreamResponse,
-  ScreenConfig,
-  StreamService
+  ScreenConfig
 } from '../types/stream.js';
 import type { 
   StreamOutput, 
@@ -46,6 +44,9 @@ export class StreamManager extends EventEmitter {
   private isShuttingDown = false;
   private updateInterval: NodeJS.Timeout | null = null;
   private readonly QUEUE_UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
+  private readonly STREAM_START_TIMEOUT = 30 * 1000; // 30 seconds timeout for stream start
+  private readonly QUEUE_PROCESSING_TIMEOUT = 60 * 1000; // 1 minute timeout for queue processing
+  private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
   private favoriteChannels: FavoriteChannels = {
     holodex: [],
     twitch: [],
@@ -65,7 +66,6 @@ export class StreamManager extends EventEmitter {
   private readonly STREAM_CACHE_TTL = 60000; // 1 minute cache TTL
   private queueProcessing: Set<number> = new Set(); // Track screens where queue is being processed
   private lastStreamRefresh: Map<number, number> = new Map(); // Track last refresh time per screen
-  private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
   private screenConfigs: Map<number, ScreenConfig> = new Map();
   private isOffline = false; // Added for network recovery logic
   private queueProcessingStartTimes: Map<number, number> = new Map();
@@ -118,7 +118,7 @@ export class StreamManager extends EventEmitter {
     logger.info('Stream manager initialized', 'StreamManager');
 
     // Handle stream end events
-    this.playerService.onStreamError(async (data) => {
+    this.playerService.onStreamError(async (data: StreamError) => {
       try {
         // If screen was manually closed, ignore the error
         if (this.manuallyClosedScreens.has(data.screen)) {
@@ -186,7 +186,7 @@ export class StreamManager extends EventEmitter {
         let currentQueue = queueService.getQueue(data.screen);
 
         // Find the index of the failed stream in the *current* queue
-        const failedIndex = currentQueue.findIndex(item => item.url === failedUrl);
+        const failedIndex = currentQueue.findIndex((item: StreamSource) => item.url === failedUrl);
 
         if (failedIndex !== -1) {
           logger.info(`Removing failed stream ${failedUrl} from queue for screen ${data.screen}`, 'StreamManager');
@@ -201,7 +201,7 @@ export class StreamManager extends EventEmitter {
         // Now, filter the *updated* queue
         const screenConfig = this.getScreenConfig(data.screen);
         const filteredQueue = screenConfig?.skipWatchedStreams
-          ? currentQueue.filter(stream => !this.isStreamWatched(stream.url)) // Use updated isStreamWatched
+          ? currentQueue.filter((stream: StreamSource) => !this.isStreamWatched(stream.url)) // Use updated isStreamWatched
           : currentQueue;
 
         if (filteredQueue.length === 0) {
@@ -216,7 +216,7 @@ export class StreamManager extends EventEmitter {
           logger.info(`Starting next stream in queue for screen ${data.screen}: ${nextStream.url}`, 'StreamManager');
 
           // Remove the *next* stream from the queue *before* attempting to start it
-          const nextStreamIndex = currentQueue.findIndex(item => item.url === nextStream.url);
+          const nextStreamIndex = currentQueue.findIndex((item: StreamSource) => item.url === nextStream.url);
           if (nextStreamIndex !== -1) {
              logger.debug(`Removing next stream ${nextStream.url} from queue before starting.`, 'StreamManager');
              queueService.removeFromQueue(data.screen, nextStreamIndex);
@@ -253,7 +253,7 @@ export class StreamManager extends EventEmitter {
     });
 
     // Set up stream end handler
-    this.playerService.onStreamEnd(async (data) => {
+    this.playerService.onStreamEnd(async (data: StreamEnd) => {
       try {
         // Check if we're already processing this screen
         if (this.queueProcessing.has(data.screen)) {
@@ -297,9 +297,11 @@ export class StreamManager extends EventEmitter {
         }
 
         // Remove the current stream from the queue if it exists
-        const currentStream = this.getActiveStreams().find(s => s.screen === data.screen);
+        const currentStream = this.getActiveStreams().find((s: StreamSource) => 
+          s.screen !== undefined && s.screen === data.screen
+        );
         if (currentStream) {
-          const currentIndex = queue.findIndex(item => item.url === currentStream.url);
+          const currentIndex = queue.findIndex((item: StreamSource) => item.url === currentStream.url);
           if (currentIndex !== -1) {
             logger.info(`Removing current stream ${currentStream.url} from queue`, 'StreamManager');
             this.queues.set(data.screen, queue.filter((_, index) => index !== currentIndex));
@@ -348,131 +350,194 @@ export class StreamManager extends EventEmitter {
 
   private async handleStreamEnd(screen: number): Promise<void> {
     try {
-      // Check if we're already processing this screen
-      if (this.queueProcessing.has(screen)) {
-        logger.info(`Already processing queue for screen ${screen}, skipping`, 'StreamManager');
-        return;
-      }
-
-      // Clear any existing timeouts for this screen
+      // Clear any existing processing state first
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
       const existingTimeout = this.queueProcessingTimeouts.get(screen);
       if (existingTimeout) {
         clearTimeout(existingTimeout);
         this.queueProcessingTimeouts.delete(screen);
       }
 
-      // Set up a new timeout for this screen
-      const timeout = setTimeout(() => {
-        logger.warn(`Queue processing timeout for screen ${screen}, clearing state`, 'StreamManager');
+      // Add a timeout to clear the queueProcessing flag after 15 seconds (reduced from 30)
+      const clearQueueProcessingTimeout = setTimeout(() => {
+        if (this.queueProcessing.has(screen)) {
+          logger.warn(`Queue processing flag stuck for screen ${screen}, clearing it`, 'StreamManager');
+          this.queueProcessing.delete(screen);
+          this.queueProcessingStartTimes.delete(screen);
+          const timeout = this.queueProcessingTimeouts.get(screen);
+          if (timeout) {
+            clearTimeout(timeout);
+            this.queueProcessingTimeouts.delete(screen);
+          }
+        }
+      }, 15000);
+
+      // For screen 1, skip the processing check delay
+      if (screen !== 1 && this.queueProcessing.has(screen)) {
+        logger.info(`Queue processing already in progress for screen ${screen}, waiting...`, 'StreamManager');
+        // Wait a bit and try again
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (this.queueProcessing.has(screen)) {
+          logger.warn(`Queue still processing for screen ${screen} after delay, forcing reset`, 'StreamManager');
+          this.queueProcessing.delete(screen);
+          this.queueProcessingStartTimes.delete(screen);
+          const timeout = this.queueProcessingTimeouts.get(screen);
+          if (timeout) {
+            clearTimeout(timeout);
+            this.queueProcessingTimeouts.delete(screen);
+          }
+        }
+      }
+
+      // Mark this screen as being processed
+      this.queueProcessing.add(screen);
+      this.queueProcessingStartTimes.set(screen, Date.now());
+      this.queueProcessingTimeouts.set(screen, clearQueueProcessingTimeout);
+
+      // Get current stream info
+      const currentStream = this.getActiveStreams().find((s: StreamSource) => 
+        s.screen !== undefined && s.screen === screen
+      );
+      
+      // If this is a dummy black screen, immediately try to get the next stream
+      if (currentStream?.url === 'av://lavfi:color=c=black') {
+        logger.info(`Detected dummy black screen on screen ${screen}, attempting to start next stream`, 'StreamManager');
+        clearTimeout(clearQueueProcessingTimeout);
         this.queueProcessing.delete(screen);
         this.queueProcessingStartTimes.delete(screen);
         this.queueProcessingTimeouts.delete(screen);
-      }, 30000);
-
-      this.queueProcessingTimeouts.set(screen, timeout);
-      this.queueProcessing.add(screen);
-
-      // Get current queue and filter out watched streams based on configuration
-      const queue = this.queues.get(screen) || [];
-      const filteredQueue = this.filterUnwatchedStreams(queue, screen);
-      
-      if (filteredQueue.length === 0) {
-        logger.info(`No unwatched streams in queue for screen ${screen}, handling empty queue`, 'StreamManager');
-        await this.handleEmptyQueue(screen);
-        return;
+        return this.handleEmptyQueue(screen);
       }
 
-      // Get the next stream from the filtered queue
-      const nextStream = filteredQueue[0];
-      if (!nextStream) {
-        logger.info(`No next stream in filtered queue for screen ${screen}`, 'StreamManager');
-        await this.handleEmptyQueue(screen);
-        return;
-      }
+      // Get the current queue and log it for debugging
+      const currentQueue = queueService.getQueue(screen);
+      logger.info(`Current queue for screen ${screen} has ${currentQueue.length} items`, 'StreamManager');
 
       // Remove the current stream from the queue if it exists
-      const currentStream = this.getActiveStreams().find(s => s.screen === screen);
       if (currentStream) {
-        const currentIndex = queue.findIndex(item => item.url === currentStream.url);
+        const currentIndex = currentQueue.findIndex((item: StreamSource) => item.url === currentStream.url);
         if (currentIndex !== -1) {
           logger.info(`Removing current stream ${currentStream.url} from queue`, 'StreamManager');
-          this.queues.set(screen, queue.filter((_, index) => index !== currentIndex));
+          queueService.removeFromQueue(screen, currentIndex);
         }
       }
 
-      // Start the next stream
-      logger.info(`Starting next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
-      await this.startStream({
-        url: nextStream.url,
-        screen: screen,
-        quality: this.config.player.defaultQuality,
-        title: nextStream.title,
-        viewerCount: nextStream.viewerCount,
-        startTime: nextStream.startTime
-      });
-
-      // Remove the started stream from the queue
-      const updatedQueue = queue.filter(item => item.url !== nextStream.url);
-      this.queues.set(screen, updatedQueue);
-
-    } catch (error) {
-      logger.error(
-        `Failed to handle stream end for screen ${screen}`,
-        'StreamManager',
-        error instanceof Error ? error : new Error(String(error))
-      );
-    } finally {
-      // Clean up processing state
-      const timeout = this.queueProcessingTimeouts.get(screen);
-      if (timeout) {
-        clearTimeout(timeout);
+      // Get next stream from queue
+      const nextStream = queueService.getNextStream(screen);
+      if (!nextStream) {
+        logger.info(`No next stream in queue for screen ${screen}, fetching new streams`, 'StreamManager');
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
         this.queueProcessingTimeouts.delete(screen);
+        return this.handleEmptyQueue(screen);
       }
-      this.queueProcessing.delete(screen);
-    }
-  }
 
-  private async handleEmptyQueue(screen: number): Promise<void> {
-    try {
-    // Debounce queue processing - if already processing this screen's queue, return
-    if (this.queueProcessing.has(screen)) {
-        logger.info(`Queue processing already in progress for screen ${screen}`, 'StreamManager');
-      return;
-    }
+      // For screen 1, skip the watched check and start immediately
+      if (screen === 1) {
+        logger.info(`Starting next stream ${nextStream.url} on screen 1 immediately`, 'StreamManager');
+        await this.startStream({
+          url: nextStream.url,
+          screen,
+          quality: this.getScreenConfig(screen)?.quality || 'best',
+          windowMaximized: this.getScreenConfig(screen)?.windowMaximized || false,
+          volume: this.getScreenConfig(screen)?.volume || 100,
+          title: nextStream.title,
+          viewerCount: nextStream.viewerCount,
+          startTime: nextStream.startTime
+        });
+        return;
+      }
 
-      // Mark this screen as being processed
-    this.queueProcessing.add(screen);
+      // For other screens, proceed with normal checks
+      const isWatched = queueService.isStreamWatched(nextStream.url);
+      logger.info(`Stream ${nextStream.url} is${isWatched ? '' : ' not'} already marked as watched`, 'StreamManager');
+      
+      // If the stream is already watched and not a favorite, skip it
+      const isFavorite = nextStream.priority !== undefined && nextStream.priority < 900;
 
-    try {
+      if (isWatched && !isFavorite) {
+        logger.info(`Stream ${nextStream.url} is already watched and not a favorite, skipping`, 'StreamManager');
+        // Remove from queue and try the next one
+        queueService.removeFromQueue(screen, 0);
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
+        return this.handleStreamEnd(screen);
+      }
+
+      // Check if this stream is already playing on a higher priority screen
+      const activeStreams = this.getActiveStreams();
+      const isStreamActive = activeStreams.some((s: StreamSource) => 
+        s.url === nextStream.url && s.screen !== undefined && s.screen < screen
+      );
+
+      // Always play favorite streams, even if they're playing on another screen
+      if (isStreamActive && !isFavorite) {
+        logger.info(
+          `Stream ${nextStream.url} is already playing on a higher priority screen, skipping`,
+          'StreamManager'
+        );
+        // Remove this stream from the queue and try the next one
+        queueService.removeFromQueue(screen, 0);
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
+        return this.handleStreamEnd(screen);
+      }
+
       // Get screen configuration
       const screenConfig = this.config.player.screens.find(s => s.screen === screen);
       if (!screenConfig) {
-        logger.warn(`Invalid screen number: ${screen}`, 'StreamManager');
+        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
         return;
       }
 
-        // Check if screen is enabled
-        if (!screenConfig.enabled) {
-          logger.info(`Screen ${screen} is disabled, not processing queue`, 'StreamManager');
-          return;
-        }
+      // Check if the screen was manually closed by the user
+      if (this.manuallyClosedScreens.has(screen)) {
+        logger.info(`Screen ${screen} was manually closed, not starting next stream`, 'StreamManager');
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
+        return;
+      }
 
-        // Get stream configuration for this screen
-        const streamConfig = this.config.streams.find(s => s.screen === screen);
-        if (!streamConfig) {
-          logger.warn(`No stream configuration found for screen ${screen}`, 'StreamManager');
-          return;
-        }
+      // Check if the stream is actually live
+      if (!nextStream.sourceStatus || nextStream.sourceStatus !== 'live') {
+        logger.info(`Stream ${nextStream.url} is not live (status: ${nextStream.sourceStatus}), skipping`, 'StreamManager');
+        // Remove from queue and try the next one
+        queueService.removeFromQueue(screen, 0);
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
+        return this.handleStreamEnd(screen);
+      }
 
-        // First check the existing queue
-        const currentQueue = queueService.getQueue(screen);
-        if (currentQueue.length > 0) {
-          const nextStream = currentQueue[0];
-          
-          // Verify the stream is still live
-          if (nextStream.sourceStatus === 'live') {
-            logger.info(`Starting next stream from queue on screen ${screen}: ${nextStream.url}`, 'StreamManager');
-            await this.startStream({
+      // Mark as watched and remove from queue before starting the new stream
+      queueService.markStreamAsWatched(nextStream.url);
+      queueService.removeFromQueue(screen, 0);
+      
+      // Start the stream with metadata from the queue
+      logger.info(`Starting stream ${nextStream.url} on screen ${screen} with metadata: ${nextStream.title}, ${nextStream.viewerCount} viewers`, 'StreamManager');
+      
+      try {
+        // Start the stream with a retry mechanism
+        let startAttempts = 0;
+        const maxAttempts = 3;
+        let streamStarted = false;
+
+        while (!streamStarted && startAttempts < maxAttempts) {
+          try {
+            const result = await this.startStream({
               url: nextStream.url,
               screen,
               quality: screenConfig.quality || this.config.player.defaultQuality,
@@ -482,87 +547,119 @@ export class StreamManager extends EventEmitter {
               viewerCount: nextStream.viewerCount,
               startTime: nextStream.startTime
             });
-            
-            // Remove the started stream from queue
-            queueService.removeFromQueue(screen, 0);
-        return;
-          }
-        }
 
-        // If we get here, either queue was empty or next stream wasn't live
-        // Get all available streams
-        const allStreams = await this.getLiveStreams();
-        
-        // Filter and sort streams for this screen
-      const availableStreams = allStreams.filter(stream => {
-          // Only include streams that are actually live
-          if (!stream.sourceStatus || stream.sourceStatus !== 'live') {
-          return false;
-        }
-        
-        // Check if stream is already playing on another screen
-        const activeStreams = this.getActiveStreams();
-        const isPlaying = activeStreams.some(s => s.url === stream.url);
-        
-          // Never allow duplicate streams across screens
-          if (isPlaying) {
-          return false;
-        }
-
-          // Check if this stream matches the screen's configured sources
-          const matchesSource = streamConfig.sources?.some(source => {
-            if (!source.enabled) return false;
-
-            switch (source.type) {
-              case 'holodex':
-                if (stream.platform !== 'youtube') return false;
-                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.holodex.includes(stream.channelId)) return true;
-                if (source.subtype === 'organization' && source.name && stream.organization === source.name) return true;
-                break;
-              case 'twitch':
-                if (stream.platform !== 'twitch') return false;
-                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
-                if (!source.subtype && source.tags?.includes('vtuber')) return true;
-                break;
+            if (result.success) {
+              streamStarted = true;
+              logger.info(`Successfully started stream on attempt ${startAttempts + 1}`, 'StreamManager');
+            } else {
+              throw new Error(result.message || 'Failed to start stream');
             }
-            return false;
-          });
-
-          return matchesSource;
-        });
-
-        if (availableStreams.length > 0) {
-          // Start first stream immediately
-          const firstStream = availableStreams[0];
-          await this.startStream({
-            url: firstStream.url,
-            screen,
-            quality: this.config.player.defaultQuality,
-            title: firstStream.title,
-            viewerCount: firstStream.viewerCount,
-            startTime: firstStream.startTime
-          });
-          
-          // Set remaining streams in queue
-          if (availableStreams.length > 1) {
-            queueService.setQueue(screen, availableStreams.slice(1));
+          } catch (error) {
+            startAttempts++;
+            if (startAttempts < maxAttempts) {
+              logger.warn(`Failed to start stream, attempt ${startAttempts}/${maxAttempts}, retrying...`, 'StreamManager');
+              await new Promise(resolve => setTimeout(resolve, 1000 * startAttempts));
+            } else {
+              throw error;
+            }
           }
-          
-          this.lastStreamRefresh.set(screen, Date.now());
-        } else {
-          logger.info(`No live streams available for screen ${screen}, will try again later`, 'StreamManager');
         }
-      } finally {
-        // Always clean up the processing flag
-          this.queueProcessing.delete(screen);
+      } catch (error) {
+        logger.error(
+          `Failed to start stream after multiple attempts: ${error instanceof Error ? error.message : String(error)}`,
+          'StreamManager'
+        );
+        // Move to next stream in queue
+        clearTimeout(clearQueueProcessingTimeout);
+        this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+        this.queueProcessingTimeouts.delete(screen);
+        return this.handleStreamEnd(screen);
       }
+      
+      // Pre-fetch the next stream in the queue to prepare it
+      const upcomingStream = queueService.getNextStream(screen);
+      if (upcomingStream) {
+        logger.info(`Preparing next stream in queue for screen ${screen}: ${upcomingStream.url}`, 'StreamManager');
+      }
+      
+      // Clear processing flag and timeout
+      clearTimeout(clearQueueProcessingTimeout);
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      this.queueProcessingTimeouts.delete(screen);
     } catch (error) {
       logger.error(
-        `Failed to handle empty queue for screen ${screen}`,
+        `Failed to handle stream end for screen ${screen}`,
         'StreamManager',
         error instanceof Error ? error : new Error(String(error))
       );
+      // Clear processing flag and timeout
+      const timeout = this.queueProcessingTimeouts.get(screen);
+      if (timeout) {
+        clearTimeout(timeout);
+        this.queueProcessingTimeouts.delete(screen);
+      }
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      // Try to handle empty queue as a fallback
+      return this.handleEmptyQueue(screen);
+    }
+  }
+
+  private async handleEmptyQueue(screen: number): Promise<void> {
+    try {
+      // Clear any existing queue processing flag
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      this.clearQueueProcessingTimeout(screen);
+
+      // If screen was manually closed, don't update queue
+      if (this.manuallyClosedScreens.has(screen)) {
+        logger.info(`Screen ${screen} was manually closed, not updating queue`, 'StreamManager');
+        return;
+      }
+
+      // Set queue processing flag with timeout
+      this.queueProcessing.add(screen);
+      this.queueProcessingStartTimes.set(screen, Date.now());
+      
+      // Set timeout for queue processing
+      const timeoutId = setTimeout(() => {
+        logger.warn(`Queue processing timed out for screen ${screen}`, 'StreamManager');
         this.queueProcessing.delete(screen);
+        this.queueProcessingStartTimes.delete(screen);
+      }, this.QUEUE_PROCESSING_TIMEOUT);
+      
+      this.queueProcessingTimeouts.set(screen, timeoutId);
+
+      // Update queue
+      await this.updateQueue(screen);
+      
+      // Clear processing flag and timeout
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      this.clearQueueProcessingTimeout(screen);
+
+      // Get updated queue
+      const queue = this.queues.get(screen) || [];
+      if (queue.length > 0) {
+        await this.handleStreamEnd(screen);
+      }
+    } catch (error) {
+      logger.error(`Error handling empty queue for screen ${screen}: ${error}`, 'StreamManager');
+      // Clear processing flag and timeout on error
+      this.queueProcessing.delete(screen);
+      this.queueProcessingStartTimes.delete(screen);
+      this.clearQueueProcessingTimeout(screen);
+    }
+  }
+
+  private clearQueueProcessingTimeout(screen: number): void {
+    const timeoutId = this.queueProcessingTimeouts.get(screen);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.queueProcessingTimeouts.delete(screen);
     }
   }
 
@@ -675,40 +772,18 @@ export class StreamManager extends EventEmitter {
     try {
       if (isManualStop) {
         this.manuallyClosedScreens.add(screen);
-        logger.info(`Screen ${screen} marked as manually closed`, 'StreamManager');
+        logger.info(`Screen ${screen} manually closed, added to manuallyClosedScreens`, 'StreamManager');
       }
 
-      // Clear the stream from our map first
-      this.streams.delete(screen);
-      
-      // Stop the player service
-      const result = await this.playerService.stopStream(screen);
-      
-      // Clear any queue processing state for this screen
-      this.queueProcessing.delete(screen);
-      this.queueProcessingStartTimes.delete(screen);
-      const timeout = this.queueProcessingTimeouts.get(screen);
-      if (timeout) {
-        clearTimeout(timeout);
-        this.queueProcessingTimeouts.delete(screen);
+      const success = await this.playerService.stopStream(screen, false, isManualStop);
+      if (success) {
+        this.streams.delete(screen);
+        this.clearInactiveTimer(screen);
+        this.clearStreamRefresh(screen);
       }
-
-      // Clear any retry attempts
-      this.streamRetries.delete(screen);
-      
-      // Clear any inactive timers
-      this.clearInactiveTimer(screen);
-      
-      // Clear any stream refresh timers
-      this.clearStreamRefresh(screen);
-      
-      return result;
+      return success;
     } catch (error) {
-      logger.error(
-        `Failed to stop stream on screen ${screen}`,
-        'StreamManager', 
-        error instanceof Error ? error : new Error(String(error))
-      );
+      logger.error(`Error stopping stream on screen ${screen}: ${error}`, 'StreamManager');
       return false;
     }
   }
@@ -1265,21 +1340,27 @@ export class StreamManager extends EventEmitter {
   }
 
   async enableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.player.screens.find(s => s.screen === screen);
-    if (!streamConfig) {
-      throw new Error(`Invalid screen number: ${screen}`);
-    }
-    
-    streamConfig.enabled = true;
-    
-    // Notify the PlayerService that the screen is enabled
-    this.playerService.enableScreen(screen);
-    
-    logger.info(`Screen ${screen} enabled`, 'StreamManager');
-    
-    // Start streams if auto-start is enabled
-    if (this.config.player.autoStart) {
-      await this.handleEmptyQueue(screen);
+    try {
+      const config = this.getScreenConfig(screen);
+      if (!config) {
+        throw new Error(`No configuration found for screen ${screen}`);
+      }
+
+      config.enabled = true;
+      this.screenConfigs.set(screen, config);
+      await this.saveConfig();
+
+      // Remove from manually closed screens when enabling
+      this.manuallyClosedScreens.delete(screen);
+      logger.info(`Screen ${screen} enabled and removed from manuallyClosedScreens`, 'StreamManager');
+
+      // Start stream if autoStart is enabled
+      if (config.autoStart) {
+        await this.handleStreamEnd(screen);
+      }
+    } catch (error) {
+      logger.error(`Error enabling screen ${screen}: ${error}`, 'StreamManager');
+      throw error;
     }
   }
 
@@ -1897,7 +1978,7 @@ export class StreamManager extends EventEmitter {
       return streams;
     }
 
-    const unwatchedStreams = streams.filter(stream => {
+    const unwatchedStreams = streams.filter((stream: StreamSource) => {
       const isWatched = this.isStreamWatched(stream.url);
       if (isWatched) {
         logger.debug(
@@ -2055,7 +2136,9 @@ export class StreamManager extends EventEmitter {
               // For screens without active streams, try to start next in queue
               const enabledScreens = this.getEnabledScreens();
               for (const screen of enabledScreens) {
-                const hasActiveStream = activeStreams.some(s => s.screen === screen);
+                const hasActiveStream = activeStreams.some((s: StreamSource) => 
+                  s.screen !== undefined && s.screen === screen
+                );
                 if (!hasActiveStream && !this.manuallyClosedScreens.has(screen)) {
                   logger.info(`No active stream on screen ${screen} after network recovery, attempting to start next stream`, 'StreamManager');
                   await this.handleEmptyQueue(screen);
@@ -2099,7 +2182,9 @@ export class StreamManager extends EventEmitter {
   private setupStreamCleanup(): void {
     setInterval(() => {
       const activeStreams = this.playerService.getActiveStreams();
-      const activeScreens = new Set(activeStreams.map(s => s.screen));
+      const activeScreens = new Set(activeStreams
+        .filter((s: StreamSource) => s.screen !== undefined)
+        .map((s: StreamSource) => s.screen));
       
       // Remove any streams that are no longer active
       for (const [screen] of this.streams.entries()) {

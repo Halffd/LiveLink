@@ -655,6 +655,11 @@ export class PlayerService {
 				url: stream.url,
 				moveToNext: true // Always signal to move to next stream
 			});
+		} else {
+			logger.warn(
+				`Process exited on screen ${screen} but no stream instance found`,
+				'PlayerService'
+			);
 		}
 	}
 
