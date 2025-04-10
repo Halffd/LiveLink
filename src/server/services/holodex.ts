@@ -47,8 +47,8 @@ export class HolodexService implements StreamService {
 
       const params: Record<string, string | number> = {
         limit: options.limit || 25,
-        sort: options.sort || 'live_viewers',
-        order: options.sort === 'available_at' ? 'asc' : 'desc'
+        sort: options.sort || 'available_at',
+        order: 'asc'
       };
 
       const organization = options?.organization;
@@ -68,7 +68,7 @@ export class HolodexService implements StreamService {
           this.client!.getLiveVideos({
             channel_id: channelId,
             status: 'live' as VideoStatus,
-            type: 'live' as VideoType,
+            type: 'stream' as VideoType,
             max_upcoming_hours: 0,
             sort: 'live_viewers' as keyof VideoRaw & string,
           }).catch(error => {
@@ -92,7 +92,7 @@ export class HolodexService implements StreamService {
             channelVideos.sort((a, b) => {
               if (a.status === 'live' && b.status !== 'live') return -1;
               if (a.status !== 'live' && b.status === 'live') return 1;
-              return 0;
+              return (b.liveViewers || 0) - (a.liveViewers || 0);
             });
             videos.push(...channelVideos);
           }
@@ -169,19 +169,25 @@ export class HolodexService implements StreamService {
           if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
           if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
           
-          return 0;
+          // Then by viewer count for streams from the same channel
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         });
       } else {
         // For non-favorite streams, sort by:
         // 1. Live status
         // 2. Viewer count
+        // 3. Start time
         streamSources.sort((a, b) => {
-          // First by live status
           if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
           if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
           
-          // Then by viewer count
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          if (a.sourceStatus === 'live' && b.sourceStatus === 'live') {
+            return (b.viewerCount || 0) - (a.viewerCount || 0);
+          }
+          
+          const aTime = a.startTime || 0;
+          const bTime = b.startTime || 0;
+          return aTime - bTime;
         });
       }
 

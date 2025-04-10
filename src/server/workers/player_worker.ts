@@ -1,6 +1,5 @@
 import { isMainThread, parentPort, workerData } from 'worker_threads';
 import { PlayerService } from '../services/player.js';
-import { loadAllConfigs } from '../../config/loader.js';
 import type { 
   WorkerMessage, 
   WorkerResponse
@@ -12,11 +11,7 @@ import type {
 import { logger } from '../services/logger.js';
 
 if (!isMainThread) {
-  // Load config
-  const config = loadAllConfigs();
-
-  // Initialize player service with config
-  const player = new PlayerService(config);
+  const player = new PlayerService();
   const { streamId } = workerData;
   
   parentPort?.on('message', async (message: WorkerMessage) => {
@@ -26,19 +21,7 @@ if (!isMainThread) {
           const { screen, ...options } = message.data;
           const result = await player.startStream({
             ...options,
-            screen: screen || streamId, // Use streamId as fallback
-            config: {
-              screen: screen || streamId,
-              id: screen || streamId,
-              enabled: true,
-              volume: options.volume || 50,
-              quality: options.quality || 'best',
-              windowMaximized: options.windowMaximized || false,
-              sources: [],
-              sorting: { field: 'viewerCount', order: 'desc' },
-              refresh: 300,
-              autoStart: true
-            }
+            screen: screen || streamId // Use streamId as fallback
           });
           parentPort?.postMessage({ 
             type: 'startResult', 
