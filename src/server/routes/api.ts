@@ -277,7 +277,7 @@ router.post('/api/streams/queue/:screen', async (ctx: Context) => {
     const source: StreamSource = {
       url: body.url,
       title: body.title,
-      platform: body.platform
+      platform: body.platform as 'youtube' | 'twitch' | undefined
     };
 
     await streamManager.addToQueue(screen, source);
