@@ -65,7 +65,7 @@ export class PlayerService {
 	private errorCallback?: (data: StreamError) => void;
 	private endCallback?: (data: StreamEnd) => void;
 
-	private readonly DUMMY_SOURCE = '';  // Empty string instead of black screen URL
+	public readonly DUMMY_SOURCE = '';  // Empty string instead of black screen URL
 
 	private readonly streamlinkConfig: StreamlinkConfig;
 	private readonly retryTimers: Map<number, NodeJS.Timeout>;
@@ -432,6 +432,31 @@ export class PlayerService {
 
 	private setupProcessHandlers(process: ChildProcess, screen: number): void {
 		let hasEndedStream = false;
+		let cleanupTimeout: NodeJS.Timeout | null = null;
+
+		const cleanup = () => {
+			if (cleanupTimeout) {
+				clearTimeout(cleanupTimeout);
+				cleanupTimeout = null;
+			}
+			this.clearMonitoring(screen);
+			this.streams.delete(screen);
+			this.streamRetries.delete(screen);
+		};
+
+		const handleStreamEnd = (error: string, code: number = 0) => {
+			if (!hasEndedStream) {
+				hasEndedStream = true;
+				logger.info(`Stream ended on screen ${screen}`, 'PlayerService');
+				this.errorCallback?.({
+					screen,
+					error,
+					code
+				});
+				// Schedule cleanup after a short delay to ensure all events are processed
+				cleanupTimeout = setTimeout(cleanup, 1000);
+			}
+		};
 
 		if (process.stdout) {
 			process.stdout.on('data', (data: Buffer) => {
@@ -441,14 +466,7 @@ export class PlayerService {
 					if (output.includes('[youtube]')) {
 						if (output.includes('Post-Live Manifestless mode')) {
 							logger.info(`[Screen ${screen}] YouTube stream is in post-live state (ended)`, 'PlayerService');
-							if (!hasEndedStream) {
-								hasEndedStream = true;
-							this.errorCallback?.({
-								screen,
-								error: 'Stream ended',
-								code: 0
-							});
-							}
+							handleStreamEnd('Stream ended');
 						} else if (output.includes('Downloading MPD manifest')) {
 							logger.debug(`[Screen ${screen}] YouTube stream manifest download attempt`, 'PlayerService');
 						}
@@ -467,15 +485,7 @@ export class PlayerService {
 						output.includes('Exiting normally') ||
 						output.includes('EOF reached') ||
 						output.includes('User stopped playback')) {
-						logger.info(`Stream ended on screen ${screen}`, 'PlayerService');
-						if (!hasEndedStream) {
-							hasEndedStream = true;
-						this.errorCallback?.({
-							screen,
-							error: 'Stream ended',
-							code: 0
-						});
-						}
+						handleStreamEnd('Stream ended');
 					}
 				}
 			});
@@ -495,24 +505,10 @@ export class PlayerService {
 								`[Screen ${screen}] YouTube stream error - may be ended or unavailable: ${output}`,
 								'PlayerService'
 							);
-							if (!hasEndedStream) {
-								hasEndedStream = true;
-							this.errorCallback?.({
-								screen,
-								error: 'Stream ended',
-								code: 0
-							});
-							}
+							handleStreamEnd('Stream ended');
 						} else {
 							logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
-							if (!hasEndedStream) {
-								hasEndedStream = true;
-							this.errorCallback?.({
-								screen,
-								error: output,
-								code: 0  // Always use code 0 to trigger next stream
-							});
-							}
+							handleStreamEnd(output);
 						}
 					}
 				}
@@ -521,26 +517,16 @@ export class PlayerService {
 
 		process.on('error', (err: Error) => {
 			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
-			if (!hasEndedStream) {
-				hasEndedStream = true;
-			this.errorCallback?.({
-				screen,
-					error: err.message,
-				code: 0  // Changed to 0 to always trigger next stream
-			});
-			}
+			handleStreamEnd(err.message);
 		});
 
 		process.on('exit', (code: number | null) => {
 			logger.info(`Process exited on screen ${screen} with code ${code}`, 'PlayerService');
 			// Only handle process exit if we haven't already handled stream end
 			if (!hasEndedStream) {
-			this.handleProcessExit(screen, code);
+				handleStreamEnd('Process exited', code || 0);
 			} else {
-				// Just clean up resources without triggering another stream end
-				this.clearMonitoring(screen);
-				this.streams.delete(screen);
-				this.streamRetries.delete(screen);
+				cleanup();
 			}
 		});
 	}
