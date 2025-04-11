@@ -1145,37 +1145,70 @@ export class PlayerService {
 		const ipcPath = this.ipcPaths.get(screen);
 		if (!ipcPath) {
 			const errorMessage = `No IPC socket for screen ${screen}`;
-			this.logError(`Command error on screen ${screen}: ${errorMessage}`);
-			return Promise.reject(errorMessage);
+			logger.error(errorMessage, 'PlayerService');
+			throw new Error(errorMessage);
 		}
-		
+
 		return new Promise((resolve, reject) => {
 			try {
 				const socket = net.createConnection(ipcPath);
+				let hasResponded = false;
+
+				// Set a shorter connection timeout
+				socket.setTimeout(500);
 				
 				socket.on('connect', () => {
 					const mpvCommand = JSON.stringify({ command: [command] });
-					socket.write(mpvCommand + '\n');
-					socket.end();
-					resolve();
+					socket.write(mpvCommand + '\n', () => {
+						// Wait a brief moment after writing to ensure command is sent
+						setTimeout(() => {
+							if (!hasResponded) {
+								hasResponded = true;
+								socket.end();
+								resolve();
+							}
+						}, 100);
+					});
 				});
 				
 				socket.on('error', (err: Error) => {
-					const errorMessage = err.message;
-					this.logError(`Command error on screen ${screen}: ${errorMessage}`);
-					reject(errorMessage);
+					if (!hasResponded) {
+						hasResponded = true;
+						socket.destroy();
+						logger.error(`Failed to send command to screen ${screen}`, 'PlayerService', err.message);
+						reject(err);
+					}
 				});
 				
-				socket.setTimeout(1000, () => {
-					socket.destroy();
-					const errorMessage = 'Socket timeout';
-					this.logError(`Command error on screen ${screen}: ${errorMessage}`);
-					reject(errorMessage);
+				socket.on('timeout', () => {
+					if (!hasResponded) {
+						hasResponded = true;
+						socket.destroy();
+						const error = new Error('Socket timeout');
+						logger.error(`Command send timeout for screen ${screen}`, 'PlayerService', error.message);
+						reject(error);
+					}
+				});
+
+				// Cleanup socket on any response
+				socket.on('data', () => {
+					if (!hasResponded) {
+						hasResponded = true;
+						socket.end();
+						resolve();
+					}
+				});
+
+				// Handle socket close
+				socket.on('close', () => {
+					if (!hasResponded) {
+						hasResponded = true;
+						reject(new Error('Socket closed unexpectedly'));
+					}
 				});
 			} catch (err) {
-				const errorMessage = err instanceof Error ? err.message : String(err);
-				this.logError(`Command error on screen ${screen}: ${errorMessage}`);
-				reject(errorMessage);
+				logger.error(`Command send error for screen ${screen}`, 'PlayerService', err instanceof Error ? err.message : String(err));
+				reject(err);
 			}
 		});
 	}
