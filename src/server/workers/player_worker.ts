@@ -9,9 +9,11 @@ import type {
   StreamError
 } from '../../types/stream_instance.js';
 import { logger } from '../services/logger.js';
+import { loadAllConfigs } from '../../config/loader.js';
 
 if (!isMainThread) {
-  const player = new PlayerService();
+  const config = loadAllConfigs();
+  const player = new PlayerService(config);
   const { streamId } = workerData;
   
   parentPort?.on('message', async (message: WorkerMessage) => {

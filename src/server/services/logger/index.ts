@@ -27,8 +27,8 @@ if (process.env.NODE_ENV !== 'production') {
   }));
 }
 
-type LogLevel = 'debug' | 'info' | 'warn' | 'error';
-type LogError = Error | string | number;
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogError = Error | string | number;
 
 interface LogContext {
   context: string;

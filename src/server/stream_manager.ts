@@ -1698,6 +1698,7 @@ export class StreamManager extends EventEmitter {
 
 // Create singleton instance
 const config = loadAllConfigs();
+const playerService = new PlayerService(config);
 const holodexService = new HolodexService(
   env.HOLODEX_API_KEY,
   config.filters?.filters ? config.filters.filters.map(f => typeof f === 'string' ? f : f.value) : [],
@@ -1712,7 +1713,6 @@ const twitchService = new TwitchService(
 const youtubeService = new YouTubeService(
   config.favoriteChannels.youtube
 );
-const playerService = new PlayerService();
 
 export const streamManager = new StreamManager(
   config,
