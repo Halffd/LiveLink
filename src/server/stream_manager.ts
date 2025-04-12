@@ -234,14 +234,30 @@ export class StreamManager extends EventEmitter {
       const isWatched = queueService.isStreamWatched(nextStream.url);
       logger.info(`Stream ${nextStream.url} is${isWatched ? '' : ' not'} already marked as watched`, 'StreamManager');
       
-      // If the stream is already watched and not a favorite, skip it
+      // Get screen configuration to check skipWatchedStreams setting
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      if (!screenConfig) {
+        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+        this.queueProcessing.delete(screen);
+        return;
+      }
+      
+      // Check if we should skip watched streams for this screen
+      const skipWatched = screenConfig.skipWatchedStreams !== false; // Default to true if not specified
+      
+      // If the stream is already watched and not a favorite, skip it (unless skipWatchedStreams is false)
       const isFavorite = nextStream.priority !== undefined && nextStream.priority < 900;
-      if (isWatched && !isFavorite) {
+      if (isWatched && !isFavorite && skipWatched) {
         logger.info(`Stream ${nextStream.url} is already watched and not a favorite, skipping`, 'StreamManager');
         // Remove from queue and try the next one
         queueService.removeFromQueue(screen, 0);
         this.queueProcessing.delete(screen);
         return this.handleStreamEnd(screen);
+      }
+      
+      // If skipWatchedStreams is false, log that we're playing a watched stream
+      if (isWatched && !skipWatched) {
+        logger.info(`Stream ${nextStream.url} is already watched but skipWatchedStreams is false, playing anyway`, 'StreamManager');
       }
 
       // Check if this stream is already playing on a higher priority screen
@@ -262,13 +278,7 @@ export class StreamManager extends EventEmitter {
         return this.handleStreamEnd(screen);
       }
 
-      // Get screen configuration
-      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
-      if (!screenConfig) {
-        logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
-        this.queueProcessing.delete(screen);
-        return;
-      }
+      // We already got the screen configuration above
 
       // Check if the screen was manually closed by the user
       if (this.manuallyClosedScreens.has(screen)) {
@@ -419,11 +429,20 @@ export class StreamManager extends EventEmitter {
           );
         });
 
-        // Filter out watched streams unless all streams have been watched
-        const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
-        logger.info(`After filtering: ${unwatchedStreams.length} unwatched streams available`, 'StreamManager');
+        // Check if we should skip watched streams for this screen
+        const skipWatched = screenConfig.skipWatchedStreams !== false; // Default to true if not specified
         
-        const combinedStreams = unwatchedStreams.length > 0 ? unwatchedStreams : sortedStreams;
+        let combinedStreams: StreamSource[] = [];
+        if (skipWatched) {
+          // Filter out watched streams unless all streams have been watched
+          const unwatchedStreams = queueService.filterUnwatchedStreams(sortedStreams);
+          logger.info(`After filtering (skipWatchedStreams: ${skipWatched}): ${unwatchedStreams.length} unwatched streams available`, 'StreamManager');
+          combinedStreams = unwatchedStreams.length > 0 ? unwatchedStreams : sortedStreams;
+        } else {
+          // Don't filter watched streams if skipWatchedStreams is false
+          logger.info(`Not filtering watched streams (skipWatchedStreams: ${skipWatched}), using all ${sortedStreams.length} streams`, 'StreamManager');
+          combinedStreams = sortedStreams;
+        }
 
         if (combinedStreams.length > 0) {
           const [firstStream, ...remainingStreams] = combinedStreams;
@@ -457,10 +476,13 @@ export class StreamManager extends EventEmitter {
               'StreamManager'
             );
           }
-        } else {
+        } else if (skipWatched) {
+          // Only clear watched history if skipWatchedStreams is true
           logger.info(`No unwatched streams available for screen ${screen}, clearing watched history`, 'StreamManager');
           queueService.clearWatchedStreams(); // Reset watched history to start over with high priority streams
           return this.handleEmptyQueue(screen); // Retry with cleared history
+        } else {
+          logger.info(`No streams available for screen ${screen} even with skipWatchedStreams disabled`, 'StreamManager');
         }
       } else {
         // Check if a forced fetch was performed 
@@ -1627,19 +1649,36 @@ export class StreamManager extends EventEmitter {
             const newStreams = availableStreams.filter(s => !existingUrls.has(s.url));
             
             if (newStreams.length > 0) {
-              // Filter unwatched from new streams only
-              const unwatchedNewStreams = queueService.filterUnwatchedStreams(newStreams);
+              // Check if we should skip watched streams for this screen
+              const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+              if (!screenConfig) {
+                logger.error(`Invalid screen number: ${screen}`, 'StreamManager');
+                return;
+              }
               
-              if (unwatchedNewStreams.length > 0) {
-                // Add unwatched new streams to end of existing queue
-                const updatedQueue = [...existingQueue, ...unwatchedNewStreams];
+              // Check if we should skip watched streams for this screen
+              const skipWatched = screenConfig.skipWatchedStreams !== false; // Default to true if not specified
+              
+              // Filter streams based on skipWatchedStreams setting
+              let streamsToAdd = newStreams;
+              if (skipWatched) {
+                // Only filter if skipWatchedStreams is true or undefined
+                streamsToAdd = queueService.filterUnwatchedStreams(newStreams);
+                logger.info(`Filtering watched streams for screen ${screen} (skipWatchedStreams: ${skipWatched})`, 'StreamManager');
+              } else {
+                logger.info(`Not filtering watched streams for screen ${screen} (skipWatchedStreams: ${skipWatched})`, 'StreamManager');
+              }
+              
+              if (streamsToAdd.length > 0) {
+                // Add filtered streams to end of existing queue
+                const updatedQueue = [...existingQueue, ...streamsToAdd];
                 queueService.setQueue(screen, updatedQueue);
                 logger.info(
-                  `Updated queue for screen ${screen} with ${unwatchedNewStreams.length} new streams. Total queue size: ${updatedQueue.length}`,
+                  `Updated queue for screen ${screen} with ${streamsToAdd.length} new streams. Total queue size: ${updatedQueue.length}`,
                   'StreamManager'
                 );
               } else {
-                logger.info(`No new unwatched streams for screen ${screen}`, 'StreamManager');
+                logger.info(`No new streams to add for screen ${screen}`, 'StreamManager');
               }
             } else {
               logger.info(`No new streams available for screen ${screen}`, 'StreamManager');
