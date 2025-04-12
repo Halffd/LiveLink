@@ -100,6 +100,12 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
+      // Check if we're already processing this screen
+      if (this.queueProcessing.has(data.screen)) {
+        logger.info(`Queue processing already in progress for screen ${data.screen}, ignoring stream end event`, 'StreamManager');
+        return;
+      }
+
       // Check if this was a normal end (code 0) or error
       if (data.code === 0) {
         // Check if the error message indicates a user-initiated exit
@@ -115,16 +121,18 @@ export class StreamManager extends EventEmitter {
         await this.handleStreamEnd(data.screen);
       } else {
         logger.error(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
-        // For error cases, also try to start next stream after a delay
-        setTimeout(() => {
-          this.handleStreamEnd(data.screen).catch(error => {
+        // For error cases, wait for any potential retries to complete before starting next stream
+        if (!this.playerService.isRetrying(data.screen)) {
+          // Add a small delay to allow any in-progress operations to complete
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          await this.handleStreamEnd(data.screen).catch(error => {
             logger.error(
               `Failed to start next stream on screen ${data.screen}`,
               'StreamManager',
               error instanceof Error ? error : new Error(String(error))
             );
           });
-        }, 1000); // Reduced from 5000ms to 1000ms
+        }
       }
     });
 
