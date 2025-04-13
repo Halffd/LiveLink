@@ -35,7 +35,7 @@ export interface StreamOutput {
 export interface StreamError {
   screen: number;
   error: string;
-  code: number;
+  code?: number;
   /** URL of the stream that caused the error (if available) */
   url?: string;
   /** Whether to move to the next stream in queue (true) or retry same stream (false) */
@@ -44,7 +44,7 @@ export interface StreamError {
 
 export interface StreamEnd {
   screen: number;
-  error?: string;
+  code?: number;
 }
 
 export interface StreamResponse {

@@ -8,6 +8,15 @@ export interface QueueEvents {
   'all:watched': (screen: number) => void;
 }
 
+interface FavoritesNode {
+  priority: number;
+  startTime: number;
+  currentIndex: number;
+  totalFavorites: number;
+  nextNode: FavoritesNode | null;
+  prevNode: FavoritesNode | null;
+}
+
 class QueueService extends EventEmitter {
   private queues: Map<number, StreamSource[]> = new Map();
   private watchedStreams: Set<string> = new Set();
@@ -26,19 +35,112 @@ class QueueService extends EventEmitter {
 
     // Filter out any null or undefined entries
     const validQueue = queue.filter(item => item && item.url);
+
+    // Initialize favorites tracking
+    const favorites = validQueue.filter(s => s.subtype === 'favorites')
+      .sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
     
-    this.queues.set(screen, validQueue);
+    // Create root node
+    const rootNode: FavoritesNode = {
+      priority: 999,
+      startTime: 0,
+      currentIndex: -1,
+      totalFavorites: favorites.length,
+      nextNode: null,
+      prevNode: null
+    };
+
+    // Build initial node chain from favorites
+    let currentNode = rootNode;
+    favorites.forEach((fav, idx) => {
+      const favTime = fav.startTime ? 
+        (typeof fav.startTime === 'string' ? new Date(fav.startTime).getTime() : fav.startTime) : 0;
+      
+      const newNode: FavoritesNode = {
+        priority: fav.priority ?? 999,
+        startTime: favTime,
+        currentIndex: idx,
+        totalFavorites: favorites.length,
+        nextNode: null,
+        prevNode: currentNode
+      };
+      currentNode.nextNode = newNode;
+      currentNode = newNode;
+    });
+
+    // Sort the queue using the node chain for comparison
+    const sortedQueue = validQueue.sort((a, b) => {
+      const aPriority = a.priority ?? 999;
+      const bPriority = b.priority ?? 999;
+      const aIsFavorite = a.subtype === 'favorites';
+      const bIsFavorite = b.subtype === 'favorites';
+
+      // If one is a favorite and the other isn't, favorite comes first
+      if (aIsFavorite && !bIsFavorite) return -1;
+      if (!aIsFavorite && bIsFavorite) return 1;
+
+      // If priorities are different, sort by priority
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+
+      // If both are favorites, use node chain for ordering
+      if (aIsFavorite && bIsFavorite) {
+        // Find nodes for both streams
+        let node: FavoritesNode | null = rootNode;
+        let aNode: FavoritesNode | null = null;
+        let bNode: FavoritesNode | null = null;
+
+        while (node && (!aNode || !bNode)) {
+          if (node.priority === aPriority) aNode = node;
+          if (node.priority === bPriority) bNode = node;
+          node = node.nextNode;
+        }
+
+        if (aNode && bNode) {
+          // Compare based on node order
+          return aNode.currentIndex - bNode.currentIndex;
+        }
+      }
+
+      return 0;
+    });
     
-    logger.info(`Set queue for screen ${screen}. Queue size: ${validQueue.length}`, 'QueueService');
-    logger.debug(`Queue contents: ${JSON.stringify(validQueue)}`, 'QueueService');
+    // Check if the queue has actually changed before updating and emitting events
+    const currentQueue = this.queues.get(screen) || [];
+    const hasChanged = this.hasQueueChanged(currentQueue, sortedQueue);
     
-    if (validQueue.length === 0) {
-      logger.info(`Queue for screen ${screen} is empty, emitting all:watched event`, 'QueueService');
-      this.emit('all:watched', screen);
-    } else {
-      logger.info(`Queue for screen ${screen} updated with ${validQueue.length} items`, 'QueueService');
-      this.emit('queue:updated', screen, validQueue);
+    if (hasChanged) {
+      this.queues.set(screen, sortedQueue);
+      logger.info(`Queue updated for screen ${screen}. Size: ${sortedQueue.length}`, 'QueueService');
+      
+      // Only log detailed queue info at debug level
+      logger.debug(`Queue contents for screen ${screen}: ${JSON.stringify(sortedQueue.map(s => ({
+        url: s.url,
+        priority: s.priority,
+        startTime: s.startTime,
+        viewerCount: s.viewerCount,
+        isFavorite: s.subtype === 'favorites'
+      })))}`, 'QueueService');
+      
+      if (sortedQueue.length === 0) {
+        this.emit('all:watched', screen);
+      } else {
+        this.emit('queue:updated', screen, sortedQueue);
+      }
     }
+  }
+
+  private hasQueueChanged(currentQueue: StreamSource[], newQueue: StreamSource[]): boolean {
+    if (currentQueue.length !== newQueue.length) return true;
+    
+    return currentQueue.some((current, index) => {
+      const next = newQueue[index];
+      return current.url !== next.url || 
+             current.priority !== next.priority ||
+             current.viewerCount !== next.viewerCount ||
+             current.sourceStatus !== next.sourceStatus;
+    });
   }
 
   public getQueue(screen: number): StreamSource[] {
@@ -143,12 +245,32 @@ class QueueService extends EventEmitter {
   public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
     // First check if we have any unwatched non-favorite streams
     const hasUnwatchedNonFavorites = streams.some(stream => {
-      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      const isFavorite = stream.subtype === 'favorites';
       return !isFavorite && !this.watchedStreams.has(stream.url);
     });
 
     return streams.filter(stream => {
-      const isFavorite = stream.priority !== undefined && stream.priority < 900;
+      // Enhanced members-only detection
+      const isMembersOnly = (stream.title?.toLowerCase() || '').match(
+        /(membership|member['']?s|grembership|限定|メン限|member only)/i
+      ) !== null;
+
+      if (isMembersOnly) {
+        logger.info(`Filtering out members-only stream: ${stream.title}`, 'QueueService');
+        return false;
+      }
+
+      // Check for common error indicators in title
+      const hasErrorIndicators = (stream.title?.toLowerCase() || '').match(
+        /(unavailable|private|deleted|removed|error)/i
+      ) !== null;
+
+      if (hasErrorIndicators) {
+        logger.info(`Filtering out potentially unavailable stream: ${stream.title}`, 'QueueService');
+        return false;
+      }
+
+      const isFavorite = stream.subtype === 'favorites';
       const isWatched = this.isStreamWatched(stream.url);
       
       // If it's not watched, always include it
@@ -158,34 +280,13 @@ class QueueService extends EventEmitter {
       
       // If it's watched and a favorite, only include if all non-favorites are watched
       if (isFavorite && !hasUnwatchedNonFavorites) {
-        logger.debug(`QueueService: Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
+        logger.debug(`Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
         return true;
       }
       
-      // Otherwise, don't include watched streams
-      logger.debug(`QueueService: Filtering out watched stream ${stream.url}`, 'QueueService');
+      logger.debug(`Filtering out watched stream ${stream.url}`, 'QueueService');
       return false;
     });
-  }
-
-  // Add method to synchronize queue with active streams
-  public synchronizeWithActiveStreams(screen: number, activeStreams: any[]): void {
-    // If screen has an active stream, make sure it's not in the queue
-    const activeStream = activeStreams.find(s => s.screen === screen);
-    if (activeStream) {
-      const queue = this.getQueue(screen);
-      // Remove any queued streams that match the active stream URL
-      const filteredQueue = queue.filter(item => item.url !== activeStream.url);
-      
-      // Only update if there was a change
-      if (filteredQueue.length !== queue.length) {
-        logger.warn(
-          `Found active stream ${activeStream.url} in queue for screen ${screen}, removing it to avoid inconsistency`,
-          'QueueService'
-        );
-        this.setQueue(screen, filteredQueue);
-      }
-    }
   }
 }
 

@@ -26,7 +26,6 @@ export class TwitchService implements StreamService {
     this.filters = filters;
 
     try {
-      // Initialize with client credentials flow for non-user-specific requests
       this.authProvider = new RefreshingAuthProvider({
         clientId,
         clientSecret,
@@ -47,48 +46,55 @@ export class TwitchService implements StreamService {
       const channels = options.channels || [];
       let results: StreamSource[] = [];
       
-      // If we have more than 100 channels, we need to batch the requests
-      if (channels.length > 100) {
-        logger.info(`Batching ${channels.length} channels into multiple requests (max 100 per request)`, 'TwitchService');
-        
-        // Process channels in batches of 100
+      // If we have channels to fetch
+      if (channels.length > 0) {
+        // Process channels in batches of 100 (Twitch API limit)
+        const batches: string[][] = [];
         for (let i = 0; i < channels.length; i += 100) {
           const batchChannels = channels.slice(i, i + 100);
-          logger.debug(`Processing batch ${Math.floor(i/100) + 1} with ${batchChannels.length} channels`, 'TwitchService');
-          
-          const batchStreams = await this.client.streams.getStreams({
-            userName: batchChannels,
-            language: options.language
-          });
-          
-          // Convert to StreamSource format and add to results
-          const batchResults = batchStreams.data.map(stream => ({
+          batches.push(batchChannels);
+        }
+
+        // Fetch all batches in parallel
+        const batchResults = await Promise.all(
+          batches.map(batchChannels =>
+            this.client!.streams.getStreams({
+              userName: batchChannels,
+              ...(options.language ? { language: options.language } : {})
+            }).catch(error => {
+              logger.error(
+                `Failed to fetch batch of streams: ${error instanceof Error ? error.message : String(error)}`,
+                'TwitchService'
+              );
+              return { data: [] };
+            })
+          )
+        );
+
+        // Combine all batch results
+        results = batchResults.flatMap(batch => 
+          batch.data.map(stream => ({
             url: `https://twitch.tv/${stream.userName}`,
             title: stream.title,
             platform: 'twitch' as const,
             viewerCount: stream.viewers,
             startTime: stream.startDate.getTime(),
             sourceStatus: 'live' as const,
-            channelId: stream.userName.toLowerCase() // Add channelId for sorting
-          }));
-          
-          results = [...results, ...batchResults];
-          
-          // If we've reached the desired limit, stop processing batches
-          if (limit && results.length >= limit) {
-            results = results.slice(0, limit);
-            break;
-          }
+            channelId: stream.userName.toLowerCase()
+          }))
+        );
+
+        // If we have a limit, apply it after combining all results
+        if (limit) {
+          results = results.slice(0, limit);
         }
       } else {
-        // Original logic for <= 100 channels
+        // No specific channels, just fetch by limit and language
         const streams = await this.client.streams.getStreams({
           limit,
-          userName: channels,
-          language: options.language
+          ...(options.language ? { language: options.language } : {})
         });
 
-        // Convert to StreamSource format
         results = streams.data.map(stream => ({
           url: `https://twitch.tv/${stream.userName}`,
           title: stream.title,
@@ -96,35 +102,28 @@ export class TwitchService implements StreamService {
           viewerCount: stream.viewers,
           startTime: stream.startDate.getTime(),
           sourceStatus: 'live' as const,
-          channelId: stream.userName.toLowerCase() // Add channelId for sorting
+          channelId: stream.userName.toLowerCase()
         }));
       }
 
-      // If these are favorite channels, preserve their original order
+      // If these are favorite channels, then re-sort preserving favorite order
       if (channels && channels.length > 0) {
         // Create a map of channel IDs to their original position in the favorites array
         const channelOrderMap = new Map<string, number>();
         channels.forEach((channelId, index) => {
           channelOrderMap.set(channelId.toLowerCase(), index);
         });
-        
-        // Sort streams by their channel's position in the favorites array
+
+        // Sort results based on original channel order
         results.sort((a, b) => {
-          const aOrder = a.channelId ? channelOrderMap.get(a.channelId) ?? 999 : 999;
-          const bOrder = b.channelId ? channelOrderMap.get(b.channelId) ?? 999 : 999;
+          // If either stream doesn't have a channelId, put it last
+          if (!a.channelId) return 1;
+          if (!b.channelId) return -1;
           
-          // First sort by channel order (favorites order)
-          if (aOrder !== bOrder) {
-            return aOrder - bOrder;
-          }
-          
-          // Then by viewer count for streams from the same channel
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
+          const aOrder = channelOrderMap.get(a.channelId) ?? Number.MAX_SAFE_INTEGER;
+          const bOrder = channelOrderMap.get(b.channelId) ?? Number.MAX_SAFE_INTEGER;
+          return aOrder - bOrder;
         });
-      }
-      // Sort by viewers if requested (for non-favorite channels)
-      else if (options.sort === 'viewers') {
-        results.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
       }
 
       logger.info(`Found ${results.length} Twitch streams`, 'TwitchService');
@@ -140,10 +139,65 @@ export class TwitchService implements StreamService {
   }
 
   async getVTuberStreams(limit = 50): Promise<StreamSource[]> {
-    return this.getStreams({
-      limit,
-      tags: ['VTuber']
-    });
+    if (!this.client) return [];
+
+    try {
+      // First, search for channels with VTuber tag
+      const channels = await this.client.search.searchChannels('vtuber', {
+        liveOnly: true,
+        limit
+      });
+
+      // Convert to StreamSource format
+      const results = channels.data.map(channel => ({
+        url: `https://twitch.tv/${channel.name}`,
+        title: channel.displayName,
+        platform: 'twitch' as const,
+        viewerCount: 0, // Not available in search results
+        startTime: Date.now(), // Not available in search results
+        sourceStatus: channel.isLive ? 'live' as const : 'offline' as const,
+        channelId: channel.name.toLowerCase(),
+        tags: channel.tags || []
+      }));
+
+      // Filter to only live streams with VTuber tag
+      const vtuberStreams = results.filter(stream => 
+        stream.sourceStatus === 'live' && 
+        stream.tags?.some(tag => tag.toLowerCase() === 'vtuber')
+      );
+
+      // Get actual stream data for live channels to get viewer counts
+      if (vtuberStreams.length > 0) {
+        const streamData = await this.client.streams.getStreams({
+          userName: vtuberStreams.map(s => s.channelId),
+          limit: vtuberStreams.length
+        });
+
+        // Update viewer counts and start times
+        for (const stream of streamData.data) {
+          const matchingStream = vtuberStreams.find(
+            s => s.channelId === stream.userName.toLowerCase()
+          );
+          if (matchingStream) {
+            matchingStream.viewerCount = stream.viewers;
+            matchingStream.startTime = stream.startDate.getTime();
+          }
+        }
+      }
+
+      // Sort by viewer count
+      //vtuberStreams.sort((a, b) => (b.viewerCount || 0) - (a.viewerCount || 0));
+
+      logger.info(`Found ${vtuberStreams.length} VTuber streams on Twitch`, 'TwitchService');
+      return vtuberStreams;
+    } catch (error) {
+      logger.error(
+        'Failed to get VTuber streams',
+        'TwitchService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return [];
+    }
   }
 
   async getJapaneseStreams(limit = 50): Promise<StreamSource[]> {
@@ -205,7 +259,7 @@ export class TwitchService implements StreamService {
     }
   }
 
-  public updateFavorites(channels: string[]): void {
+  updateFavorites(channels: string[]): void {
     this.favoriteChannels = channels;
   }
 } 

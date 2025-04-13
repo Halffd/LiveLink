@@ -1,6 +1,7 @@
-import type { StreamConfig, PlayerSettings, FavoriteChannels } from '../types/stream.js';
+import type { ScreenConfig, PlayerSettings, FavoriteChannels } from '../types/stream.js';
 
 export interface Config {
+  screens: ScreenConfig[];
   streams: Array<{
     id: number;
     enabled: boolean;
@@ -35,7 +36,7 @@ export interface Config {
     streamersFile: string;
   };
   player: PlayerSettings & {
-    screens: StreamConfig[];
+    screens: ScreenConfig[];
   };
   mpv: {
     priority?: string;
@@ -49,6 +50,7 @@ export interface Config {
 }
 
 export const defaultConfig: Config = {
+  screens: [],
   streams: [
     {
       id: 1,

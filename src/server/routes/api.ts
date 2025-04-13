@@ -1,16 +1,25 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamSource, PlayerSettings, StreamConfig, StreamOptions } from '../../types/stream.js';
-import { logger } from '../services/logger.js';
+import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo } from '../../types/stream.js';
+import { logger, LogLevel } from '../services/logger.js';
+import { queueService } from '../services/queue_service.js';
 
 const router = new Router();
+
+function logError(message: string, service: string, error: unknown): void {
+  if (error instanceof Error) {
+    logger.error(message, service, error);
+  } else {
+    logger.error(message, service, new Error(String(error)));
+  }
+}
 
 // Add type for request body
 interface AddToQueueBody {
   url: string;
   title?: string;
-  platform?: string;
+  platform?: 'youtube' | 'twitch';
 }
 
 interface ReorderQueueBody {
@@ -20,7 +29,7 @@ interface ReorderQueueBody {
 }
 
 interface UpdateConfigBody {
-  streams?: StreamConfig[];
+  streams?: ScreenConfig[];
   organizations?: string[];
   favoriteChannels?: {
     holodex: string[];
@@ -45,11 +54,7 @@ router.get('/api/streams/active', async (ctx: Context) => {
     const streams = streamManager.getActiveStreams();
     ctx.body = streams;
   } catch (error: unknown) {
-    logger.error(
-      'Failed to get active streams',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to get active streams', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to get active streams' };
   }
@@ -62,11 +67,7 @@ router.get('/api/streams/vtubers', async (ctx: Context) => {
       limit ? parseInt(limit as string) : undefined
     );
   } catch (error: unknown) {
-    logger.error(
-      'Failed to fetch VTuber streams', 
-      'API', 
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to fetch VTuber streams', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to fetch VTuber streams' };
   }
@@ -79,11 +80,7 @@ router.get('/api/streams/japanese', async (ctx: Context) => {
       limit ? parseInt(limit as string) : undefined
     );
   } catch (error: unknown) {
-    logger.error(
-      'Failed to fetch Japanese streams', 
-      'API', 
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to fetch Japanese streams', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to fetch Japanese streams' };
   }
@@ -95,11 +92,7 @@ router.get('/api/streams', async (ctx: Context) => {
     const streams = await streamManager.getLiveStreams();
     ctx.body = streams;
   } catch (error: unknown) {
-    logger.error(
-      'Failed to get streams',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to get streams', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to get streams' };
   }
@@ -137,25 +130,10 @@ router.delete('/api/streams/:screen', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    
-    // Get query parameter to determine if we should keep the screen enabled
-    const keepEnabled = ctx.query.keepEnabled === 'true';
-    
-    // Stop the stream
-    const result = await streamManager.stopStream(screen, !keepEnabled);
-    
-    // If we want to keep the screen enabled for auto-starting, clear its manually closed status
-    if (keepEnabled) {
-      streamManager.clearManuallyClosedStatus(screen);
-    }
-    
+    const result = await streamManager.stopStream(screen);
     ctx.body = { success: result };
   } catch (error: unknown) {
-    logger.error(
-      'Failed to stop stream',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to stop stream', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to stop stream' };
   }
@@ -170,49 +148,11 @@ router.post('/api/screens/:screen/disable', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    
-    logger.info(`API request to disable screen ${screen}`, 'API');
-    
-    // Add a timeout to ensure the disable operation doesn't hang
-    const disablePromise = streamManager.disableScreen(screen);
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error(`Disable operation timed out for screen ${screen}`)), 10000);
-    });
-    
-    await Promise.race([disablePromise, timeoutPromise]);
-    
-    // Double check that the screen is actually disabled
-    const screenConfig = streamManager.getScreenConfig(screen);
-    if (screenConfig && screenConfig.enabled) {
-      logger.warn(`Screen ${screen} not properly disabled, forcing disabled state`, 'API');
-      streamManager.updateScreenConfig(screen, { enabled: false });
-      await streamManager.saveConfig();
-    }
-    
-    // Check for any active streams on this screen
-    const activeStreams = streamManager.getActiveStreams();
-    const isActive = activeStreams.some(s => s.screen === screen);
-    
-    if (isActive) {
-      logger.warn(`Screen ${screen} still has active streams after disable, forcing stop`, 'API');
-      await streamManager.stopStream(screen, true);
-    }
-    
-    ctx.body = { 
-      success: true,
-      message: `Screen ${screen} has been disabled` 
-    };
+    await streamManager.disableScreen(screen);
+    ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
-    logger.error(
-      `Failed to disable screen ${ctx.params.screen}`, 
-      'API', 
-      error instanceof Error ? error : new Error(String(error))
-    );
-    ctx.body = { 
-      error: `Failed to disable screen: ${error instanceof Error ? error.message : String(error)}`,
-      success: false
-    };
+    ctx.body = { error: String(error) };
   }
 });
 
@@ -250,16 +190,14 @@ router.post('/api/streams/url', async (ctx: Context) => {
 
     // Check if stream is already playing on this screen
     const activeStreams = streamManager.getActiveStreams();
-    const existingStream = activeStreams.find(s => s.screen === screen);
+    const existingStream = activeStreams.find((s: StreamInfo) => s.screen === screen);
     if (existingStream && existingStream.url === url) {
       ctx.body = { message: 'Stream already playing on this screen' };
       return;
     }
 
     // Check if stream is playing on a higher priority screen
-    const isStreamActive = activeStreams.some(s => 
-      s.url === url && s.screen < (screen || 1)
-    );
+    const isStreamActive = activeStreams.some((s: StreamInfo) => s.screen === screen);
     if (isStreamActive) {
       ctx.body = { message: 'Stream already playing on higher priority screen' };
       return;
@@ -296,19 +234,26 @@ router.post('/api/streams/restart', async (ctx: Context) => {
 
 // Queue Management
 router.get('/api/streams/queue/:screen', async (ctx: Context) => {
+  const screen = parseInt(ctx.params.screen);
+  if (isNaN(screen)) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
   try {
-    const screen = parseInt(ctx.params.screen);
-    if (isNaN(screen)) {
-      ctx.status = 400;
-      ctx.body = { error: 'Invalid screen number' };
+    const queue = streamManager.getQueueForScreen(screen);
+    if (!queue) {
+      ctx.status = 404;
+      ctx.body = { error: `No queue found for screen ${screen}` };
       return;
     }
-
-    const queue = streamManager.getQueueForScreen(screen);
     ctx.body = queue;
   } catch (error) {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    logger.error('Failed to get queue', 'API', errorObj);
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    ctx.body = { error: 'Internal server error' };
   }
 });
 
@@ -323,10 +268,16 @@ router.post('/api/streams/queue/:screen', async (ctx: Context) => {
       return;
     }
 
+    if (body.platform && body.platform !== 'youtube' && body.platform !== 'twitch') {
+      ctx.status = 400;
+      ctx.body = { error: 'Platform must be either "youtube" or "twitch"' };
+      return;
+    }
+
     const source: StreamSource = {
       url: body.url,
       title: body.title,
-      platform: body.platform as 'youtube' | 'twitch' | undefined
+      platform: body.platform
     };
 
     await streamManager.addToQueue(screen, source);
@@ -485,20 +436,14 @@ router.post('/api/server/stop', async (ctx: Context) => {
     setTimeout(async () => {
       try {
         logger.info('Starting server cleanup...', 'API');
-        // Only call streamManager.cleanup(), which will handle all the 
-        // stream stopping and cleanup logic in a coordinated way
         await streamManager.cleanup();
-        
-        // Brief delay to allow cleanup to complete
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
         logger.info('Server cleanup complete, exiting...', 'API');
         process.exit(0);
       } catch (error) {
-        logger.error('Failed to cleanup server', 'API', error instanceof Error ? error : new Error(String(error)));
+        logError('Failed to cleanup server', 'API', error instanceof Error ? error : new Error(String(error)));
         process.exit(1);
       }
-    }, 500); // Reduced delay for faster response
+    }, 1000);
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -523,22 +468,36 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
     // Perform cleanup after response is sent
     setTimeout(async () => {
       try {
-        logger.info('Starting cleanup for all players and server...', 'API');
+        logger.info('Stopping all player processes...', 'API');
         
-        // Use the streamManager.cleanup() method which will handle everything
-        // This prevents duplicate quit commands and ensures proper cleanup order
+        // Get all active streams and stop them
+        const activeStreams = streamManager.getActiveStreams();
+        logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
+        if (activeStreams.length > 0) {
+          logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
+          
+          const stopPromises = activeStreams.map((stream: StreamInfo) => {
+            logger.info(`Stopping player on screen ${stream.screen}`, 'API');
+            return streamManager.stopStream(stream.screen, true);
+          });
+          
+          // Wait for all streams to be stopped
+          await Promise.allSettled(stopPromises);
+          logger.info('All player processes stopped', 'API');
+        } else {
+          logger.info('No active streams to stop', 'API');
+        }
+        
+        // Then perform server cleanup
+        logger.info('Starting server cleanup...', 'API');
         await streamManager.cleanup();
-        
-        // Brief delay to allow cleanup to complete before exit
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        logger.info('All cleanup complete, exiting...', 'API');
+        logger.info('Server cleanup complete, exiting...', 'API');
         process.exit(0);
       } catch (error) {
-        logger.error('Failed during stop-all sequence', 'API', error instanceof Error ? error : new Error(String(error)));
+        logError('Failed during stop-all sequence', 'API', error instanceof Error ? error : new Error(String(error)));
         process.exit(1);
       }
-    }, 500); // Reduced delay for faster response
+    }, 1000);
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -709,7 +668,7 @@ router.put('/api/screens/:screen', async (ctx: Context) => {
       return;
     }
 
-    const config = ctx.request.body as Partial<StreamConfig>;
+    const config = ctx.request.body as Partial<ScreenConfig>;
     streamManager.updateScreenConfig(screen, config);
     ctx.body = { success: true };
   } catch (error) {
@@ -859,11 +818,7 @@ router.post('/api/streams/refresh', async (ctx: Context) => {
     
     ctx.body = { success: true, message: 'Stream data refresh initiated for all screens' };
   } catch (error) {
-    logger.error(
-      'Failed to refresh streams',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to refresh streams', 'API', error);
     ctx.status = 500;
     ctx.body = { success: false, error: 'Failed to refresh streams' };
   }
@@ -885,12 +840,13 @@ router.post('/api/streams/refresh/:screen', async (ctx: Context) => {
     // Reset the refresh timestamp for this screen
     streamManager.resetRefreshTimestamps([screen]);
     
-    // Update queue for this screen
-    await streamManager.updateQueue(screen, true);
+    // Force refresh queue for screen
+    logger.info(`Force refreshing queue for screen ${screen}`, 'API');
+    await streamManager.updateQueue(screen);
     
     ctx.body = { success: true, message: `Stream data refresh initiated for screen ${screen}` };
   } catch (error) {
-    logger.error(
+    logError(
       `Failed to refresh streams for screen ${ctx.params.screen}`,
       'API',
       error instanceof Error ? error : new Error(String(error))
@@ -924,11 +880,7 @@ router.get('/api/server/status', async (ctx: Context) => {
       }
     };
   } catch (error) {
-    logger.error(
-      'Failed to get server status',
-      'API',
-      error instanceof Error ? error : new Error(String(error))
-    );
+    logError('Failed to get server status', 'API', error);
     ctx.status = 500;
     ctx.body = { error: 'Failed to get server status' };
   }
@@ -949,5 +901,269 @@ function formatUptime(seconds: number): string {
   
   return parts.join(' ');
 }
+
+// Add new routes for screen management
+router.post('/screens/:screen/toggle', async (ctx) => {
+  const screen = parseInt(ctx.params.screen);
+  if (isNaN(screen)) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  const isEnabled = !streamManager.getScreenConfig(screen)?.enabled;
+  if (isEnabled) {
+    await streamManager.enableScreen(screen);
+  } else {
+    await streamManager.disableScreen(screen);
+  }
+  
+  ctx.body = { screen, enabled: isEnabled };
+});
+
+router.post('/screens/new-player', async (ctx) => {
+  const { screen } = ctx.request.body as { screen?: number };
+  
+  // Get active streams to avoid duplicates
+  const activeStreams = streamManager.getActiveStreams();
+  const activeUrls = new Set(activeStreams.map((s: StreamInfo) => s.url));
+  
+  // Get all queues
+  const queues = [1, 2].map(s => streamManager.getQueueForScreen(s)).flat();
+  
+  // Find first stream that's not already playing
+  const newStream = queues.find(stream => !activeUrls.has(stream.url));
+  
+  if (!newStream) {
+    ctx.status = 404;
+    ctx.body = { error: 'No available streams found in queues' };
+    return;
+  }
+  
+  // If no specific screen provided, find first available screen
+  const targetScreen = screen || activeStreams.length + 1;
+  if (targetScreen > 2) {
+    ctx.status = 400;
+    ctx.body = { error: 'No available screens' };
+    return;
+  }
+  
+  // Start the stream
+  const result = await streamManager.startStream({
+    url: newStream.url,
+    screen: targetScreen,
+    quality: 'best'
+  });
+  
+  ctx.body = result;
+});
+
+// Add new routes for screen toggle and new player
+router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+    const config = streamManager.getScreenConfig(screen);
+    if (!config) {
+      ctx.status = 404;
+      ctx.body = { error: 'Screen not found' };
+      return;
+    }
+    if (config.enabled) {
+      await streamManager.disableScreen(screen);
+    } else {
+      await streamManager.enableScreen(screen);
+    }
+    ctx.body = { success: true, enabled: !config.enabled };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+router.post('/api/screens/:screen/new-player', async (ctx: Context) => {
+  try {
+    const screen = parseInt(ctx.params.screen);
+    if (isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { error: 'Invalid screen number' };
+      return;
+    }
+    const config = streamManager.getScreenConfig(screen);
+    if (!config) {
+      ctx.status = 404;
+      ctx.body = { error: 'Screen not found' };
+      return;
+    }
+    // Stop current stream if any
+    await streamManager.stopStream(screen);
+    // Start a new player instance
+    await streamManager.enableScreen(screen);
+    ctx.body = { success: true };
+  } catch (error) {
+    ctx.status = 500;
+    ctx.body = { error: String(error) };
+  }
+});
+
+// Get stream details for a screen
+router.get('/streams/:screen/details', async (ctx: Context) => {
+  const screen = parseInt(ctx.params.screen);
+  if (isNaN(screen)) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  try {
+    const streams = streamManager.getActiveStreams();
+    const stream = streams.find((s: StreamInfo) => s.screen === screen);
+    
+    if (!stream) {
+      ctx.status = 404;
+      ctx.body = { error: 'No active stream found for this screen' };
+      return;
+    }
+
+    ctx.body = stream;
+  } catch (error) {
+    logger.log({
+      level: LogLevel.ERROR,
+      message: 'Failed to get stream details',
+      context: 'API',
+      error: error instanceof Error ? error : new Error(String(error))
+    });
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to get stream details' };
+  }
+});
+
+// Get queue for a screen
+router.get('/streams/queue/:screen', async (ctx: Context) => {
+  const screen = parseInt(ctx.params.screen, 10);
+  if (isNaN(screen) || screen < 1) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  try {
+    const queue = queueService.getQueue(screen);
+    ctx.body = queue;
+  } catch (error) {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    logger.error('Failed to get queue', 'API', errorObj);
+    ctx.status = 500;
+    ctx.body = { error: 'Internal server error' };
+  }
+});
+
+// Refresh queue for a screen
+router.post('/streams/queue/:screen/refresh', async (ctx: Context) => {
+  const screen = parseInt(ctx.params.screen, 10);
+  if (isNaN(screen) || screen < 1) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  try {
+    await streamManager.updateQueue(screen);
+    ctx.status = 200;
+    ctx.body = { message: 'Queue refreshed successfully' };
+  } catch (error) {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    logger.error('Failed to refresh queue', 'API', errorObj);
+    ctx.status = 500;
+    ctx.body = { 
+      error: 'Failed to refresh queue', 
+      message: errorObj.message || 'Internal server error',
+      details: 'Check server logs for more information'
+    };
+  }
+});
+
+// Get screen info
+router.get('/screens/:screen', async (ctx: Context) => {
+  const screen = parseInt(ctx.params.screen, 10);
+  if (isNaN(screen) || screen < 1) {
+    ctx.status = 400;
+    ctx.body = { error: 'Invalid screen number' };
+    return;
+  }
+
+  try {
+    const queue = queueService.getQueue(screen);
+    const activeStreams = streamManager.getActiveStreams();
+    const isActive = activeStreams.some((s: StreamInfo) => s.screen === screen);
+    
+    ctx.status = 200;
+    ctx.body = {
+      enabled: true, // We'll assume enabled if we can get the queue
+      queueProcessing: isActive,
+      queueLength: queue.length
+    };
+  } catch (error) {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    logger.error('Failed to get screen info', 'API', errorObj);
+    ctx.status = 500;
+    ctx.body = { error: 'Internal server error' };
+  }
+});
+
+// Add a new endpoint for manually starting a stream with a URL
+router.post('/streams/manual-start', async (ctx: Context) => {
+  try {
+    const { url, screen, quality } = ctx.request.body as { url: string; screen: number; quality?: string };
+    
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'URL is required' };
+      return;
+    }
+    
+    if (!screen || isNaN(screen)) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'Valid screen number is required' };
+      return;
+    }
+    
+    // Use the logError helper function defined in this file
+    console.log(`Manually starting stream ${url} on screen ${screen}`);
+    
+    // First stop any existing stream on this screen
+    const activeStreams = streamManager.getActiveStreams();
+    const currentStream = activeStreams.find((s: StreamInfo) => s.screen === screen);
+    
+    if (currentStream) {
+      console.log(`Stopping current stream on screen ${screen} before starting new one`);
+      await streamManager.stopStream(screen, true);
+    }
+    
+    // Start the requested stream
+    const result = await streamManager.startStream({
+      url,
+      screen,
+      quality: quality || 'best',
+      windowMaximized: true
+    });
+    
+    if (result.success) {
+      ctx.body = { success: true, message: `Stream started on screen ${screen}` };
+    } else {
+      ctx.status = 500;
+      ctx.body = { success: false, error: result.error || 'Failed to start stream' };
+    }
+  } catch (error) {
+    // Use the logError helper function
+    logError('Failed to manually start stream', 'API', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Internal server error' };
+  }
+});
 
 export const apiRouter = router; 

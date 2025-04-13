@@ -114,24 +114,14 @@ streamCommands
   .command('stop')
   .description('Stop a stream')
   .argument('<screen>', 'Screen number')
-  .option('-k, --keep-enabled', 'Keep screen enabled for auto-starting new streams')
-  .action(async (screen, options) => {
+  .action(async (screen) => {
     try {
       console.log(chalk.blue(`Stopping stream on screen ${screen}...`));
-      
-      // Add the keepEnabled query parameter if requested
-      const keepEnabled = options.keepEnabled ? '?keepEnabled=true' : '';
-      
-      const response = await fetch(`${API_URL}/streams/${screen}${keepEnabled}`, {
+      const response = await fetch(`${API_URL}/streams/${screen}`, {
         method: 'DELETE'
       });
       const result = await handleResponse(response);
-      
-      if (options.keepEnabled) {
-        console.log(chalk.green('Stream stopped:'), result, chalk.yellow('(Screen remains enabled for new streams)'));
-      } else {
-        console.log(chalk.green('Stream stopped:'), result);
-      }
+      console.log(chalk.green('Stream stopped:'), result);
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }
@@ -261,69 +251,16 @@ screenCommands
   .command('disable')
   .description('Disable a screen')
   .argument('<screen>', 'Screen number')
-  .option('-f, --force', 'Force disable even if operation times out')
-  .action(async (screen, options) => {
+  .action(async (screen) => {
     try {
       console.log(chalk.blue(`Disabling screen ${screen}...`));
-      
-      // Create a promise with timeout
-      const fetchPromise = fetch(`${API_URL}/screens/${screen}/disable`, {
+      const response = await fetch(`${API_URL}/screens/${screen}/disable`, {
         method: 'POST'
       });
-      
-      // Set up a timeout for the operation
-      const timeoutPromise = new Promise<Response>((_, reject) => {
-        setTimeout(() => reject(new Error('Operation timed out after 20 seconds')), 20000);
-      });
-      
-      // Wait for either fetch completion or timeout
-      try {
-        const response = await Promise.race([fetchPromise, timeoutPromise]);
-        const result = await handleResponse<{success: boolean; message?: string}>(response);
-        console.log(chalk.green('Screen disabled:'), result.message || 'Success');
-        
-        // Verify screen state
-        console.log(chalk.blue('Verifying screen is inactive...'));
-        
-        // Wait a moment for server-side changes to take effect
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Get screen info to verify it's disabled
-        const infoResponse = await fetch(`${API_URL}/screens/${screen}`);
-        const screenInfo = await handleResponse<{enabled: boolean}>(infoResponse);
-        
-        if (screenInfo.enabled) {
-          console.log(chalk.yellow('Warning: Screen still shows as enabled after disable operation'));
-          if (options.force) {
-            console.log(chalk.blue('Force flag specified, attempting to force disable...'));
-            await fetch(`${API_URL}/screens/${screen}/disable`, { method: 'POST' });
-            console.log(chalk.green('Force disable attempt completed'));
-          }
-        } else {
-          console.log(chalk.green('Confirmed: Screen is now disabled'));
-        }
-      } catch (error) {
-        console.error(chalk.yellow(`Warning: ${error instanceof Error ? error.message : String(error)}`));
-        
-        if (options.force) {
-          console.log(chalk.blue('Force flag specified, sending stop command to screen...'));
-          try {
-            // Try to directly stop any streams on this screen
-            await fetch(`${API_URL}/streams/${screen}`, { method: 'DELETE' });
-            console.log(chalk.green('Stream stop command sent'));
-            
-            // Try disable again
-            await fetch(`${API_URL}/screens/${screen}/disable`, { method: 'POST' });
-            console.log(chalk.green('Force disable attempt completed'));
-          } catch (innerError) {
-            console.error(chalk.red('Error during force disable:'), innerError instanceof Error ? innerError.message : String(innerError));
-          }
-        } else {
-          console.log(chalk.yellow('Use --force to attempt force disable if operation times out'));
-        }
-      }
+      const result = await handleResponse(response);
+      console.log(chalk.green('Screen disabled:'), result);
     } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+      console.error(chalk.red('Error:'), error);
     }
   });
 
