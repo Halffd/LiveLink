@@ -33,10 +33,10 @@ if (!isMainThread) {
         }
           
         case 'stop': {
-          const success = await player.stopStream(message.data);
+          const result = await player.stopStream(message.data);
           parentPort?.postMessage({ 
             type: 'stopResult', 
-            data: success 
+            data: result.success 
           } as WorkerResponse);
           break;
         }

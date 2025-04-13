@@ -690,7 +690,7 @@ export class StreamManager extends EventEmitter {
 
       this.streams.delete(screen);
       logger.info(`Stream stopped on screen ${screen}${isManualStop ? ' (manual stop)' : ''}`, 'StreamManager');
-      return result;
+      return result.success;
     } catch (error) {
       logger.error(
         'Failed to stop stream', 

@@ -33,10 +33,12 @@ export class PlayerService {
 	private readonly RETRY_INTERVAL = 500;
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
+	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds for startup
 	private readonly SHUTDOWN_TIMEOUT = 2000; // 2 seconds for shutdown
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
+	// Track active screen slots separately from the streams map to guarantee accurate counts
+	private activeScreenSlots: Set<number> = new Set();
 	private streamRetries: Map<number, number> = new Map();
 	private streamStartTimes: Map<number, number> = new Map();
 	private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
@@ -86,7 +88,7 @@ export class PlayerService {
 				} catch {
 					// Process is dead but not cleaned up
 					logger.warn(`Found dead process for screen ${screen}, cleaning up`, 'PlayerService');
-					this.handleProcessExit(screen, -1);
+					this.handleProcessExit(screen, -1, null);
 				}
 			}
 		}, 30000);
@@ -173,6 +175,17 @@ export class PlayerService {
 		});
 	}
 
+	/**
+	 * Gets the current count of active streams 
+	 */
+	private getActiveStreamCount(): number {
+		// Use our dedicated slot tracking instead of trying to filter the streams map
+		const count = this.activeScreenSlots.size;
+		const activeScreens = Array.from(this.activeScreenSlots);
+		logger.debug(`Active stream count: ${count}, slots: ${activeScreens.join(',')}`, 'PlayerService');
+		return count;
+	}
+
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen } = options;
 
@@ -185,9 +198,38 @@ export class PlayerService {
 			};
 		}
 
-		// Check maximum streams limit
-		const activeStreams = Array.from(this.streams.values()).filter((s) => s.process !== null);
-		if (activeStreams.length >= this.config.player.maxStreams) {
+		// Run an audit to ensure our stream tracking is accurate before checking limits
+		this.auditActiveStreams();
+
+		// Check maximum streams limit using our dedicated slot tracking
+		const activeStreamCount = this.getActiveStreamCount();
+		
+		if (activeStreamCount >= this.config.player.maxStreams) {
+			// Log detailed information to help diagnose the issue
+			logger.warn(
+				`Maximum number of streams (${this.config.player.maxStreams}) reached. Active screens: ${Array.from(this.activeScreenSlots).join(', ')}`,
+				'PlayerService'
+			);
+			
+			// Show any inconsistencies between our tracking and the streams map
+			const streamsInMap = Array.from(this.streams.keys());
+			if (streamsInMap.length !== this.activeScreenSlots.size) {
+				logger.warn(
+					`Stream tracking inconsistency: ${streamsInMap.length} streams in map, but ${this.activeScreenSlots.size} active slots. Map screens: ${streamsInMap.join(', ')}`,
+					'PlayerService'
+				);
+				
+				// Check if the screen we're trying to start is actually already in the map but not in active slots
+				if (streamsInMap.includes(screen) && !this.activeScreenSlots.has(screen)) {
+					logger.warn(
+						`Found inconsistency: Screen ${screen} exists in streams map but not in activeScreenSlots, fixing...`,
+						'PlayerService'
+					);
+					// Auto-fix by stopping the stream to clean up everything
+					await this.stopStream(screen, true);
+				}
+			}
+			
 			return {
 				screen,
 				message: `Maximum number of streams (${this.config.player.maxStreams}) reached`,
@@ -214,8 +256,18 @@ export class PlayerService {
 		}, this.STARTUP_TIMEOUT);
 
 		try {
-			// Stop existing stream if any
-			await this.stopStream(screen);
+			// If there's already a stream for this screen, stop it first
+			// This ensures we clean up any resources before starting a new stream
+			if (this.streams.has(screen) || this.activeScreenSlots.has(screen)) {
+				logger.info(`Stopping existing stream on screen ${screen} before starting new one`, 'PlayerService');
+				await this.stopStream(screen, true);
+				
+				// Double-check cleanup worked
+				if (this.activeScreenSlots.has(screen)) {
+					logger.warn(`Screen ${screen} still has an active slot after stopStream, forcing release`, 'PlayerService');
+					this.activeScreenSlots.delete(screen);
+				}
+			}
 
 			// Get screen configuration
 			const screenConfig = this.config.player.screens.find((s) => s.screen === screen);
@@ -281,8 +333,15 @@ export class PlayerService {
 				options: options
 			};
 
-			// Store stream instance
+			// Store stream instance and mark the slot as active
 			this.streams.set(screen, instance);
+			this.activeScreenSlots.add(screen);
+
+			// Log active streams after adding the new one
+			logger.info(
+				`Stream started on screen ${screen}. Current active slots: ${Array.from(this.activeScreenSlots).join(', ')} (${this.activeScreenSlots.size} of ${this.config.player.maxStreams})`, 
+				'PlayerService'
+			);
 
 			// Setup monitoring
 			this.setupStreamMonitoring(screen, process, options);
@@ -298,6 +357,11 @@ export class PlayerService {
 				'PlayerService',
 				error instanceof Error ? error.message : String(error)
 			);
+			
+			// Make sure we clean up any partial state if stream failed to start
+			this.activeScreenSlots.delete(screen);
+			this.streams.delete(screen);
+			
 			return {
 				screen,
 				message: error instanceof Error ? error.message : String(error),
@@ -678,211 +742,199 @@ export class PlayerService {
 
 		await this.startStream({ ...options, screen });
 	}
-	private async handleProcessExit(screen: number, code: number | null): Promise<void> {
-		// Clear monitoring
-		this.clearMonitoring(screen);
 
-		// Get stream options before removing the instance
-		const stream = this.streams.get(screen);
-		const streamOptions = stream?.options;
-
-		// Remove stream instance
-		this.streams.delete(screen);
-
-		// Initialize retry count if not exists
-		if (!this.streamRetries.has(screen)) {
-			this.streamRetries.set(screen, 0);
+	/**
+	 * Stop a stream running on a specific screen
+	 * @param screen - The screen number
+	 * @param isForced - If true, this is a forced stop (e.g. for starting a new stream)
+	 * @returns Promise that resolves when the stream is stopped
+	 */
+	async stopStream(screen: number, isForced = false): Promise<StreamResponse> {
+		logger.info(`Stopping stream on screen ${screen}${isForced ? ' (forced)' : ''}`, 'PlayerService');
+		
+		// Log active screens before stopping
+		this.logActiveSlots('Before stopping stream');
+		
+		// Get the stream instance
+		const instance = this.streams.get(screen);
+		if (!instance) {
+			// Check if we need to clean up an orphaned active slot
+			if (this.activeScreenSlots.has(screen)) {
+				logger.warn(`Found orphaned active slot for screen ${screen}, cleaning up`, 'PlayerService');
+				this.activeScreenSlots.delete(screen);
+				this.logActiveSlots('After orphaned slot cleanup');
+			}
+			
+			return {
+				screen,
+				message: `No stream running on screen ${screen}`,
+				success: true
+			};
 		}
 
-		const retryCount = this.streamRetries.get(screen) || 0;
-		const MAX_RETRIES = 10; // Increased max retries for network issues
-		const MAX_BACKOFF = 30000; // Maximum backoff of 30 seconds
+		// Track manual closures if this isn't a forced stop
+		if (!isForced) {
+			this.manuallyClosedScreens.add(screen);
+		}
 
-		// Helper to check if error is likely a network issue
-		const isNetworkError = (code: number | null): boolean => {
-			return (
-				code === 2 || // Streamlink error (often network-related)
-				code === -4 || // Network timeout
-				code === -3 || // Network connection refused
-				code === null
-			); // Process crash (could be network-related)
-		};
-
-		// Handle different exit codes
-		if (code === 0) {
-			// Normal exit - clear retries and move to next stream
-			this.streamRetries.delete(screen);
-			logger.info(
-				`Stream ended normally on screen ${screen}, moving to next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: 'Stream ended normally',
-				code: 0
-			});
-		} else if (isNetworkError(code)) {
-			// Network-related error - use more aggressive retry strategy
-			if (retryCount < MAX_RETRIES && streamOptions) {
-				const backoffTime = Math.min(1000 * Math.pow(1.5, retryCount), MAX_BACKOFF);
-				this.streamRetries.set(screen, retryCount + 1);
-
-				// Log with more specific error context
-				logger.warn(
-					`Network-related error on screen ${screen} (code ${code}), retry ${retryCount + 1}/${MAX_RETRIES} in ${backoffTime}ms`,
-					'PlayerService'
-				);
-
-				// Cleanup any existing retry timer for this screen
-				this.clearRetryTimer(screen);
-
-				// Set up retry timer
-				const retryTimer = setTimeout(async () => {
-					try {
-						// Check network connectivity before retry
-						const isConnected = await this.testConnection();
-
-						if (isConnected) {
-							logger.info(
-								`Network is back online, retrying stream on screen ${screen}`,
-								'PlayerService'
-							);
-
-							// Check if another process has already started a stream for this screen
-							if (!this.streams.has(screen)) {
-								await this.startStream(streamOptions);
-							} else {
-								logger.info(
-									`Stream already started on screen ${screen}, skipping retry`,
-									'PlayerService'
-								);
-							}
-						} else {
-							// Network still down, schedule another retry
-							logger.warn(
-								`Network still unavailable for screen ${screen}, scheduling another retry`,
-								'PlayerService'
-							);
-							// Don't recursively call handleProcessExit as it can lead to multiple overlapping retries
-							// Instead, increment retry count and set a new timer
-							const currentRetryCount = this.streamRetries.get(screen) || 0;
-							if (currentRetryCount < MAX_RETRIES) {
-								const nextBackoffTime = Math.min(
-									1000 * Math.pow(1.5, currentRetryCount),
-									MAX_BACKOFF
-								);
-								this.clearRetryTimer(screen);
-								this.retryTimers.set(
-									screen,
-									setTimeout(() => {
-										this.handleProcessExit(screen, code).catch((err) => {
-											logger.error(
-												`Error in retry handler for screen ${screen}`,
-												'PlayerService',
-												err
-											);
-										});
-									}, nextBackoffTime)
-								);
-							} else {
-								// Max retries reached
-								this.streamRetries.delete(screen);
-								logger.error(
-									`Stream failed after ${MAX_RETRIES} retries on screen ${screen} (network still down)`,
-									'PlayerService'
-								);
-								this.errorCallback?.({
-									screen,
-									error: `Stream failed after ${MAX_RETRIES} retries (network still down)`,
-									code: -1
-								});
-							}
-						}
-					} catch (error) {
-						logger.error(
-							`Failed to restart stream on screen ${screen}`,
-							'PlayerService',
-							error instanceof Error ? error : new Error(String(error))
-						);
-						// Ensure we clean up retry state on error
-						this.streamRetries.delete(screen);
-						this.errorCallback?.({
-							screen,
-							error: `Failed to restart stream: ${error instanceof Error ? error.message : String(error)}`,
-							code: -1
-						});
-					}
-				}, backoffTime);
-
-				// Store retry timer for cleanup
-				this.retryTimers.set(screen, retryTimer);
-			} else {
-				// Max retries reached or no options available
-				this.streamRetries.delete(screen);
+		// Don't try to kill the process if it's already gone
+		if (instance.process && !instance.process.killed) {
+			try {
+				// Kill the process
+				const signal = process.platform === 'win32' ? 'SIGTERM' : 'SIGTERM';
+				logger.info(`Killing process for screen ${screen} with signal ${signal}`, 'PlayerService');
+				instance.process.kill(signal);
+			} catch (error) {
 				logger.error(
-					`Stream failed after ${MAX_RETRIES} retries on screen ${screen}, moving to next stream`,
-					'PlayerService'
+					`Failed to kill process for screen ${screen}`,
+					'PlayerService',
+					error instanceof Error ? error.message : String(error)
 				);
-				this.errorCallback?.({
-					screen,
-					error: `Stream failed after ${MAX_RETRIES} retries (network issues)`,
-					code: -1
-				});
 			}
 		} else {
-			// Other error codes - move to next stream
-			this.streamRetries.delete(screen);
-			logger.error(
-				`Stream ended with error code ${code} on screen ${screen}, moving to next stream`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: `Stream ended with error code ${code}`,
-				code: -1
-			});
+			logger.info(`Process for screen ${screen} already killed or doesn't exist`, 'PlayerService');
 		}
+
+		// Remove from streams map
+		this.streams.delete(screen);
+		
+		// Immediately release the slot 
+		this.activeScreenSlots.delete(screen);
+		
+		// Log active screens after stopping
+		this.logActiveSlots('After stopping stream');
+		
+		return {
+			screen,
+			message: `Stream stopped on screen ${screen}`,
+			success: true
+		};
 	}
 
-	// Helper method to clear retry timer
-	private clearRetryTimer(screen: number): void {
-		const timer = this.retryTimers.get(screen);
-		if (timer) {
-			clearTimeout(timer);
-			this.retryTimers.delete(screen);
+	/**
+	 * Handle process exit event
+	 * @param screen - The screen number
+	 * @param code - The exit code
+	 * @param signal - The signal that caused the exit
+	 */
+	private handleProcessExit(screen: number, code: number | null, signal: NodeJS.Signals | null): void {
+		logger.info(
+			`Process for screen ${screen} exited with code ${code !== null ? code : 'null'} and signal ${
+				signal !== null ? signal : 'null'
+			}`,
+			'PlayerService'
+		);
+
+		// Log active screens before cleanup
+		this.logActiveSlots('Before process exit cleanup');
+
+		// Check if manual close
+		const wasManuallyClosedBefore = this.manuallyClosedScreens.has(screen);
+		
+		// Get the stream instance before deleting it
+		const instance = this.streams.get(screen);
+		
+		// Always remove the stream from our tracking
+		this.streams.delete(screen);
+		
+		// Always release the slot when the process exits
+		if (this.activeScreenSlots.has(screen)) {
+			logger.info(`Releasing slot for screen ${screen} after process exit`, 'PlayerService');
+			this.activeScreenSlots.delete(screen);
 		}
+		
+		// Run an audit to verify our stream tracking state is consistent
+		this.auditActiveStreams();
+
+		// Log active screens after cleanup
+		this.logActiveSlots('After process exit cleanup');
+
+		// Emit stream stopped event
+		this.events.emit('streamStopped', {
+			screen,
+			code: code || undefined,
+			signal: signal || undefined,
+			wasManuallyClosedBefore,
+			hadOpenSocket: !!instance?.process
+		});
 	}
-
-	// Network connectivity test function
-	private async testConnection(): Promise<boolean> {
-		// List of URLs to test connectivity
-		const testUrls = [
-			'https://8.8.8.8', // Google DNS
-			'https://1.1.1.1', // Cloudflare DNS
-			'https://www.google.com',
-			'https://www.cloudflare.com',
-			'https://www.amazon.com'
-		];
-
-		// Try each URL until one succeeds or all fail
-		for (const url of testUrls) {
-			try {
-				await fetch(url, {
-					mode: 'no-cors', // Prevent CORS issues
-				});
-				logger.debug(`Connection successful via ${url}`, 'PlayerService');
-				return true; // Connection successful
-			} catch (error) {
-				logger.debug(
-					`Failed to connect to ${url}: ${error instanceof Error ? error.message : String(error)}`,
-					'PlayerService'
-				);
-				// Continue to the next URL
+	
+	/**
+	 * Audit active streams to ensure consistency between streams map and activeScreenSlots
+	 * This helps prevent "ghost" slots that block new streams
+	 */
+	private auditActiveStreams(): void {
+		logger.debug('Auditing active streams', 'PlayerService');
+		
+		// Check for orphaned active slots (slots with no corresponding stream in the map)
+		for (const screen of this.activeScreenSlots) {
+			if (!this.streams.has(screen)) {
+				logger.warn(`Found orphaned active slot for screen ${screen}, cleaning up`, 'PlayerService');
+				this.activeScreenSlots.delete(screen);
 			}
 		}
-
-		logger.warn('All connection test attempts failed', 'PlayerService');
-		return false; // All connection attempts failed
+		
+		// Check for streams that exist in the map but don't have an active slot
+		for (const [screen, instance] of this.streams.entries()) {
+			// Only check streams with a valid process
+			if (instance.process && !instance.process.killed) {
+				// Additional process validity check - make sure PID exists and is actually running
+				try {
+					if (instance.process.pid) {
+						process.kill(instance.process.pid, 0); // This just tests if process exists
+					} else {
+						// No PID means invalid process
+						throw new Error("No valid PID");
+					}
+					
+					if (!this.activeScreenSlots.has(screen)) {
+						logger.warn(`Found stream for screen ${screen} without an active slot, fixing`, 'PlayerService');
+						this.activeScreenSlots.add(screen);
+					}
+				} catch {
+					// Process doesn't exist or can't be signaled
+					logger.warn(`Stream process for screen ${screen} doesn't exist or can't be signaled, cleaning up`, 'PlayerService');
+					this.streams.delete(screen);
+					this.activeScreenSlots.delete(screen);
+				}
+			} else {
+				// The process is gone/killed but the stream entry still exists
+				logger.warn(`Found stream entry for screen ${screen} with invalid process, cleaning up`, 'PlayerService');
+				this.streams.delete(screen);
+				this.activeScreenSlots.delete(screen); // Also make sure we remove from active slots
+			}
+		}
+		
+		// Perform a final validity check on the active slots and explicitly log results
+		logger.info(`After audit: ${this.activeScreenSlots.size} active slots, ${this.streams.size} stream entries`, 'PlayerService');
+	}
+	
+	/**
+	 * Log the current state of active slots and streams for debugging
+	 */
+	private logActiveSlots(context: string): void {
+		const activeSlots = Array.from(this.activeScreenSlots);
+		const streamScreens = Array.from(this.streams.keys());
+		
+		logger.debug(
+			`${context}: Active slots (${activeSlots.length}): ${activeSlots.join(', ')}`,
+			'PlayerService'
+		);
+		logger.debug(
+			`${context}: Stream entries (${streamScreens.length}): ${streamScreens.join(', ')}`,
+			'PlayerService'
+		);
+		
+		// Log additional details for each stream entry to help diagnose issues
+		for (const [screen, stream] of this.streams.entries()) {
+			const processStatus = stream.process 
+				? `PID:${stream.process.pid || 'none'} killed:${stream.process.killed || false}`
+				: 'No process';
+			logger.debug(
+				`${context}: Stream ${screen} details: ${processStatus}, status:${stream.status}`,
+				'PlayerService'
+			);
+		}
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -918,104 +970,6 @@ export class PlayerService {
 		this.streamStartTimes.delete(screen);
 		// Don't clear retry count here to maintain retry state across restarts
 		// this.streamRetries.delete(screen);
-	}
-
-	/**
-	 * Stop a stream that is currently playing on a screen
-	 */
-	async stopStream(screen: number, force: boolean = false): Promise<boolean> {
-		logger.debug(`Stopping stream on screen ${screen}`, 'PlayerService');
-
-		const player = this.streams.get(screen);
-		if (!player || !player.process) {
-			logger.debug(`No player to stop on screen ${screen}`, 'PlayerService');
-			return true; // Nothing to stop, so consider it a success
-		}
-
-		// Check if this screen is already shutting down to prevent duplicate quit commands
-		if (this.shuttingDownScreens.has(screen)) {
-			logger.debug(`Screen ${screen} is already shutting down, skipping duplicate stop command`, 'PlayerService');
-			return true;
-		}
-
-		// Mark this screen as shutting down
-		this.shuttingDownScreens.add(screen);
-
-		// Try graceful shutdown via IPC first
-		let gracefulShutdown = false;
-		try {
-			await this.sendMpvCommand(screen, 'quit');
-
-			// Give it a moment to shutdown gracefully
-			await new Promise((resolve) => setTimeout(resolve, 500));
-
-			// Check if the process has exited
-			gracefulShutdown = !this.isProcessRunning(player.process.pid);
-			if (gracefulShutdown) {
-				logger.debug(`Graceful shutdown successful for screen ${screen}`, 'PlayerService');
-			} else {
-				logger.debug(
-					`Graceful shutdown failed for screen ${screen}, will try force kill`,
-					'PlayerService'
-				);
-			}
-		} catch (error) {
-			logger.debug(
-				`IPC command failed for screen ${screen}, will try force kill: ${error instanceof Error ? error.message : String(error)}`,
-				'PlayerService'
-			);
-		}
-
-		// If graceful shutdown failed or force is true, use the forceful method
-		if (!gracefulShutdown || force) {
-			try {
-				player.process.kill('SIGTERM');
-
-				// Give it a moment to respond to SIGTERM
-				await new Promise((resolve) => setTimeout(resolve, 300));
-
-				// Check if we need to force kill with SIGKILL
-				if (this.isProcessRunning(player.process.pid)) {
-					logger.debug(`SIGTERM didn't work for screen ${screen}, using SIGKILL`, 'PlayerService');
-					player.process.kill('SIGKILL');
-				}
-			} catch (error) {
-				logger.error(
-					`Error killing process for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
-					'PlayerService'
-				);
-			}
-		}
-
-		// Clean up regardless of kill success
-		this.cleanup_after_stop(screen);
-		
-		// Remove from shutting down set
-		this.shuttingDownScreens.delete(screen);
-
-		return true;
-	}
-
-	/**
-	 * Clean up resources after a stream is stopped
-	 */
-	private cleanup_after_stop(screen: number): void {
-		// Clean up the monitoring interval
-		const monitorInterval = this.healthCheckIntervals.get(screen);
-		if (monitorInterval) {
-			clearInterval(monitorInterval);
-			this.healthCheckIntervals.delete(screen);
-		}
-
-		// Clean up player state
-		this.streams.delete(screen);
-		this.streamRetries.delete(screen);
-		this.streamStartTimes.delete(screen);
-		this.streamRefreshTimers.delete(screen);
-		this.inactiveTimers.delete(screen);
-		this.ipcPaths.delete(screen);
-
-		logger.debug(`Cleaned up resources for screen ${screen}`, 'PlayerService');
 	}
 
 	/**
@@ -1270,6 +1224,7 @@ export class PlayerService {
 
 			this.ipcPaths.clear();
 			this.streams.clear();
+			this.activeScreenSlots.clear(); // Clear the active slots
 			this.manuallyClosedScreens.clear();
 			this.disabledScreens.clear();
 			this.shuttingDownScreens.clear();
