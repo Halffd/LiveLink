@@ -192,6 +192,17 @@ export class PlayerService {
 				};
 			}
 
+			// Check for maximum streams limit
+			const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
+			if (activeStreams.length >= this.config.player.maxStreams) {
+				logger.warn(`Maximum number of streams (${this.config.player.maxStreams}) reached, active: ${activeStreams.length}`, 'PlayerService');
+				return {
+					screen: options.screen,
+					success: false,
+					error: `Maximum number of streams (${this.config.player.maxStreams}) reached`
+				};
+			}
+
 			// Check if we're already starting a stream on this screen
 			if (this.startupLocks.get(options.screen)) {
 				logger.warn(`Stream startup already in progress for screen ${options.screen}`, 'PlayerService');
@@ -439,20 +450,34 @@ export class PlayerService {
 				clearTimeout(cleanupTimeout);
 				cleanupTimeout = null;
 			}
+			
+			// Clear monitoring and remove stream from map
 			this.clearMonitoring(screen);
 			this.streams.delete(screen);
 			this.streamRetries.delete(screen);
+			
+			// Log the number of active streams after cleanup
+			const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
+			logger.debug(`Cleaned up stream on screen ${screen}. Remaining active streams: ${activeStreams.length}/${this.config.player.maxStreams}`, 'PlayerService');
 		};
 
 		const handleStreamEnd = (error: string, code: number = 0) => {
 			if (!hasEndedStream) {
 				hasEndedStream = true;
-				logger.info(`Stream ended on screen ${screen}`, 'PlayerService');
+				const stream = this.streams.get(screen);
+				const url = stream?.url || '';
+				
+				logger.info(`Stream ended on screen ${screen}${url ? ` (${url})` : ''}`, 'PlayerService');
+				
+				// Call error callback with stream URL
 				this.errorCallback?.({
 					screen,
 					error,
-					code
+					code,
+					url,
+					moveToNext: true
 				});
+				
 				// Schedule cleanup after a short delay to ensure all events are processed
 				cleanupTimeout = setTimeout(cleanup, 1000);
 			}
@@ -521,10 +546,15 @@ export class PlayerService {
 		});
 
 		process.on('exit', (code: number | null) => {
-			logger.info(`Process exited on screen ${screen} with code ${code}`, 'PlayerService');
+			// Get the URL before any cleanup happens
+			const stream = this.streams.get(screen);
+			const url = stream?.url || '';
+			
+			logger.info(`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
+			
 			// Only handle process exit if we haven't already handled stream end
 			if (!hasEndedStream) {
-				handleStreamEnd('Process exited', code || 0);
+				handleStreamEnd(`Process exited with code ${code || 0}`, code || 0);
 			} else {
 				cleanup();
 			}
@@ -618,35 +648,27 @@ export class PlayerService {
 	}
 
 	private handleProcessExit(screen: number, code: number | null): void {
-		// Get stream options before removing the instance
+		// Get stream info before any cleanup happens
 		const stream = this.streams.get(screen);
+		const url = stream?.url || '';
 		
-		// Clean up resources first
+		// Log with URL for better tracking
+		logger.info(`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
+		
+		// Clean up resources
 		this.cleanup_after_stop(screen);
 		
 		// Clear monitoring
 		this.clearMonitoring(screen);
 
-		// Only emit stream error if we still have a stream instance
-		// This prevents double notifications when a stream is manually stopped
-		if (stream) {
-			logger.info(
-				`Process exited on screen ${screen} with code ${code}`,
-				'PlayerService'
-			);
-			this.errorCallback?.({
-				screen,
-				error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
-				code: code || 0,
-				url: stream.url,
-				moveToNext: true // Always signal to move to next stream
-			});
-		} else {
-			logger.warn(
-				`Process exited on screen ${screen} but no stream instance found`,
-				'PlayerService'
-			);
-		}
+		// Always emit stream error with URL if we have it
+		this.errorCallback?.({
+			screen,
+			error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
+			code: code || 0,
+			url,
+			moveToNext: true // Always signal to move to next stream
+		});
 	}
 
 	private clearMonitoring(screen: number): void {
@@ -757,6 +779,18 @@ export class PlayerService {
 		// Clean up regardless of kill success
 		this.cleanup_after_stop(screen);
 		
+		// Verify the stream was actually stopped and removed
+		const streamStillExists = this.streams.has(screen);
+		if (streamStillExists) {
+			logger.warn(`Stream for screen ${screen} still exists in the streams map after cleanup`, 'PlayerService');
+			// Force removal again to be sure
+			this.streams.delete(screen);
+		}
+		
+		// Log active streams count
+		const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
+		logger.info(`Stream stopped on screen ${screen}. Active streams: ${activeStreams.length}/${this.config.player.maxStreams}`, 'PlayerService');
+		
 		return true;
 	}
 	
@@ -866,6 +900,10 @@ export class PlayerService {
 					logger.debug(`Error killing processes for screen ${screen}: ${error}`, 'PlayerService');
 				}
 			}
+
+			// Log the number of active streams after cleanup
+			const remainingStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
+			logger.debug(`Cleanup complete for screen ${screen}. Remaining active streams: ${remainingStreams.length}/${this.config.player.maxStreams}`, 'PlayerService');
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			logger.error(`Error during cleanup for screen ${screen}: ${errorMsg}`, 'PlayerService');
@@ -1067,7 +1105,22 @@ export class PlayerService {
 	}
 
 	public onStreamError(callback: (data: StreamError) => void): void {
-		this.errorCallback = callback;
+		this.errorCallback = (data: StreamError) => {
+			// Log all stream errors with URL information for better tracking
+			if (data.url) {
+				logger.info(`Stream error on screen ${data.screen} with url ${data.url}: ${data.error} (code: ${data.code})`, 'PlayerService');
+			} else {
+				logger.warn(`Stream error on screen ${data.screen} without URL: ${data.error} (code: ${data.code})`, 'PlayerService');
+				
+				// Try to get URL from streams map if missing
+				const stream = this.streams.get(data.screen);
+				if (stream?.url) {
+					data.url = stream.url;
+					logger.info(`Added missing URL ${stream.url} to stream error for screen ${data.screen}`, 'PlayerService');
+				}
+			}
+			callback(data);
+		};
 	}
 
 	public onStreamEnd(callback: (data: StreamEnd) => void): void {
