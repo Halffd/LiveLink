@@ -14,11 +14,11 @@ interface LocalStreamInstance {
 	quality: string;
 	status: string;
 	volume: number;
-	process: ChildProcess;
+	process: ChildProcess | null;
 	platform: 'youtube' | 'twitch';
 	title?: string;
 	startTime?: number;
-	options: StreamOptions & { screen: number };
+	options?: StreamOptions & { screen: number };
 }
 
 interface LocalStreamEnd {
@@ -35,6 +35,7 @@ export class PlayerService {
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds for startup
 	private readonly SHUTDOWN_TIMEOUT = 2000; // 2 seconds for shutdown
+	private readonly MONITOR_INTERVAL = 60000; // 1 minute for system monitoring
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
 	// Track active screen slots separately from the streams map to guarantee accurate counts
@@ -52,6 +53,8 @@ export class PlayerService {
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private fifoPaths: Map<number, string> = new Map();
 	private shuttingDownScreens: Set<number> = new Set(); // Track screens being shut down
+	private lastAVOutputTimes: Map<number, number> = new Map();
+	private readonly AV_OUTPUT_TIMEOUT = 10000; // 10 seconds without AV output is considered inactive
 
 	private readonly config: Config;
 	private readonly mpvPath: string;
@@ -73,6 +76,9 @@ export class PlayerService {
 
 		// Start health checks
 		this.startHealthChecks();
+		
+		// Start system monitoring
+		this.startSystemMonitoring();
 	}
 
 	private startHealthChecks(): void {
@@ -828,6 +834,20 @@ export class PlayerService {
 		// Log active screens before cleanup
 		this.logActiveSlots('Before process exit cleanup');
 
+		// Check if there was recent AV output from this screen
+		const lastAVTime = this.lastAVOutputTimes.get(screen);
+		const now = Date.now();
+		if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+			logger.warn(
+				`Process for screen ${screen} exited but recent AV output detected (${now - lastAVTime}ms ago). May be a process tracking issue.`,
+				'PlayerService'
+			);
+			
+			// Don't remove the stream tracking in this case, as the stream might still be alive
+			// Just log the issue and leave the slot active
+			return;
+		}
+
 		// Check if manual close
 		const wasManuallyClosedBefore = this.manuallyClosedScreens.has(screen);
 		
@@ -866,9 +886,46 @@ export class PlayerService {
 	private auditActiveStreams(): void {
 		logger.debug('Auditing active streams', 'PlayerService');
 		
+		const now = Date.now();
+		
 		// Check for orphaned active slots (slots with no corresponding stream in the map)
 		for (const screen of this.activeScreenSlots) {
 			if (!this.streams.has(screen)) {
+				// Before cleaning up, check if we've seen recent AV output
+				const lastAVTime = this.lastAVOutputTimes.get(screen);
+				if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+					logger.warn(
+						`Found orphaned active slot for screen ${screen} but recent AV output detected (${now - lastAVTime}ms ago). Not cleaning up.`,
+						'PlayerService'
+					);
+					
+					// Attempt to rebuild stream entry with minimal info
+					if (!this.streams.has(screen)) {
+						logger.info(
+							`Rebuilding stream entry for screen ${screen} based on recent activity`,
+							'PlayerService'
+						);
+						this.streams.set(screen, {
+							id: Date.now(),
+							screen,
+							url: 'recovered-stream', // Placeholder URL
+							quality: 'best',
+							status: 'playing',
+							volume: 50, // Default volume
+							platform: 'youtube', // Placeholder platform
+							process: null, // We don't have access to the process object
+							options: {
+								screen,
+								url: 'recovered-stream',
+								quality: 'best',
+								volume: 50
+							}
+						});
+					}
+					
+					continue;
+				}
+				
 				logger.warn(`Found orphaned active slot for screen ${screen}, cleaning up`, 'PlayerService');
 				this.activeScreenSlots.delete(screen);
 			}
@@ -893,15 +950,70 @@ export class PlayerService {
 					}
 				} catch {
 					// Process doesn't exist or can't be signaled
-					logger.warn(`Stream process for screen ${screen} doesn't exist or can't be signaled, cleaning up`, 'PlayerService');
+					// But check for recent AV output before cleaning up
+					const lastAVTime = this.lastAVOutputTimes.get(screen);
+					if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+						logger.warn(
+							`Stream process for screen ${screen} doesn't exist or can't be signaled, but recent AV output detected. Keeping tracking.`,
+							'PlayerService'
+						);
+						
+						// Update the process field to null since we can't access it
+						instance.process = null;
+						
+						// Make sure the screen has an active slot
+						if (!this.activeScreenSlots.has(screen)) {
+							this.activeScreenSlots.add(screen);
+						}
+					} else {
+						// No recent output and invalid process, clean up
+						logger.warn(`Stream process for screen ${screen} doesn't exist or can't be signaled, cleaning up`, 'PlayerService');
+						this.streams.delete(screen);
+						this.activeScreenSlots.delete(screen);
+					}
+				}
+			} else if (instance.process === null) {
+				// Special case: process is null but we may have recent AV output
+				const lastAVTime = this.lastAVOutputTimes.get(screen);
+				if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+					logger.info(
+						`Stream for screen ${screen} has null process but recent AV output, maintaining tracking`,
+						'PlayerService'
+					);
+					
+					// Make sure the screen has an active slot
+					if (!this.activeScreenSlots.has(screen)) {
+						this.activeScreenSlots.add(screen);
+					}
+				} else {
+					// No process and no recent output, clean up
+					logger.warn(`Found stream entry for screen ${screen} with null process and no recent activity, cleaning up`, 'PlayerService');
 					this.streams.delete(screen);
-					this.activeScreenSlots.delete(screen);
+					this.activeScreenSlots.delete(screen); 
 				}
 			} else {
 				// The process is gone/killed but the stream entry still exists
-				logger.warn(`Found stream entry for screen ${screen} with invalid process, cleaning up`, 'PlayerService');
-				this.streams.delete(screen);
-				this.activeScreenSlots.delete(screen); // Also make sure we remove from active slots
+				// Check for recent AV output before cleaning up
+				const lastAVTime = this.lastAVOutputTimes.get(screen);
+				if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+					logger.warn(
+						`Stream process for screen ${screen} is killed, but recent AV output detected. Keeping tracking.`,
+						'PlayerService'
+					);
+					
+					// Update the process field to null since it's killed
+					instance.process = null;
+					
+					// Make sure the screen has an active slot
+					if (!this.activeScreenSlots.has(screen)) {
+						this.activeScreenSlots.add(screen);
+					}
+				} else {
+					// No recent output and killed process, clean up
+					logger.warn(`Found stream entry for screen ${screen} with invalid process, cleaning up`, 'PlayerService');
+					this.streams.delete(screen);
+					this.activeScreenSlots.delete(screen);
+				}
 			}
 		}
 		
@@ -1283,14 +1395,97 @@ export class PlayerService {
 		}
 	}
 
-	public disableScreen(screen: number): void {
+	public async disableScreen(screen: number): Promise<void> {
 		logger.debug(`PlayerService: Disabling screen ${screen}`, 'PlayerService');
 		this.disabledScreens.add(screen);
 
-		// Stop any running stream for this screen
-		this.stopStream(screen, true).catch((error) => {
-			logger.error(`Failed to stop stream when disabling screen ${screen}`, 'PlayerService', error);
-		});
+		// Stop any running stream for this screen with retries
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				// Try to stop the stream gracefully first
+				const result = await this.stopStream(screen, true);
+				if (result.success) {
+					logger.info(`Successfully stopped stream on screen ${screen} (attempt ${attempt + 1})`, 'PlayerService');
+					break;
+				}
+			} catch (error) {
+				logger.error(
+					`Error stopping stream on screen ${screen} (attempt ${attempt + 1})`, 
+					'PlayerService', 
+					error instanceof Error ? error.message : String(error)
+				);
+			}
+
+			// If we've reached the last attempt, try to kill the process forcefully
+			if (attempt === 2) {
+				logger.warn(`Failed to stop stream on screen ${screen} after 3 attempts, forcing kill`, 'PlayerService');
+				this.forceKillStream(screen);
+			} else {
+				// Wait a bit before retrying
+				await new Promise(resolve => setTimeout(resolve, 500));
+			}
+		}
+
+		// Final verification that the screen is actually inactive
+		const instance = this.streams.get(screen);
+		if (instance || this.activeScreenSlots.has(screen)) {
+			logger.warn(`Stream on screen ${screen} still active after stopping attempts, forcing cleanup`, 'PlayerService');
+			this.forceKillStream(screen);
+		}
+		
+		// Make sure nothing can restart on this screen
+		logger.info(`Screen ${screen} successfully disabled`, 'PlayerService');
+	}
+
+	/**
+	 * Force kill a stream process and cleanup all related resources
+	 */
+	private forceKillStream(screen: number): void {
+		logger.warn(`Force killing stream on screen ${screen}`, 'PlayerService');
+		
+		// Get the stream instance
+		const instance = this.streams.get(screen);
+		
+		// Try to kill the process if it exists
+		if (instance?.process && instance.process.pid) {
+			try {
+				// Use SIGKILL for force termination
+				process.kill(instance.process.pid, 'SIGKILL');
+				logger.info(`Sent SIGKILL to process for screen ${screen}`, 'PlayerService');
+			} catch (error) {
+				logger.error(
+					`Failed to kill process for screen ${screen}`, 
+					'PlayerService', 
+					error instanceof Error ? error.message : String(error)
+				);
+			}
+		}
+		
+		// Forcefully clean up all resources
+		this.streams.delete(screen);
+		this.activeScreenSlots.delete(screen);
+		
+		// Clear all timers and resources
+		this.clearMonitoring(screen);
+		
+		// Clean up FIFO/IPC 
+		const fifoPath = this.fifoPaths.get(screen);
+		if (fifoPath) {
+			try { 
+				fs.unlinkSync(fifoPath); 
+			} catch {
+				// Ignore error, just log it
+				logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'PlayerService');
+			}
+			this.fifoPaths.delete(screen);
+		}
+		
+		this.ipcPaths.delete(screen);
+		this.lastAVOutputTimes.delete(screen);
+		
+		// Verify cleanup was successful
+		logger.info(`Forced cleanup completed for screen ${screen}`, 'PlayerService');
+		this.logActiveSlots('After force cleanup');
 	}
 
 	public enableScreen(screen: number): void {
@@ -1476,5 +1671,230 @@ export class PlayerService {
 	private handleProcessError(screen: number, error: unknown): void {
 		const errorMessage = error instanceof Error ? error.message : String(error);
 		this.handleError(screen, errorMessage);
+	}
+
+	public recordAVOutput(screen: number): void {
+		this.lastAVOutputTimes.set(screen, Date.now());
+	}
+
+	/**
+	 * Starts a system-wide monitoring process to ensure stream limits are respected
+	 * and to detect/fix inconsistencies in stream tracking
+	 */
+	private startSystemMonitoring(): void {
+		logger.info('Starting system monitoring', 'PlayerService');
+		
+		// Run monitoring every minute
+		setInterval(() => {
+			if (this.isShuttingDown) return;
+			
+			try {
+				this.performSystemCheck();
+			} catch (error) {
+				logger.error(
+					'Error during system monitoring', 
+					'PlayerService',
+					error instanceof Error ? error.message : String(error)
+				);
+			}
+		}, this.MONITOR_INTERVAL);
+	}
+	
+	/**
+	 * Performs a comprehensive system check to maintain system integrity
+	 */
+	private performSystemCheck(): void {
+		// Run an audit first to ensure our tracking is consistent
+		this.auditActiveStreams();
+		
+		// Check if we're exceeding the max streams limit
+		const activeStreamCount = this.getActiveStreamCount();
+		const maxStreams = this.config.player.maxStreams;
+		
+		if (activeStreamCount > maxStreams) {
+			logger.error(
+				`Stream limit exceeded: ${activeStreamCount} active streams, max allowed is ${maxStreams}. Enforcing limit.`,
+				'PlayerService'
+			);
+			this.enforceStreamLimit();
+		}
+		
+		// Check for duplicate processes on the same screen
+		this.checkForDuplicateStreams();
+		
+		// Check for disabled screens that are still active
+		this.checkDisabledScreens();
+		
+		// Verify each stream has a valid process
+		this.verifyStreamProcesses();
+		
+		// Log current state
+		logger.debug(
+			`System monitoring: ${activeStreamCount}/${maxStreams} streams active, ${this.disabledScreens.size} disabled screens`,
+			'PlayerService'
+		);
+	}
+	
+	/**
+	 * Verify all tracked streams have valid processes, handle any that don't
+	 */
+	private verifyStreamProcesses(): void {
+		for (const [screen, stream] of this.streams.entries()) {
+			// Skip if we've already determined this is a disabled screen
+			if (this.disabledScreens.has(screen)) {
+				continue;
+			}
+			
+			// Check if the process is valid
+			const processValid = stream.process && 
+				stream.process.pid && 
+				this.isProcessRunning(stream.process.pid);
+				
+			if (!processValid) {
+				// Process is invalid, but check if we have recent AV output before cleaning up
+				const lastAVTime = this.lastAVOutputTimes.get(screen);
+				const now = Date.now();
+				
+				if (lastAVTime && now - lastAVTime < this.AV_OUTPUT_TIMEOUT) {
+					logger.warn(
+						`Stream on screen ${screen} has invalid process but recent AV output, monitoring`,
+						'PlayerService'
+					);
+					continue;
+				}
+				
+				logger.warn(
+					`Stream on screen ${screen} has invalid process, cleaning up`,
+					'PlayerService'
+				);
+				this.forceKillStream(screen);
+			}
+		}
+	}
+	
+	/**
+	 * Check for screens that should be disabled but have active streams
+	 */
+	private checkDisabledScreens(): void {
+		for (const screen of this.disabledScreens) {
+			// Check if a stream is still active on this screen
+			if (this.streams.has(screen) || this.activeScreenSlots.has(screen)) {
+				logger.warn(
+					`Found active stream on disabled screen ${screen}, forcing cleanup`,
+					'PlayerService'
+				);
+				this.forceKillStream(screen);
+			}
+		}
+	}
+	
+	/**
+	 * Check for duplicate streams on the same screen
+	 */
+	private checkForDuplicateStreams(): void {
+		// Use process monitoring to detect multiple processes for the same screen
+		const screenProcesses = new Map<number, string[]>();
+		
+		// Execute ps command to get all mpv processes
+		try {
+			const psOutput = execSync('ps aux | grep mpv | grep -v grep').toString();
+			const lines = psOutput.split('\n');
+			
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				
+				// Extract screen number from arguments
+				const screenMatch = line.match(/screen=(\d+)/i) || line.match(/screen (\d+)/i);
+				const pidMatch = line.match(/^\S+\s+(\d+)/);
+				
+				if (screenMatch && pidMatch) {
+					const screenNum = parseInt(screenMatch[1], 10);
+					const pid = pidMatch[1];
+					
+					if (!screenProcesses.has(screenNum)) {
+						screenProcesses.set(screenNum, []);
+					}
+					
+					screenProcesses.get(screenNum)?.push(pid);
+				}
+			}
+			
+			// Check for screens with multiple processes
+			for (const [screen, pids] of screenProcesses.entries()) {
+				if (pids.length > 1) {
+					logger.warn(
+						`Found ${pids.length} processes for screen ${screen}, killing extras: ${pids.slice(1).join(', ')}`,
+						'PlayerService'
+					);
+					
+					// Keep the first process, kill any extras
+					for (let i = 1; i < pids.length; i++) {
+						try {
+							process.kill(parseInt(pids[i], 10), 'SIGKILL');
+							logger.info(`Killed extra process ${pids[i]} for screen ${screen}`, 'PlayerService');
+						} catch (error) {
+							logger.error(
+								`Failed to kill extra process ${pids[i]} for screen ${screen}`,
+								'PlayerService',
+								error instanceof Error ? error.message : String(error)
+							);
+						}
+					}
+					
+					// Force cleanup and reset the tracking for this screen
+					this.forceKillStream(screen);
+				}
+			}
+		} catch (error) {
+			// If ps command fails, just log and continue
+			if (!String(error).includes('no matching processes found')) {
+				logger.debug(
+					`Error checking for duplicate processes`,
+					'PlayerService'
+				);
+			}
+		}
+	}
+	
+	/**
+	 * Enforce the maximum stream limit by stopping excess streams
+	 */
+	private enforceStreamLimit(): void {
+		const maxStreams = this.config.player.maxStreams;
+		const activeScreens = Array.from(this.activeScreenSlots);
+		
+		if (activeScreens.length <= maxStreams) {
+			return;
+		}
+		
+		// Sort screens so we keep lower-numbered screens (higher priority)
+		activeScreens.sort((a, b) => a - b);
+		
+		// Determine which screens to stop (higher screen numbers = lower priority)
+		const screensToStop = activeScreens.slice(maxStreams);
+		
+		logger.warn(
+			`Enforcing stream limit, stopping ${screensToStop.length} excess streams: ${screensToStop.join(', ')}`,
+			'PlayerService'
+		);
+		
+		// Stop each excess stream
+		for (const screen of screensToStop) {
+			logger.info(`Stopping excess stream on screen ${screen}`, 'PlayerService');
+			this.forceKillStream(screen);
+		}
+		
+		// Final audit to verify we're within limits
+		this.auditActiveStreams();
+		const finalCount = this.getActiveStreamCount();
+		
+		if (finalCount > maxStreams) {
+			logger.error(
+				`Still exceeding stream limit after enforcement: ${finalCount}/${maxStreams}`,
+				'PlayerService'
+			);
+		} else {
+			logger.info(`Stream limit enforced, now at ${finalCount}/${maxStreams} streams`, 'PlayerService');
+		}
 	}
 }

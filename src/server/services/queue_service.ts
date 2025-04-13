@@ -167,6 +167,26 @@ class QueueService extends EventEmitter {
       return false;
     });
   }
+
+  // Add method to synchronize queue with active streams
+  public synchronizeWithActiveStreams(screen: number, activeStreams: any[]): void {
+    // If screen has an active stream, make sure it's not in the queue
+    const activeStream = activeStreams.find(s => s.screen === screen);
+    if (activeStream) {
+      const queue = this.getQueue(screen);
+      // Remove any queued streams that match the active stream URL
+      const filteredQueue = queue.filter(item => item.url !== activeStream.url);
+      
+      // Only update if there was a change
+      if (filteredQueue.length !== queue.length) {
+        logger.warn(
+          `Found active stream ${activeStream.url} in queue for screen ${screen}, removing it to avoid inconsistency`,
+          'QueueService'
+        );
+        this.setQueue(screen, filteredQueue);
+      }
+    }
+  }
 }
 
 // Create and export singleton instance

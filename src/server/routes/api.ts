@@ -170,11 +170,49 @@ router.post('/api/screens/:screen/disable', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    await streamManager.disableScreen(screen);
-    ctx.body = { success: true };
+    
+    logger.info(`API request to disable screen ${screen}`, 'API');
+    
+    // Add a timeout to ensure the disable operation doesn't hang
+    const disablePromise = streamManager.disableScreen(screen);
+    const timeoutPromise = new Promise<void>((_, reject) => {
+      setTimeout(() => reject(new Error(`Disable operation timed out for screen ${screen}`)), 10000);
+    });
+    
+    await Promise.race([disablePromise, timeoutPromise]);
+    
+    // Double check that the screen is actually disabled
+    const screenConfig = streamManager.getScreenConfig(screen);
+    if (screenConfig && screenConfig.enabled) {
+      logger.warn(`Screen ${screen} not properly disabled, forcing disabled state`, 'API');
+      streamManager.updateScreenConfig(screen, { enabled: false });
+      await streamManager.saveConfig();
+    }
+    
+    // Check for any active streams on this screen
+    const activeStreams = streamManager.getActiveStreams();
+    const isActive = activeStreams.some(s => s.screen === screen);
+    
+    if (isActive) {
+      logger.warn(`Screen ${screen} still has active streams after disable, forcing stop`, 'API');
+      await streamManager.stopStream(screen, true);
+    }
+    
+    ctx.body = { 
+      success: true,
+      message: `Screen ${screen} has been disabled` 
+    };
   } catch (error) {
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    logger.error(
+      `Failed to disable screen ${ctx.params.screen}`, 
+      'API', 
+      error instanceof Error ? error : new Error(String(error))
+    );
+    ctx.body = { 
+      error: `Failed to disable screen: ${error instanceof Error ? error.message : String(error)}`,
+      success: false
+    };
   }
 });
 
