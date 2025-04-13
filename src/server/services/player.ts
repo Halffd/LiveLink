@@ -1079,6 +1079,7 @@ export class PlayerService {
 			// IPC and config
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${this.SCRIPTS_PATH}`,
+			`--profile=streamlink`,
 			`--log-file=${logFile}`,
 
 			// Title
@@ -1091,20 +1092,7 @@ export class PlayerService {
 		// Streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
-			'best', // Quality selection
-			...(url.includes('youtube.com')
-				? [
-						'--stream-segment-threads=2', // Reduced from 3 to 2
-						'--stream-timeout=60',
-						'--hls-segment-threads=2', // Reduced from 3 to 2
-						'--ringbuffer-size=32M', // Limit ring buffer size
-						'--hls-segment-stream-data', // Stream segments directly
-						'--hls-live-edge=2', // Reduce live edge buffer
-						'--stream-segment-attempts=3', // Limit segment retry attempts
-						'--player-no-close', // Don't close player on stream end
-						'--hls-playlist-reload-time=2' // Faster playlist reload
-					]
-				: []),
+			'best', 
 			'--player',
 			this.mpvPath,
 			'--player-args',
