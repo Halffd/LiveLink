@@ -1,9 +1,11 @@
-// Global test setup
-import { jest } from '@jest/globals';
+// Global test setup for Jest
+/* global jest, beforeEach, afterEach */
 
-jest.setTimeout(10000); // Longer timeout for async tests
+// Set longer timeout for async tests
+jest.setTimeout(10000);
 
-// Mock console methods to reduce noise during tests
+// Create mock functions for console to reduce noise
+const originalConsole = { ...console };
 global.console = {
   ...console,
   // Keep error logging but suppress other logs during tests
@@ -12,7 +14,7 @@ global.console = {
   debug: jest.fn(),
   warn: jest.fn(),
   // Keep error for debugging test failures
-  error: console.error,
+  error: originalConsole.error,
 };
 
 // Helper to reset all mocks between tests

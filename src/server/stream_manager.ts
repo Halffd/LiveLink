@@ -1086,7 +1086,13 @@ export class StreamManager extends EventEmitter {
   }
 
   async cleanup() {
+    if (this.isShuttingDown) {
+      logger.debug('Stream manager already shutting down, skipping duplicate cleanup', 'StreamManager');
+      return;
+    }
+    
     this.isShuttingDown = true;
+    logger.info('Starting stream manager cleanup...', 'StreamManager');
     
     try {
       // Stop all keyboard listeners
@@ -1095,19 +1101,25 @@ export class StreamManager extends EventEmitter {
       // Get all active screens
       const activeScreens = Array.from(this.streams.keys());
       
-      // Stop all streams
-      const stopPromises = activeScreens.map(screen => 
-        this.stopStream(screen, true).catch(error => {
+      // Mark the streams as being shut down by the system rather than manually
+      this.manuallyClosedScreens.clear();
+      
+      logger.info(`Stopping ${activeScreens.length} active streams...`, 'StreamManager');
+      
+      // Stop all streams with a short delay between them to avoid IPC race conditions
+      for (const screen of activeScreens) {
+        try {
+          await this.stopStream(screen, true);
+          // Small delay between stream stops to prevent IPC conflicts
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
           logger.error(
             `Failed to stop stream on screen ${screen} during cleanup`,
             'StreamManager',
             error instanceof Error ? error : new Error(String(error))
           );
-        })
-      );
-
-      // Wait for all streams to stop
-      await Promise.all(stopPromises);
+        }
+      }
 
       // Clear all timers
       for (const screen of this.streamRefreshTimers.keys()) {
@@ -1124,7 +1136,9 @@ export class StreamManager extends EventEmitter {
       // Remove all FIFO files
       for (const [, fifoPath] of this.fifoPaths) {
         try {
-          fs.unlinkSync(fifoPath);
+          if (fs.existsSync(fifoPath)) {
+            fs.unlinkSync(fifoPath);
+          }
         } catch {
           // Ignore errors, file might not exist
           logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'StreamManager');
@@ -1135,6 +1149,10 @@ export class StreamManager extends EventEmitter {
 
       // Clear all event listeners
       this.removeAllListeners();
+      
+      // Finally, call the PlayerService cleanup to handle any remaining processes
+      logger.info('Finalizing cleanup through PlayerService...', 'StreamManager');
+      await this.playerService.cleanup();
       
       logger.info('Stream manager cleanup complete', 'StreamManager');
     } catch (error) {

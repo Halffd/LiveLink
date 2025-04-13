@@ -171,8 +171,8 @@ interface ApiResponse<T> {
   "player": {
     "preferStreamlink": false,
     "defaultQuality": "best",
-    "defaultVolume": 50,
-    "maxStreams": 4,
+    "defaultVolume": 0,
+    "maxStreams": 2,
     "screens": []
   }
 }

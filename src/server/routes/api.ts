@@ -436,14 +436,20 @@ router.post('/api/server/stop', async (ctx: Context) => {
     setTimeout(async () => {
       try {
         logger.info('Starting server cleanup...', 'API');
+        // Only call streamManager.cleanup(), which will handle all the 
+        // stream stopping and cleanup logic in a coordinated way
         await streamManager.cleanup();
+        
+        // Brief delay to allow cleanup to complete
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
         logger.info('Server cleanup complete, exiting...', 'API');
         process.exit(0);
       } catch (error) {
         logger.error('Failed to cleanup server', 'API', error instanceof Error ? error : new Error(String(error)));
         process.exit(1);
       }
-    }, 1000);
+    }, 500); // Reduced delay for faster response
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -468,35 +474,22 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
     // Perform cleanup after response is sent
     setTimeout(async () => {
       try {
-        logger.info('Stopping all player processes...', 'API');
+        logger.info('Starting cleanup for all players and server...', 'API');
         
-        // Get all active streams and stop them
-        const activeStreams = streamManager.getActiveStreams();
-        if (activeStreams.length > 0) {
-          logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
-          
-          const stopPromises = activeStreams.map(stream => {
-            logger.info(`Stopping player on screen ${stream.screen}`, 'API');
-            return streamManager.stopStream(stream.screen, true);
-          });
-          
-          // Wait for all streams to be stopped
-          await Promise.allSettled(stopPromises);
-          logger.info('All player processes stopped', 'API');
-        } else {
-          logger.info('No active streams to stop', 'API');
-        }
-        
-        // Then perform server cleanup
-        logger.info('Starting server cleanup...', 'API');
+        // Use the streamManager.cleanup() method which will handle everything
+        // This prevents duplicate quit commands and ensures proper cleanup order
         await streamManager.cleanup();
-        logger.info('Server cleanup complete, exiting...', 'API');
+        
+        // Brief delay to allow cleanup to complete before exit
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        logger.info('All cleanup complete, exiting...', 'API');
         process.exit(0);
       } catch (error) {
         logger.error('Failed during stop-all sequence', 'API', error instanceof Error ? error : new Error(String(error)));
         process.exit(1);
       }
-    }, 1000);
+    }, 500); // Reduced delay for faster response
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };

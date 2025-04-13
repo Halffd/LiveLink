@@ -33,7 +33,7 @@ export class PlayerService {
 	private readonly RETRY_INTERVAL = 500;
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds for startup
+	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
 	private readonly SHUTDOWN_TIMEOUT = 2000; // 2 seconds for shutdown
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
@@ -43,10 +43,13 @@ export class PlayerService {
 	private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
 	private healthCheckIntervals: Map<number, NodeJS.Timeout> = new Map();
 	private startupLocks: Map<number, boolean> = new Map();
+	private globalStartupLock = false;
 	private manuallyClosedScreens: Set<number> = new Set();
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
+	private fifoPaths: Map<number, string> = new Map();
+	private shuttingDownScreens: Set<number> = new Set(); // Track screens being shut down
 
 	private readonly config: Config;
 	private readonly mpvPath: string;
@@ -173,6 +176,15 @@ export class PlayerService {
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen } = options;
 
+		// Check global startup lock
+		if (this.globalStartupLock) {
+			return {
+				screen,
+				message: `Stream startup in progress`,
+				success: false
+			};
+		}
+
 		// Check maximum streams limit
 		const activeStreams = Array.from(this.streams.values()).filter((s) => s.process !== null);
 		if (activeStreams.length >= this.config.player.maxStreams) {
@@ -193,9 +205,11 @@ export class PlayerService {
 			};
 		}
 
-		// Set startup lock with timeout
+		// Set global and screen startup locks
+		this.globalStartupLock = true;
 		this.startupLocks.set(screen, true);
 		const lockTimeout = setTimeout(() => {
+			this.globalStartupLock = false;
 			this.startupLocks.set(screen, false);
 		}, this.STARTUP_TIMEOUT);
 
@@ -291,6 +305,7 @@ export class PlayerService {
 			};
 		} finally {
 			clearTimeout(lockTimeout);
+			this.globalStartupLock = false;
 			this.startupLocks.set(screen, false);
 		}
 	}
@@ -429,6 +444,19 @@ export class PlayerService {
 			this.clearMonitoring(screen);
 			this.streams.delete(screen);
 			this.streamRetries.delete(screen);
+			
+			// Clean up FIFO/IPC immediately instead of with delay
+			const fifoPath = this.fifoPaths.get(screen);
+			if (fifoPath) {
+				try { 
+					fs.unlinkSync(fifoPath); 
+				} catch {
+					// Ignore error, file may not exist
+					logger.debug(`Failed to remove FIFO file ${fifoPath}`, 'PlayerService');
+				}
+				this.fifoPaths.delete(screen);
+			}
+			this.ipcPaths.delete(screen);
 		};
 
 		const handleStreamEnd = (error: string | Error, code: number = 0) => {
@@ -440,8 +468,8 @@ export class PlayerService {
 					error: error instanceof Error ? error.message : error,
 					code
 				});
-				// Schedule cleanup after a short delay to ensure all events are processed
-				cleanupTimeout = setTimeout(cleanup, 1000);
+				// Reduce cleanup delay to minimize overlap
+				cleanupTimeout = setTimeout(cleanup, 100);
 			}
 		};
 
@@ -904,6 +932,15 @@ export class PlayerService {
 			return true; // Nothing to stop, so consider it a success
 		}
 
+		// Check if this screen is already shutting down to prevent duplicate quit commands
+		if (this.shuttingDownScreens.has(screen)) {
+			logger.debug(`Screen ${screen} is already shutting down, skipping duplicate stop command`, 'PlayerService');
+			return true;
+		}
+
+		// Mark this screen as shutting down
+		this.shuttingDownScreens.add(screen);
+
 		// Try graceful shutdown via IPC first
 		let gracefulShutdown = false;
 		try {
@@ -952,6 +989,9 @@ export class PlayerService {
 
 		// Clean up regardless of kill success
 		this.cleanup_after_stop(screen);
+		
+		// Remove from shutting down set
+		this.shuttingDownScreens.delete(screen);
 
 		return true;
 	}
@@ -1232,6 +1272,7 @@ export class PlayerService {
 			this.streams.clear();
 			this.manuallyClosedScreens.clear();
 			this.disabledScreens.clear();
+			this.shuttingDownScreens.clear();
 
 			logger.info('Player service cleanup complete', 'PlayerService');
 		} catch (error) {
@@ -1368,6 +1409,12 @@ export class PlayerService {
 			const errorMessage = `No IPC socket for screen ${screen}`;
 			logger.error(errorMessage, 'PlayerService');
 			throw new Error(errorMessage);
+		}
+
+		// Special handling for quit command
+		if (command === 'quit' && this.isShuttingDown) {
+			logger.debug(`Skipping quit command for screen ${screen} during application shutdown`, 'PlayerService');
+			return;
 		}
 
 		return new Promise((resolve, reject) => {

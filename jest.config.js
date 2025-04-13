@@ -1,16 +1,20 @@
 /** @type {import('ts-jest').JestConfigWithTsJest} */
-export default {
-  preset: 'ts-jest',
+module.exports = {
   testEnvironment: 'node',
+  preset: 'ts-jest',
   roots: ['<rootDir>/src'],
   testMatch: ['**/__tests__/**/*.ts?(x)', '**/?(*.)+(spec|test).ts?(x)'],
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
-      tsconfig: 'tsconfig.test.json',
-    }]
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      {
+        tsconfig: 'tsconfig.test.json'
+      },
+    ],
   },
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/src/$1'
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^([.]{1,2}/.*)\\.js$': '$1'
   },
   collectCoverage: true,
   coverageDirectory: 'coverage',
@@ -19,10 +23,9 @@ export default {
     '!src/**/*.d.ts',
     '!src/types/**',
     '!src/config/**',
-    '!**/node_modules/**'
+    '!src/**/__tests__/**'
   ],
   coverageReporters: ['text', 'lcov', 'clover', 'html'],
-  setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-  testTimeout: 10000, // Increased timeout for async tests
+  setupFilesAfterEnv: ['./jest.setup.js'],
   verbose: true
 };

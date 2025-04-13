@@ -132,18 +132,23 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Call handleStreamEnd multiple times concurrently for the same screen
+    // Use type assertion to access private method for testing
+    // We need to use 'as any' to access private methods for testing purposes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manager = streamManager as any;
+    
     await executeStaggered([
       () => {
         executionTracker.record('handleStreamEnd:call1');
-        return streamManager.handleStreamEnd(1);
+        return manager.handleStreamEnd(1);
       },
       () => {
         executionTracker.record('handleStreamEnd:call2');
-        return streamManager.handleStreamEnd(1);
+        return manager.handleStreamEnd(1);
       },
       () => {
         executionTracker.record('handleStreamEnd:call3');
-        return streamManager.handleStreamEnd(1);
+        return manager.handleStreamEnd(1);
       }
     ], 10);
     
@@ -209,9 +214,11 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Process streams for both screens concurrently
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manager = streamManager as any;
     await Promise.all([
-      streamManager.handleStreamEnd(1),
-      streamManager.handleStreamEnd(2)
+      manager.handleStreamEnd(1),
+      manager.handleStreamEnd(2)
     ]);
     
     // Verify that startStream was called only for screen 2
@@ -305,13 +312,15 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Start processing stream for screen 1 (will take longer)
-    const screen1Promise = streamManager.handleStreamEnd(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manager = streamManager as any;
+    const screen1Promise = manager.handleStreamEnd(1);
     
     // Wait a bit to ensure screen 1 processing has started
     await delay(20);
     
     // Start processing stream for screen 2 (will complete faster)
-    const screen2Promise = streamManager.handleStreamEnd(2);
+    const screen2Promise = manager.handleStreamEnd(2);
     
     // Wait for both to complete
     await Promise.all([screen1Promise, screen2Promise]);
@@ -356,11 +365,13 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Process both screens concurrently
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const manager = streamManager as any;
     await Promise.all([
-      streamManager.handleStreamEnd(1).catch(() => {
+      manager.handleStreamEnd(1).catch(() => {
         executionTracker.record('screen1:error');
       }),
-      streamManager.handleStreamEnd(2)
+      manager.handleStreamEnd(2)
     ]);
     
     // Verify that startStream was called for both screens
