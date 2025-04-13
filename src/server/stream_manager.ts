@@ -344,6 +344,12 @@ export class StreamManager extends EventEmitter {
       return;
     }
 
+    // Check if the screen is manually closed
+    if (this.manuallyClosedScreens.has(screen)) {
+      logger.info(`Screen ${screen} was manually closed, not starting new streams`, 'StreamManager');
+      return;
+    }
+
     // Mark queue as being processed
     this.queueProcessing.add(screen);
 
@@ -1020,17 +1026,47 @@ export class StreamManager extends EventEmitter {
    * Restarts streams on specified screen or all screens
    */
   public async restartStreams(screen?: number): Promise<void> {
-    if (screen) {
-      // Restart specific screen
-      await this.stopStream(screen, false);
-      await this.handleQueueEmpty(screen);
-    } else {
-      // Restart all screens
-      const activeScreens = Array.from(this.streams.keys());
-      for (const screenId of activeScreens) {
-        await this.stopStream(screenId, false);
-        await this.handleQueueEmpty(screenId);
+    try {
+      if (screen) {
+        // Restart streams on a specific screen
+        logger.info(`Restarting streams on screen ${screen}`, 'StreamManager');
+        
+        // Clear manually closed status
+        this.clearManuallyClosedStatus(screen);
+        
+        // Stop current stream
+        await this.stopStream(screen);
+        
+        // Start a new stream from the queue
+        await this.handleEmptyQueue(screen);
+      } else {
+        // Restart streams on all screens
+        logger.info('Restarting streams on all screens', 'StreamManager');
+        
+        // Get all active streams
+        const activeStreams = this.getActiveStreams();
+        
+        // Stop all streams
+        for (const stream of activeStreams) {
+          await this.stopStream(stream.screen);
+        }
+        
+        // Clear manually closed status for all screens
+        for (const screenConfig of this.config.player.screens) {
+          if (screenConfig.enabled) {
+            this.clearManuallyClosedStatus(screenConfig.screen);
+          }
+        }
+        
+        // Process each enabled screen
+        for (const screenConfig of this.config.player.screens) {
+          if (screenConfig.enabled) {
+            await this.handleEmptyQueue(screenConfig.screen);
+          }
+        }
       }
+    } catch (error) {
+      logger.error('Failed to restart streams', 'StreamManager', error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -1756,6 +1792,38 @@ export class StreamManager extends EventEmitter {
       if (!screenConfig.enabled) {
         this.playerService.disableScreen(screenConfig.screen);
         logger.info(`Screen ${screenConfig.screen} marked as disabled during initialization`, 'StreamManager');
+      }
+    }
+  }
+
+  public clearManuallyClosedStatus(screen: number): void {
+    if (this.manuallyClosedScreens.has(screen)) {
+      this.manuallyClosedScreens.delete(screen);
+      
+      // Reset the last refresh timestamp to force immediate refresh
+      this.lastStreamRefresh.set(screen, 0);
+      
+      logger.info(`Screen ${screen} removed from manually closed list and refresh timestamp reset`, 'StreamManager');
+      
+      // If auto-start is enabled and no streams are running on this screen,
+      // try to start new streams after a short delay
+      const screenConfig = this.config.player.screens.find(s => s.screen === screen);
+      const activeStream = this.getActiveStreams().find(s => s.screen === screen);
+      
+      if (screenConfig?.enabled && !activeStream && this.config.player.autoStart) {
+        logger.info(`Scheduling stream auto-start for screen ${screen}`, 'StreamManager');
+        
+        setTimeout(() => {
+          if (!this.isShuttingDown && !this.queueProcessing.has(screen)) {
+            this.handleEmptyQueue(screen).catch(error => {
+              logger.error(
+                `Error auto-starting streams for screen ${screen}`,
+                'StreamManager',
+                error instanceof Error ? error : new Error(String(error))
+              );
+            });
+          }
+        }, 1000); // Wait a second before auto-starting to allow UI updates
       }
     }
   }

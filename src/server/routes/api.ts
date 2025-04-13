@@ -137,7 +137,18 @@ router.delete('/api/streams/:screen', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    const result = await streamManager.stopStream(screen);
+    
+    // Get query parameter to determine if we should keep the screen enabled
+    const keepEnabled = ctx.query.keepEnabled === 'true';
+    
+    // Stop the stream
+    const result = await streamManager.stopStream(screen, !keepEnabled);
+    
+    // If we want to keep the screen enabled for auto-starting, clear its manually closed status
+    if (keepEnabled) {
+      streamManager.clearManuallyClosedStatus(screen);
+    }
+    
     ctx.body = { success: result };
   } catch (error: unknown) {
     logger.error(

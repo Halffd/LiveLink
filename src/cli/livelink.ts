@@ -114,14 +114,24 @@ streamCommands
   .command('stop')
   .description('Stop a stream')
   .argument('<screen>', 'Screen number')
-  .action(async (screen) => {
+  .option('-k, --keep-enabled', 'Keep screen enabled for auto-starting new streams')
+  .action(async (screen, options) => {
     try {
       console.log(chalk.blue(`Stopping stream on screen ${screen}...`));
-      const response = await fetch(`${API_URL}/streams/${screen}`, {
+      
+      // Add the keepEnabled query parameter if requested
+      const keepEnabled = options.keepEnabled ? '?keepEnabled=true' : '';
+      
+      const response = await fetch(`${API_URL}/streams/${screen}${keepEnabled}`, {
         method: 'DELETE'
       });
       const result = await handleResponse(response);
-      console.log(chalk.green('Stream stopped:'), result);
+      
+      if (options.keepEnabled) {
+        console.log(chalk.green('Stream stopped:'), result, chalk.yellow('(Screen remains enabled for new streams)'));
+      } else {
+        console.log(chalk.green('Stream stopped:'), result);
+      }
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }
