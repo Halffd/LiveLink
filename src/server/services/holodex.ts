@@ -3,8 +3,8 @@ import {
   type VideoStatus,
   type Video,
   type VideoType,
-  VideoRaw
 } from 'holodex.js';
+import type { VideoRaw } from 'holodex.js';
 import type { StreamSource, Config } from '../../types/stream.js';
 import { logger } from './logger.js';
 import type { StreamService } from '../../types/stream.js';
@@ -63,42 +63,61 @@ export class HolodexService implements StreamService {
           channelOrderMap.set(channelId, index);
         });
         
+        logger.info(`Fetching streams for ${channels.length} favorite Holodex channels`, 'HolodexService');
+        logger.debug(`Holodex favorite channels: ${channels.join(', ')}`, 'HolodexService');
+        
         // Fetch all channels in parallel but preserve order
-        const promises = channels.map(channelId =>
-          this.client!.getLiveVideos({
+        const promises = channels.map(channelId => {
+          // Use more inclusive parameters for channel searches
+          const params = {
             channel_id: channelId,
-            status: 'live' as VideoStatus,
-            type: 'live' as VideoType,
-            max_upcoming_hours: 0,
-            sort: 'live_viewers' as keyof VideoRaw & string,
-          }).catch(error => {
+            type: 'stream' as VideoType, // Use 'stream' type instead of 'live'
+            status: 'live,upcoming' as VideoStatus, // Include both live and upcoming streams
+            max_upcoming_hours: 48, // Allow upcoming streams up to 48 hours ahead
+            sort: 'available_at' as keyof VideoRaw & string
+          };
+          
+          logger.debug(`Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`, 'HolodexService');
+          
+          return this.client!.getLiveVideos(params).catch(error => {
             logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
             logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
             return [];
-          })
-        );
+          });
+        });
         
         const results = await Promise.all(promises);
+        
+        // Log individual channel results
+        channels.forEach((channelId, index) => {
+          logger.debug(`Channel ${channelId} returned ${results[index].length} videos`, 'HolodexService');
+        });
         
         // Flatten results but maintain channel order
         videos = [];
         channels.forEach((channelId, index) => {
-          const channelVideos = results[index]
-            // Filter out videos where the channel ID doesn't match (collabs)
-            .filter(video => video.channel?.channelId === channelId);
-            
+          const channelVideos = results[index];
+          // Don't filter by channel ID since we're requesting by channel ID already
+          // This fixes issues with collabs where the primary channel ID might not match
+          
           if (channelVideos && channelVideos.length > 0) {
-            // Sort videos for each channel: live first, then by viewer count
+            // Sort videos for each channel: live first, then by start time
             channelVideos.sort((a, b) => {
               if (a.status === 'live' && b.status !== 'live') return -1;
               if (a.status !== 'live' && b.status === 'live') return 1;
-              return 0;
+              
+              // For upcoming streams, sort by available_at
+              const aTime = a.availableAt ? new Date(a.availableAt).getTime() : 0;
+              const bTime = b.availableAt ? new Date(b.availableAt).getTime() : 0;
+              return aTime - bTime;
             });
+            
+            logger.debug(`Adding ${channelVideos.length} videos from channel ${channelId}`, 'HolodexService');
             videos.push(...channelVideos);
           }
         });
         
-        logger.debug(`Found ${videos.length} live/upcoming streams from favorite channels`, 'HolodexService');
+        logger.info(`Found ${videos.length} live/upcoming streams from favorite channels`, 'HolodexService');
       } else {
         // Fetch streams by organization or all
         if (organization) {
@@ -149,7 +168,9 @@ export class HolodexService implements StreamService {
           channelId: channelId,
           organization: video.channel?.organization,
           // Set priority based on channel order for favorites
-          priority: channelOrder !== undefined ? channelOrder : undefined
+          priority: channelOrder !== undefined ? channelOrder : undefined,
+          // Tag streams from favorites for easier identification
+          subtype: channels?.includes(channelId) ? 'favorites' : undefined
         };
       });
 
@@ -169,7 +190,8 @@ export class HolodexService implements StreamService {
           if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
           if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
           
-          return 0;
+          // Finally by viewer count
+          return (b.viewerCount || 0) - (a.viewerCount || 0);
         });
       } else {
         // For non-favorite streams, sort by:
@@ -233,7 +255,7 @@ export class HolodexService implements StreamService {
     
     // If channel is in favorites, don't filter it
     if (channelId && this.favoriteChannels.includes(channelId)) {
-      logger.debug(`Channel ${channelName} (${channelId}) is in favorites, not filtering`, 'HolodexService');
+      logger.debug(`Channel ${channelName || englishName || channelId} is in favorites, not filtering`, 'HolodexService');
       return false;
     }
     
@@ -248,32 +270,28 @@ export class HolodexService implements StreamService {
       englishName?.toLowerCase().replace(/[\s\-_]+/g, '')
     ].filter(Boolean);
     
-    // Check if any of the normalized names exactly match any filter
-    for (const filter of this.filters) {
+    // Check if any of the normalized names are in the filters list
+    const isFiltered = this.filters.some(filter => {
       const normalizedFilter = filter.toLowerCase().replace(/[\s\-_]+/g, '');
-      
-      // Check if any of the normalized names match the filter
-      for (const normalizedName of normalizedNames) {
-        // Only filter if the normalized name matches the filter exactly or contains the full filter name
-        if (normalizedName === normalizedFilter || normalizedName.includes(normalizedFilter)) {
-          logger.info(
-            `Filtering out channel ${channelName}${englishName ? ` (${englishName})` : ''} - matched filter "${filter}"`,
-            'HolodexService'
-          );
-          return true;
-        }
-      }
+      return normalizedNames.some(name => name?.includes(normalizedFilter));
+    });
+    
+    if (isFiltered) {
+      logger.debug(`Channel ${channelName || englishName || channelId} matched filter, excluding from results`, 'HolodexService');
+      return true;
     }
     
-    // If no filters matched, don't filter out the channel
-    logger.debug(
-      `Channel ${channelName}${englishName ? ` (${englishName})` : ''} does not match any filters, keeping`,
-      'HolodexService'
-    );
     return false;
   }
 
   public updateFavorites(channels: string[]): void {
+    if (!channels || !Array.isArray(channels)) {
+      logger.warn('Invalid Holodex favorite channels provided, ignoring update', 'HolodexService');
+      return;
+    }
+    
+    logger.info(`Updating Holodex favorites with ${channels.length} channels`, 'HolodexService');
+    logger.debug(`New Holodex favorites: ${channels.join(', ')}`, 'HolodexService');
     this.favoriteChannels = channels;
   }
 } 

@@ -309,18 +309,23 @@ export class PlayerService {
 
 		// Ensure IPC path is initialized
 		if (!this.ipcPaths.has(options.screen)) {
-			const homedir = process.env.HOME || process.env.USERPROFILE;
-			const ipcPath = homedir
-				? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
-				: `/tmp/mpv-ipc-${options.screen}`;
+			// Use a more reliable path for IPC sockets
+			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
 			this.ipcPaths.set(options.screen, ipcPath);
+			
+			// Remove existing socket file if it exists
+			try {
+				fs.unlinkSync(ipcPath);
+			} catch (_) {
+				// Ignore errors if file doesn't exist
+			}
 		}
 
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
 
 		logger.debug(`Starting MPV with command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
-
+		logger.debug(`MPV args: ${args.join(' ')}`, 'PlayerService');
 		const mpvProcess = spawn(this.mpvPath, args, {
 			env,
 			stdio: ['ignore', 'pipe', 'pipe']
@@ -339,6 +344,9 @@ export class PlayerService {
 			});
 		}
 
+		// Wait a moment to let MPV create the socket
+		await new Promise(resolve => setTimeout(resolve, 500));
+		
 		return mpvProcess;
 	}
 
@@ -347,7 +355,7 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
-
+		logger.debug(`Streamlink args: ${args.join(' ')}`, 'PlayerService');
 		try {
 			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
 			env,
@@ -920,6 +928,17 @@ export class PlayerService {
 			// The kill with signal 0 doesn't actually kill the process
 			// It just checks if the process exists
 			process.kill(pid, 0);
+			
+			// Additional check - verify socket file exists for MPV processes
+			const stream = Array.from(this.streams.values()).find(s => s.process && s.process.pid === pid);
+			if (stream) {
+				const ipcPath = this.ipcPaths.get(stream.screen);
+				if (ipcPath && !fs.existsSync(ipcPath)) {
+					logger.warn(`Process ${pid} is running but IPC socket ${ipcPath} doesn't exist`, 'PlayerService');
+					return false;
+				}
+			}
+			
 			return true;
 		} catch {
 			return false;
@@ -934,11 +953,8 @@ export class PlayerService {
 
 		// Initialize IPC path if not already set
 		if (!this.ipcPaths.has(options.screen)) {
-		const homedir = process.env.HOME || process.env.USERPROFILE;
-		const ipcPath = homedir
-			? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
-			: `/tmp/mpv-ipc-${options.screen}`;
-		this.ipcPaths.set(options.screen, ipcPath);
+			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
+			this.ipcPaths.set(options.screen, ipcPath);
 		}
 
 		// Ensure log directory exists
@@ -975,12 +991,13 @@ export class PlayerService {
 
 		// Essential arguments
 		baseArgs.push(
-			'--input-ipc-server=' + ipcPath,
-			'--config-dir=' + path.join(process.cwd(), 'scripts', 'mpv'),
-			'--log-file=' + logFile,
-			'--geometry=' + `${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			'--volume=' + (options.volume || 0).toString(),
-			'--title=' + `${options.screen}: ${options.title || 'No Title'}`
+			`--input-ipc-server=${ipcPath}`,
+			`--config-dir=${path.join(process.cwd(), 'scripts', 'mpv')}`,
+			`--log-file=${logFile}`,
+			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+			`--volume=${(options.volume || 0).toString()}`,
+			`--title=${options.screen}: ${options.title || 'No Title'}`,	
+			'--msg-level=all=debug'
 		);
 
 		if (options.windowMaximized) {
@@ -1049,7 +1066,7 @@ export class PlayerService {
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
 		}
-
+		logger.debug(`Streamlink args: ${streamlinkArgs.join(' ')}`, 'PlayerService');
 		return streamlinkArgs;
 	}
 
