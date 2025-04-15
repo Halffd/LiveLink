@@ -39,15 +39,20 @@ export interface StreamOptions {
 
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
-	private readonly MAX_RETRIES = 2;
+	private readonly MAX_RETRIES = 3; // Increased from 2 to 3
+	private readonly MAX_NETWORK_RETRIES = 5; // Separate counter for network-related issues
 	private readonly RETRY_INTERVAL = 500;
+	private readonly NETWORK_RETRY_INTERVAL = 5000; // 5 seconds for network retries
+	private readonly MAX_BACKOFF_TIME = 60000; // 1 minute maximum backoff
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-	private readonly STARTUP_TIMEOUT = 60000; // 10 minutes
-	private readonly SHUTDOWN_TIMEOUT = 2000; // Increased from 100ms to 1 second
+	private readonly STARTUP_TIMEOUT = 60000; // 1 minute
+	private readonly SHUTDOWN_TIMEOUT = 2000; // 2 seconds
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
+	private networkRetries: Map<number, number> = new Map(); // Track network-specific retries separately
+	private lastNetworkError: Map<number, number> = new Map(); // Track when the last network error occurred
 	private streamStartTimes: Map<number, number> = new Map();
 	private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
 	private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
@@ -56,6 +61,7 @@ export class PlayerService {
 	private manuallyClosedScreens: Set<number> = new Set();
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
+	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
 
 	private config: Config;
 	private mpvPath: string;
@@ -659,17 +665,83 @@ export class PlayerService {
 		// Get stream info before any cleanup happens
 		const stream = this.streams.get(screen);
 		const url = stream?.url || '';
+		const options = stream?.options;
 		
 		// Log with URL for better tracking
 		logger.info(`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
 		
-		// Clean up resources
-		this.cleanup_after_stop(screen);
+		// Check if this is a network-related error
+		const isNetworkError = this.isNetworkErrorCode(code);
+		this.isNetworkError.set(screen, isNetworkError);
 		
-		// Clear monitoring
+		// Handle retries for network errors differently
+		if (isNetworkError && url && options) {
+			const networkRetryCount = this.networkRetries.get(screen) || 0;
+			const now = Date.now();
+			const lastError = this.lastNetworkError.get(screen) || 0;
+			const timeSinceLastError = now - lastError;
+			
+			// Reset network retry count if it's been a while since the last error
+			if (timeSinceLastError > 5 * 60 * 1000) { // 5 minutes
+				logger.info(`Resetting network retry count for screen ${screen} as it's been ${Math.round(timeSinceLastError/1000)}s since last error`, 'PlayerService');
+				this.networkRetries.set(screen, 0);
+			}
+			
+			// Update last error time
+			this.lastNetworkError.set(screen, now);
+			
+			// Check if we should retry
+			if (networkRetryCount < this.MAX_NETWORK_RETRIES) {
+				// Calculate backoff time with exponential backoff
+				const backoffTime = Math.min(this.NETWORK_RETRY_INTERVAL * Math.pow(1.5, networkRetryCount), this.MAX_BACKOFF_TIME);
+				
+				logger.info(`Network error detected for ${url} on screen ${screen}, retry ${networkRetryCount + 1}/${this.MAX_NETWORK_RETRIES} in ${Math.round(backoffTime/1000)}s`, 'PlayerService');
+				
+				// Increment retry count
+				this.networkRetries.set(screen, networkRetryCount + 1);
+				
+				// Clean up but don't emit error yet
+				this.cleanup_after_stop(screen);
+				this.clearMonitoring(screen);
+				
+				// Set up retry timer
+				const retryTimer = setTimeout(async () => {
+					try {
+						logger.info(`Attempting to restart stream ${url} on screen ${screen} after network error`, 'PlayerService');
+						await this.startStream({
+							...options,
+							isRetry: true
+						});
+					} catch (error) {
+						logger.error(`Failed to restart stream after network error on screen ${screen}`, 'PlayerService', 
+							error instanceof Error ? error : new Error(String(error)));
+						
+						// Now emit the error since retry failed
+						this.errorCallback?.({
+							screen,
+							error: `Failed to restart stream after network error: ${error instanceof Error ? error.message : String(error)}`,
+							code: code || 0,
+							url,
+							moveToNext: true
+						});
+					}
+				}, backoffTime);
+				
+				// Store the timer
+				this.retryTimers.set(screen, retryTimer);
+				return; // Don't emit error yet, we're handling it with retry
+			} else {
+				logger.warn(`Maximum network retries (${this.MAX_NETWORK_RETRIES}) reached for screen ${screen}, giving up`, 'PlayerService');
+				// Reset retry count for future attempts
+				this.networkRetries.set(screen, 0);
+			}
+		}
+		
+		// For non-network errors or if max retries reached, clean up and emit error
+		this.cleanup_after_stop(screen);
 		this.clearMonitoring(screen);
 
-		// Always emit stream error with URL if we have it
+		// Emit stream error with URL if we have it
 		this.errorCallback?.({
 			screen,
 			error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
@@ -700,12 +772,31 @@ export class PlayerService {
 			clearTimeout(inactiveTimer);
 			this.inactiveTimers.delete(screen);
 		}
+		
+		// Clear retry timer if exists
+		const retryTimer = this.retryTimers.get(screen);
+		if (retryTimer) {
+			clearTimeout(retryTimer);
+			this.retryTimers.delete(screen);
+		}
 
 		// Clear other state
 		this.streamStartTimes.delete(screen);
 		this.streamRetries.delete(screen);
+		// Don't clear networkRetries or lastNetworkError here to maintain retry history
 	}
 
+	/**
+	 * Determines if an exit code is likely related to network issues
+	 */
+	private isNetworkErrorCode(code: number | null): boolean {
+		// Common network-related exit codes
+		// 2: Streamlink network error
+		// 1: General error (could be network)
+		// 9: Killed (could happen during network fluctuations)
+		return code === 2 || code === 1 || code === 9;
+	}
+	
 	/**
 	 * Stop a stream that is currently playing on a screen
 	 */

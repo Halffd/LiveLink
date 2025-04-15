@@ -1894,7 +1894,11 @@ export class StreamManager extends EventEmitter {
   private setupNetworkRecovery(): void {
     let wasOffline = false;
     let recoveryAttempts = 0;
+    let lastSuccessfulNetworkCheck = Date.now();
+    let lastQueueRefreshAfterRecovery = 0;
     const RECOVERY_DELAY = 5000; // 5 seconds between recovery attempts
+    const MINIMUM_RECOVERY_INTERVAL = 60000; // Minimum 1 minute between queue refreshes after recovery
+    const MAX_OFFLINE_TIME_BEFORE_FULL_RESET = 3600000; // 1 hour - after this time, do a full reset
     
     const CHECK_URLS = [
       'https://8.8.8.8',
@@ -1921,6 +1925,7 @@ export class StreamManager extends EventEmitter {
             
             if (response.ok) {
               isOnline = true;
+              lastSuccessfulNetworkCheck = Date.now();
               break;
             }
           } catch {
@@ -1933,12 +1938,26 @@ export class StreamManager extends EventEmitter {
           // Just went offline
           wasOffline = true;
           recoveryAttempts = 0;
+          this.isOffline = true; // Set the global offline flag
           logger.warn('Network connection lost - unable to reach any test endpoints', 'StreamManager');
         } else if (isOnline && wasOffline) {
           // Just came back online
           wasOffline = false;
           recoveryAttempts = 0;
-          logger.info('Network connection restored, refreshing streams', 'StreamManager');
+          this.isOffline = false; // Reset the global offline flag
+          
+          const offlineDuration = Date.now() - lastSuccessfulNetworkCheck;
+          const isLongOutage = offlineDuration > MAX_OFFLINE_TIME_BEFORE_FULL_RESET;
+          
+          logger.info(`Network connection restored after ${Math.round(offlineDuration/1000)} seconds, refreshing streams`, 'StreamManager');
+          
+          // Prevent too frequent queue refreshes after recovery
+          if (Date.now() - lastQueueRefreshAfterRecovery < MINIMUM_RECOVERY_INTERVAL) {
+            logger.info('Skipping queue refresh as one was performed recently', 'StreamManager');
+            return;
+          }
+          
+          lastQueueRefreshAfterRecovery = Date.now();
           
           // Execute recovery with delay to ensure network is stable
           setTimeout(async () => {
@@ -1963,7 +1982,25 @@ export class StreamManager extends EventEmitter {
                 ]));
               }
               
+              // For long outages, clear cached data to ensure fresh content
+              if (isLongOutage) {
+                logger.warn('Long network outage detected, clearing cached streams and queue data', 'StreamManager');
+                this.cachedStreams = [];
+                this.lastStreamFetch = 0;
+                
+                // Reset all queue processing flags that might be stuck
+                this.queueProcessing.clear();
+                this.queueProcessingStartTimes.clear();
+                
+                // Clear all timeouts
+                for (const [screen, timeout] of this.queueProcessingTimeouts.entries()) {
+                  clearTimeout(timeout);
+                  this.queueProcessingTimeouts.delete(screen);
+                }
+              }
+              
               // Force refresh all queues and streams
+              logger.info('Forcing queue refresh after network recovery', 'StreamManager');
               await this.forceQueueRefresh();
               
               // Check active streams and restart any that might have failed during outage
@@ -1978,7 +2015,23 @@ export class StreamManager extends EventEmitter {
                 );
                 if (!hasActiveStream && !this.manuallyClosedScreens.has(screen)) {
                   logger.info(`No active stream on screen ${screen} after network recovery, attempting to start next stream`, 'StreamManager');
+                  
+                  // For long outages, reset the queue for this screen first
+                  if (isLongOutage) {
+                    logger.info(`Resetting queue for screen ${screen} after long outage`, 'StreamManager');
+                    await this.updateQueue(screen);
+                  }
+                  
+                  // Try to start a stream from the queue
                   await this.handleEmptyQueue(screen);
+                  
+                  // If queue is still empty after trying to update it, force another update
+                  const queue = queueService.getQueue(screen);
+                  if (queue.length === 0) {
+                    logger.warn(`Queue still empty for screen ${screen} after recovery, forcing another update`, 'StreamManager');
+                    await this.updateAllQueues(true);
+                    await this.handleEmptyQueue(screen);
+                  }
                 }
               }
             } catch (error) {
@@ -1993,11 +2046,23 @@ export class StreamManager extends EventEmitter {
           if (recoveryAttempts % 6 === 0) { // Log every ~60 seconds (6 * 10s interval)
             logger.warn(`Network still disconnected. Recovery will be attempted when connection is restored.`, 'StreamManager');
           }
+        } else if (isOnline && !wasOffline) {
+          // Still online, periodically check if queues need refreshing
+          const timeSinceLastRefresh = Date.now() - this.lastStreamFetch;
+          if (timeSinceLastRefresh > this.QUEUE_UPDATE_INTERVAL) {
+            logger.debug('Periodic queue refresh during stable network connection', 'StreamManager');
+            this.updateAllQueues(false).catch(error => {
+              logger.error('Failed to update queues during periodic check', 'StreamManager', 
+                error instanceof Error ? error : new Error(String(error))
+              );
+            });
+          }
         }
       } catch (error) {
         if (!wasOffline) {
           wasOffline = true;
           recoveryAttempts = 0;
+          this.isOffline = true; // Set the global offline flag
           logger.warn(
             'Network connection lost', 
             'StreamManager',
