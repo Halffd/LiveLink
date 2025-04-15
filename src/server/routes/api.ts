@@ -1,7 +1,7 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo } from '../../types/stream.js';
+import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo, Config } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
 
@@ -32,9 +32,21 @@ interface UpdateConfigBody {
   streams?: ScreenConfig[];
   organizations?: string[];
   favoriteChannels?: {
-    holodex: string[];
-    twitch: string[];
-    youtube: string[];
+    groups?: {
+      [groupName: string]: {
+        description: string;
+        priority: number;
+      };
+    };
+    holodex?: {
+      [groupName: string]: string[];
+    };
+    twitch?: {
+      [groupName: string]: string[];
+    };
+    youtube?: {
+      [groupName: string]: string[];
+    };
   };
 }
 
@@ -685,7 +697,29 @@ router.get('/api/config', (ctx: Context) => {
 router.put('/api/config', async (ctx: Context) => {
   try {
     const body = ctx.request.body as UpdateConfigBody;
-    await streamManager.updateConfig(body);
+    
+    // Convert the UpdateConfigBody to a proper Config object
+    const configUpdate: Partial<Config> = {};
+    
+    if (body.streams) {
+      configUpdate.streams = body.streams;
+    }
+    
+    if (body.organizations) {
+      configUpdate.organizations = body.organizations;
+    }
+    
+    if (body.favoriteChannels) {
+      // Ensure the favoriteChannels structure matches FavoriteChannels type
+      configUpdate.favoriteChannels = {
+        groups: body.favoriteChannels.groups || {},
+        holodex: body.favoriteChannels.holodex || {},
+        twitch: body.favoriteChannels.twitch || {},
+        youtube: body.favoriteChannels.youtube || {}
+      };
+    }
+    
+    await streamManager.updateConfig(configUpdate);
     ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
@@ -865,6 +899,14 @@ router.get('/api/server/status', async (ctx: Context) => {
     const activeStreams = streamManager.getActiveStreams();
     const memUsage = process.memoryUsage();
     
+    // Define memory usage object with proper types
+    const memoryInfo: Record<string, string> = {
+      rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`,
+      heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`,
+      heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`,
+      external: `${Math.round(memUsage.external / 1024 / 1024)} MB`
+    };
+    
     ctx.body = {
       status: 'running',
       uptime: uptimeFormatted,
@@ -872,12 +914,7 @@ router.get('/api/server/status', async (ctx: Context) => {
       version: process.env.npm_package_version || '1.0.0',
       nodeVersion: process.version,
       platform: process.platform,
-      memory: {
-        rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`,
-        heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`,
-        heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`,
-        external: `${Math.round(memUsage.external / 1024 / 1024)} MB`
-      }
+      memory: memoryInfo
     };
   } catch (error) {
     logError('Failed to get server status', 'API', error);

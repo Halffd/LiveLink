@@ -233,15 +233,43 @@ export interface StreamResponse {
 }
 
 /**
- * Favorite channels configuration
+ * Favorite group configuration
+ */
+export interface FavoriteGroup {
+  /** Description of the favorite group */
+  description: string;
+  /** Priority of the favorite group (lower number = higher priority) */
+  priority: number;
+}
+
+/**
+ * Favorite groups configuration
+ */
+export interface FavoriteGroups {
+  /** Map of group names to group configurations */
+  [groupName: string]: FavoriteGroup;
+}
+
+/**
+ * Platform-specific favorite channels by group
+ */
+export interface PlatformFavorites {
+  /** Map of group names to channel IDs */
+  [groupName: string]: string[];
+}
+
+/**
+ * Enhanced favorite channels configuration with groups
  */
 export interface FavoriteChannels {
-  /** Holodex channel IDs */
-  holodex: string[];
-  /** Twitch channel IDs/names */
-  twitch: string[];
-  /** YouTube channel IDs */
-  youtube: string[];
+  /** Favorite groups configuration */
+  groups: FavoriteGroups;
+  /** Holodex channel IDs by group */
+  holodex: PlatformFavorites;
+  /** Twitch channel IDs/names by group */
+  twitch: PlatformFavorites;
+  /** YouTube channel IDs by group */
+  youtube: PlatformFavorites;
 }
 
 export interface MpvConfig {

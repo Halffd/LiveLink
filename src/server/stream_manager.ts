@@ -48,9 +48,15 @@ export class StreamManager extends EventEmitter {
   private readonly QUEUE_PROCESSING_TIMEOUT = 60 * 1000; // 1 minute timeout for queue processing
   private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
   private favoriteChannels: FavoriteChannels = {
-    holodex: [],
-    twitch: [],
-    youtube: []
+    groups: {
+      default: {
+        description: 'Default favorite channels',
+        priority: 100
+      }
+    },
+    holodex: { default: [] },
+    twitch: { default: [] },
+    youtube: { default: [] }
   };
   private queues: Map<number, StreamSource[]> = new Map();
   private readonly RETRY_INTERVAL = 5000; // 5 seconds
@@ -89,10 +95,16 @@ export class StreamManager extends EventEmitter {
     this.playerService = playerService;
     this.keyboardService = new KeyboardService();
     this.isOffline = false; // Initialize offline state
-    this.favoriteChannels = {
-      holodex: config.favoriteChannels.holodex || [],
-      twitch: config.favoriteChannels.twitch || [],
-      youtube: config.favoriteChannels.youtube || []
+    this.favoriteChannels = config.favoriteChannels || {
+      groups: {
+        default: {
+          description: 'Default favorite channels',
+          priority: 100
+        }
+      },
+      holodex: { default: [] },
+      twitch: { default: [] },
+      youtube: { default: [] }
     };
     
     // Initialize screenConfigs before other initialization that might use it
@@ -353,11 +365,25 @@ export class StreamManager extends EventEmitter {
     this.queueProcessing.delete(screen);
     this.clearQueueProcessingTimeout(screen);
 
+    // Make sure the player service has fully stopped the previous stream
+    // This ensures we don't have IPC connection issues with the next stream
+    await this.playerService.stopStream(screen, true);
+    
+    // Add a small delay to ensure resources are properly released
+    await new Promise(resolve => setTimeout(resolve, 500));
+
     // Special handling for screen 1 - skip processing check delays
     if (screen === 1) {
       const nextStream = this.queues.get(screen)?.[0];
       if (nextStream) {
         try {
+          // Remove the stream from queue before starting it
+          const queue = this.queues.get(screen) || [];
+          queue.shift();
+          this.queues.set(screen, queue);
+          logger.info(`Starting next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
+          // The stream is already at index 0 and we've removed it from our internal queue
+          
           await this.startStream({
             url: nextStream.url,
             screen,
@@ -391,6 +417,13 @@ export class StreamManager extends EventEmitter {
         logger.info(`Screen ${screen} is showing dummy black screen, attempting to start next stream`, 'StreamManager');
         const nextStream = this.queues.get(screen)?.[0];
         if (nextStream) {
+          // Remove the stream from queue before starting it
+          const queue = this.queues.get(screen) || [];
+          queue.shift();
+          this.queues.set(screen, queue);
+          logger.info(`Starting next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
+          // The stream is already at index 0 and we've removed it from our internal queue
+          
           await this.startStream({
             url: nextStream.url,
             screen,
@@ -401,12 +434,19 @@ export class StreamManager extends EventEmitter {
         }
       }
 
-      // Remove current stream from queue if it exists
+      // Get current queue
       const queue = this.queues.get(screen) || [];
-      const currentIndex = queue.findIndex(s => s.url === currentStream?.url);
-      if (currentIndex !== -1) {
-        queue.splice(currentIndex, 1);
-        this.queues.set(screen, queue);
+      
+      // Remove current stream from queue if it exists
+      if (currentStream) {
+        const currentIndex = queue.findIndex(s => s.url === currentStream.url);
+        if (currentIndex !== -1) {
+          queue.splice(currentIndex, 1);
+          this.queues.set(screen, queue);
+        } else {
+          // Log but don't throw an error if we can't find the stream in the queue
+          logger.warn(`Could not find failed stream ${currentStream.url} in queue for screen ${screen}`, 'StreamManager');
+        }
       }
 
       // Get next stream from queue
@@ -425,6 +465,12 @@ export class StreamManager extends EventEmitter {
         return;
       }
 
+      // Remove the stream from queue before starting it
+      queue.shift();
+      this.queues.set(screen, queue);
+      logger.info(`Starting next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
+      // The stream is already at index 0 and we've removed it from our internal queue
+      
       // Start the next stream
       await this.startStream({
         url: nextStream.url,
@@ -714,13 +760,15 @@ export class StreamManager extends EventEmitter {
                 
               if (source.subtype === 'favorites') {
                   // Check that we have valid favorite channels
-                  if (!this.favoriteChannels?.holodex || !Array.isArray(this.favoriteChannels.holodex) || this.favoriteChannels.holodex.length === 0) {
+                  // Get flattened list of all holodex favorites across all groups
+                  const flattenedHolodexFavorites = this.getFlattenedFavorites('holodex');
+                  if (!flattenedHolodexFavorites || flattenedHolodexFavorites.length === 0) {
                     logger.warn('No Holodex favorite channels configured, skipping source', 'StreamManager');
                     break;
                   }
                   
                 streams = await this.holodexService.getLiveStreams({
-                  channels: this.favoriteChannels.holodex,
+                  channels: this.getFlattenedFavorites('holodex'),
                   limit: limit,
                   sort: 'start_scheduled'  // Sort by scheduled start time
                 });
@@ -761,13 +809,15 @@ export class StreamManager extends EventEmitter {
                 
               if (source.subtype === 'favorites') {
                   // Check that we have valid favorite channels
-                  if (!this.favoriteChannels?.twitch || !Array.isArray(this.favoriteChannels.twitch) || this.favoriteChannels.twitch.length === 0) {
+                  // Get flattened list of all twitch favorites across all groups
+                  const flattenedTwitchFavorites = this.getFlattenedFavorites('twitch');
+                  if (!flattenedTwitchFavorites || flattenedTwitchFavorites.length === 0) {
                     logger.warn('No Twitch favorite channels configured, skipping source', 'StreamManager');
                     break;
                   }
                   
                 streams = await this.twitchService.getStreams({
-                  channels: this.favoriteChannels.twitch,
+                  channels: this.getFlattenedFavorites('twitch'),
                   limit: limit
                 });
                   // Assign screen number and source priority to Twitch favorite streams
@@ -798,13 +848,15 @@ export class StreamManager extends EventEmitter {
                 
               if (source.subtype === 'favorites') {
                   // Check that we have valid favorite channels
-                  if (!this.favoriteChannels?.youtube || !Array.isArray(this.favoriteChannels.youtube) || this.favoriteChannels.youtube.length === 0) {
+                  // Get flattened list of all youtube favorites across all groups
+                  const flattenedYoutubeFavorites = this.getFlattenedFavorites('youtube');
+                  if (!flattenedYoutubeFavorites || flattenedYoutubeFavorites.length === 0) {
                     logger.warn('No YouTube favorite channels configured, skipping source', 'StreamManager');
                     break;
                   }
                   
                 streams = await this.youtubeService.getLiveStreams({
-                  channels: this.favoriteChannels.youtube,
+                  channels: this.getFlattenedFavorites('youtube'),
                   limit
                 });
                 
@@ -1000,12 +1052,12 @@ export class StreamManager extends EventEmitter {
               switch (source.type) {
                 case 'holodex':
                   if (stream.platform !== 'youtube') return false;
-                  if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.holodex.includes(stream.channelId)) return true;
+                  if (source.subtype === 'favorites' && stream.channelId && this.isChannelInFavorites('holodex', stream.channelId)) return true;
                   if (source.subtype === 'organization' && source.name && stream.organization === source.name) return true;
                   break;
                 case 'twitch':
                   if (stream.platform !== 'twitch') return false;
-                  if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
+                  if (source.subtype === 'favorites' && stream.channelId && this.isChannelInFavorites('twitch', stream.channelId)) return true;
                   if (!source.subtype && source.tags?.includes('vtuber')) return true;
                   break;
               }
@@ -1063,12 +1115,12 @@ export class StreamManager extends EventEmitter {
             switch (source.type) {
               case 'holodex':
                 if (stream.platform !== 'youtube') return false;
-                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.holodex.includes(stream.channelId)) return true;
+                if (source.subtype === 'favorites' && stream.channelId && this.isChannelInFavorites('holodex', stream.channelId)) return true;
                 if (source.subtype === 'organization' && source.name && stream.organization === source.name) return true;
                 break;
               case 'twitch':
                 if (stream.platform !== 'twitch') return false;
-                if (source.subtype === 'favorites' && stream.channelId && this.favoriteChannels.twitch.includes(stream.channelId)) return true;
+                if (source.subtype === 'favorites' && stream.channelId && this.isChannelInFavorites('twitch', stream.channelId)) return true;
                 if (!source.subtype && source.tags?.includes('vtuber')) return true;
                 break;
             }
@@ -1444,10 +1496,14 @@ export class StreamManager extends EventEmitter {
     this.favoriteChannels = favorites;
     this.config.favoriteChannels = favorites;
     
-    // Update services with new favorites
-    this.holodexService.updateFavorites(favorites.holodex);
-    this.twitchService.updateFavorites(favorites.twitch);
-    this.youtubeService.updateFavorites(favorites.youtube);
+    // Update services with new favorites - flatten all groups into a single array for each platform
+    const flattenedHolodex = this.getFlattenedFavorites('holodex');
+    const flattenedTwitch = this.getFlattenedFavorites('twitch');
+    const flattenedYoutube = this.getFlattenedFavorites('youtube');
+    
+    this.holodexService.updateFavorites(flattenedHolodex);
+    this.twitchService.updateFavorites(flattenedTwitch);
+    this.youtubeService.updateFavorites(flattenedYoutube);
     
     await fs.promises.writeFile(
       path.join(process.cwd(), 'config', 'favorites.json'),
@@ -1462,22 +1518,28 @@ export class StreamManager extends EventEmitter {
     return this.favoriteChannels;
   }
 
-  public async addFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string): Promise<void> {
+  public async addFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string, group: string = 'default'): Promise<void> {
+    // Ensure the platform and group exist
     if (!this.favoriteChannels[platform]) {
-      this.favoriteChannels[platform] = [];
+      this.favoriteChannels[platform] = {};
     }
     
-    if (!this.favoriteChannels[platform].includes(channelId)) {
-      this.favoriteChannels[platform].push(channelId);
+    if (!this.favoriteChannels[platform][group]) {
+      this.favoriteChannels[platform][group] = [];
+    }
+    
+    // Add the channel to the specified group if it doesn't already exist
+    if (!this.favoriteChannels[platform][group].includes(channelId)) {
+      this.favoriteChannels[platform][group].push(channelId);
       await this.updateFavorites(this.favoriteChannels);
     }
   }
 
-  public async removeFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string): Promise<void> {
-    if (this.favoriteChannels[platform]) {
-      const index = this.favoriteChannels[platform].indexOf(channelId);
+  public async removeFavorite(platform: 'holodex' | 'twitch' | 'youtube', channelId: string, group: string = 'default'): Promise<void> {
+    if (this.favoriteChannels[platform] && this.favoriteChannels[platform][group]) {
+      const index = this.favoriteChannels[platform][group].indexOf(channelId);
       if (index !== -1) {
-        this.favoriteChannels[platform].splice(index, 1);
+        this.favoriteChannels[platform][group].splice(index, 1);
         await this.updateFavorites(this.favoriteChannels);
       }
     }
@@ -2125,14 +2187,14 @@ export class StreamManager extends EventEmitter {
             });
           } else if (source.subtype === 'favorites') {
             sourceStreams = await this.holodexService.getLiveStreams({
-              channels: this.config.favoriteChannels.holodex,
+              channels: this.getFlattenedFavorites('holodex'),
               limit: source.limit
             });
           }
         } else if (source.type === 'twitch') {
           if (source.subtype === 'favorites') {
             sourceStreams = await this.twitchService.getStreams({
-              channels: this.config.favoriteChannels.twitch,
+              channels: this.getFlattenedFavorites('twitch'),
               limit: source.limit
             });
           }
@@ -2157,45 +2219,113 @@ export class StreamManager extends EventEmitter {
     return streams;
   }
 
+  /**
+   * Helper method to get a flattened array of channel IDs across all groups for a platform
+   * @param platform The platform to get favorites for (holodex, twitch, youtube)
+   * @returns Array of channel IDs from all groups
+   */
+  private getFlattenedFavorites(platform: 'holodex' | 'twitch' | 'youtube'): string[] {
+    if (!this.favoriteChannels || !this.favoriteChannels[platform]) {
+      return [];
+    }
+    
+    // Get all groups for this platform and flatten them into a single array
+    const platformFavorites = this.favoriteChannels[platform];
+    const allChannels: string[] = [];
+    
+    // Sort groups by priority (lower number = higher priority)
+    const groupNames = Object.keys(platformFavorites);
+    const sortedGroups = groupNames.sort((a, b) => {
+      const priorityA = this.favoriteChannels.groups[a]?.priority || 999;
+      const priorityB = this.favoriteChannels.groups[b]?.priority || 999;
+      return priorityA - priorityB;
+    });
+    
+    // Add channels from each group, maintaining priority order
+    for (const groupName of sortedGroups) {
+      const channelsInGroup = platformFavorites[groupName] || [];
+      for (const channelId of channelsInGroup) {
+        if (!allChannels.includes(channelId)) {
+          allChannels.push(channelId);
+        }
+      }
+    }
+    
+    return allChannels;
+  }
+  
+  /**
+   * Helper method to check if a channel is in any favorite group for a platform
+   * @param platform The platform to check (holodex, twitch, youtube)
+   * @param channelId The channel ID to check for
+   * @returns True if the channel is in any favorite group for the platform
+   */
+  private isChannelInFavorites(platform: 'holodex' | 'twitch' | 'youtube', channelId: string): boolean {
+    if (!this.favoriteChannels || !this.favoriteChannels[platform]) {
+      return false;
+    }
+    
+    const platformFavorites = this.favoriteChannels[platform];
+    
+    // Check each group for the channel ID
+    for (const groupName in platformFavorites) {
+      if (platformFavorites[groupName]?.includes(channelId)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
   private sortStreams(streams: StreamSource[], sorting?: { field: string; order: 'asc' | 'desc' }): StreamSource[] {
     if (!sorting) return streams;
-
+    
+    const { field, order } = sorting;
+    
     return [...streams].sort((a, b) => {
-      let comparison = 0;
-
-      // First sort by priority if available
-      if (a.priority !== undefined && b.priority !== undefined) {
-        comparison = a.priority - b.priority;
-        if (comparison !== 0) return comparison;
+      // Handle undefined values
+      const aValue = a[field as keyof StreamSource];
+      const bValue = b[field as keyof StreamSource];
+      
+      if (aValue === undefined && bValue === undefined) return 0;
+      if (aValue === undefined) return order === 'asc' ? 1 : -1;
+      if (bValue === undefined) return order === 'asc' ? -1 : 1;
+      
+      // Compare values based on their types
+      if (typeof aValue === 'number' && typeof bValue === 'number') {
+        return order === 'asc' ? aValue - bValue : bValue - aValue;
       }
-
-      // Then sort by the specified field
-      switch (sorting.field) {
-        case 'viewerCount': {
-          comparison = (b.viewerCount || 0) - (a.viewerCount || 0);
-          break;
-        }
-        case 'startTime': {
-          const aTime = a.startTime ? new Date(a.startTime).getTime() : 0;
-          const bTime = b.startTime ? new Date(b.startTime).getTime() : 0;
-          comparison = aTime - bTime;
-          break;
-        }
-        default:
-          return 0;
+      
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return order === 'asc' 
+          ? aValue.localeCompare(bValue) 
+          : bValue.localeCompare(aValue);
       }
-
-      return sorting.order === 'desc' ? comparison : -comparison;
+      
+      // Default comparison for other types
+      const aStr = String(aValue);
+      const bStr = String(bValue);
+      return order === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
     });
   }
 }
 
 // Create singleton instance
 const config = loadAllConfigs();
+// Create flattened favorites arrays for services
+const flattenedHolodexFavorites: string[] = [];
+if (config.favoriteChannels && config.favoriteChannels.holodex) {
+  Object.values(config.favoriteChannels.holodex).forEach(channels => {
+    if (Array.isArray(channels)) {
+      flattenedHolodexFavorites.push(...channels);
+    }
+  });
+}
+
 const holodexService = new HolodexService(
   env.HOLODEX_API_KEY,
   config.filters?.filters ? config.filters.filters.map(f => typeof f === 'string' ? f : f.value) : [],
-  config.favoriteChannels.holodex,
+  flattenedHolodexFavorites,
   config
 );
 const twitchService = new TwitchService(
@@ -2203,8 +2333,18 @@ const twitchService = new TwitchService(
   env.TWITCH_CLIENT_SECRET,
   config.filters?.filters ? config.filters.filters.map(f => typeof f === 'string' ? f : f.value) : []
 );
+// Create flattened YouTube favorites array
+const flattenedYoutubeFavorites: string[] = [];
+if (config.favoriteChannels && config.favoriteChannels.youtube) {
+  Object.values(config.favoriteChannels.youtube).forEach(channels => {
+    if (Array.isArray(channels)) {
+      flattenedYoutubeFavorites.push(...channels);
+    }
+  });
+}
+
 const youtubeService = new YouTubeService(
-  config.favoriteChannels.youtube
+  flattenedYoutubeFavorites
 );
 const playerService = new PlayerService(config);
 

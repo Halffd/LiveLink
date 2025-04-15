@@ -73,9 +73,15 @@ export function loadAllConfigs(): Config {
       streams: [],
       organizations: [],
       favoriteChannels: {
-        holodex: [],
-        twitch: [],
-        youtube: []
+        groups: {
+          default: {
+            description: 'Default favorite channels',
+            priority: 100
+          }
+        },
+        holodex: { default: [] },
+        twitch: { default: [] },
+        youtube: { default: [] }
       },
       holodex: {
         apiKey: process.env.HOLODEX_API_KEY || ''
