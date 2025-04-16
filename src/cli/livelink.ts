@@ -550,7 +550,13 @@ serverCommands
   .command('start')
   .description('Start only the LiveLink server (no frontend)')
   .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
-  .action(async (players: string[]) => {
+  .option('-s, --screen <screens>', 'Specific screens to start (comma-separated or multiple flags, e.g., "1,2" or "-s 1 -s 2")')
+  .option('-o, --organization <orgs>', 'Organizations to include by name or priority (comma-separated or multiple flags, e.g., "hololive,nijisanji" or "-o 1 -o 3" for priorities)')
+  .option('--sort <direction>', 'Sort streams by viewer count (asc or desc)', 'desc')
+  .option('-v, --min-viewers <count>', 'Minimum viewer count to include streams')
+  .option('-l, --limit <count>', 'Maximum number of streams to fetch per source')
+  .option('-m, --max <count>', 'Maximum number of concurrent streams (overrides player.json setting)')
+  .action(async (players: string[], options) => {
     try {
       // Convert arguments to numbers
       const screenPlayers = players.map(Number);
@@ -561,6 +567,115 @@ serverCommands
         screenPlayers.forEach((numPlayers: number, index: number) => {
           process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
         });
+      }
+
+      // Handle screen selection
+      if (options.screen) {
+        // Process screen options - could be comma-separated or multiple flags
+        let screens: number[] = [];
+        
+        if (Array.isArray(options.screen)) {
+          // Multiple -s flags were used
+          screens = options.screen.flatMap((s: string) => s.split(',')).map(Number).filter((n: number) => !isNaN(n));
+        } else {
+          // Single flag with possible comma-separated values
+          screens = options.screen.split(',').map(Number).filter((n: number) => !isNaN(n));
+        }
+        
+        if (screens.length > 0) {
+          process.env.SELECTED_SCREENS = screens.join(',');
+          console.log(chalk.blue(`Starting only screens: ${screens.join(', ')}`));
+        }
+      }
+
+      // Handle organization selection
+      if (options.organization) {
+        // Process organization options - could be comma-separated or multiple flags
+        let organizations: string[] = [];
+        
+        if (Array.isArray(options.organization)) {
+          // Multiple -o flags were used
+          organizations = options.organization.flatMap((o: string) => o.split(','));
+        } else {
+          // Single flag with possible comma-separated values
+          organizations = options.organization.split(',');
+        }
+        
+        if (organizations.length > 0) {
+          // Check if any values are numeric (priority) or range (e.g., "1-4")
+          const priorityValues: string[] = [];
+          const nameValues: string[] = [];
+          
+          organizations.forEach(org => {
+            // Check if it's a range like "1-4"
+            if (/^\d+-\d+$/.test(org)) {
+              priorityValues.push(org);
+            }
+            // Check if it's a number (priority)
+            else if (/^\d+$/.test(org)) {
+              priorityValues.push(org);
+            }
+            // Otherwise it's an organization name
+            else {
+              nameValues.push(org);
+            }
+          });
+          
+          if (priorityValues.length > 0) {
+            process.env.ORGANIZATION_PRIORITIES = priorityValues.join(',');
+            console.log(chalk.blue(`Using organization priorities: ${priorityValues.join(', ')}`));
+          }
+          
+          if (nameValues.length > 0) {
+            process.env.ORGANIZATION_NAMES = nameValues.join(',');
+            console.log(chalk.blue(`Using organizations: ${nameValues.join(', ')}`));
+          }
+        }
+      }
+      
+      // Handle sorting option
+      if (options.sort) {
+        const sortDirection = options.sort.toLowerCase();
+        if (sortDirection === 'asc' || sortDirection === 'desc') {
+          process.env.STREAM_SORT = sortDirection;
+          console.log(chalk.blue(`Sorting streams by viewer count: ${sortDirection}`));
+        } else {
+          console.warn(chalk.yellow(`Invalid sort direction: ${sortDirection}. Using default 'desc'`));
+          process.env.STREAM_SORT = 'desc';
+        }
+      }
+      
+      // Handle minimum viewers option
+      if (options.minViewers) {
+        const minViewers = parseInt(options.minViewers);
+        if (!isNaN(minViewers) && minViewers >= 0) {
+          process.env.MIN_VIEWERS = minViewers.toString();
+          console.log(chalk.blue(`Filtering streams with minimum ${minViewers} viewers`));
+        } else {
+          console.warn(chalk.yellow(`Invalid minimum viewers: ${options.minViewers}. Not applying filter.`));
+        }
+      }
+      
+      // Handle stream limit option
+      if (options.limit) {
+        const limit = parseInt(options.limit);
+        if (!isNaN(limit) && limit > 0) {
+          process.env.STREAM_LIMIT = limit.toString();
+          console.log(chalk.blue(`Setting stream fetch limit to ${limit} per source`));
+        } else {
+          console.warn(chalk.yellow(`Invalid stream limit: ${options.limit}. Using default from config.`));
+        }
+      }
+      
+      // Handle max concurrent streams option
+      if (options.max) {
+        const maxStreams = parseInt(options.max);
+        if (!isNaN(maxStreams) && maxStreams > 0) {
+          process.env.MAX_STREAMS = maxStreams.toString();
+          console.log(chalk.blue(`Setting maximum concurrent streams to ${maxStreams}`));
+        } else {
+          console.warn(chalk.yellow(`Invalid max streams: ${options.max}. Using default from player.json.`));
+        }
       }
 
       // Import and start the server
@@ -738,35 +853,6 @@ webCommands
     }
   });
 
-// Add start command at root level
-program
-  .command('start')
-  .description('Start both server and web frontend')
-  .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
-  .action(async (players: string[]) => {
-    try {
-      // Convert arguments to numbers
-      const screenPlayers = players.map(Number);
-      
-      // Set environment variables for screen configuration
-      if (screenPlayers.length > 0) {
-        process.env.START_SCREENS = screenPlayers.length.toString();
-        screenPlayers.forEach((numPlayers: number, index: number) => {
-          process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
-        });
-      }
-
-      // Start both server and frontend
-      console.log(chalk.blue('Starting LiveLink server and web frontend...'));
-      await import('../server/api.js');
-      console.log(chalk.green('LiveLink server started'));
-      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
-    } catch (error) {
-      console.error(chalk.red('Failed to start:'), error);
-      process.exit(1);
-    }
-  });
-
 // Add backwards compatibility for old command structure
 program
   .command('list-streams')
@@ -840,15 +926,159 @@ program
 
 // Set debug mode if flag is present
 const options = program.opts();
-if (options.debug) {
-  logger.setLevel('debug');
+if (process.env.DEBUG || options.debug) {
+  process.env.DEBUG = 'true';
   logger.debug('Debug mode enabled', 'CLI');
 }
+
+// Add start command at root level
+program
+  .command('start')
+  .description('Start both server and web frontend')
+  .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
+  .option('-s, --screen <screens>', 'Specific screens to start (comma-separated or multiple flags, e.g., "1,2" or "-s 1 -s 2")')
+  .option('-o, --organization <orgs>', 'Organizations to include by name or priority (comma-separated or multiple flags, e.g., "hololive,nijisanji" or "-o 1 -o 3" for priorities)')
+  .option('--sort <direction>', 'Sort streams by viewer count (asc or desc)', 'desc')
+  .option('-v, --min-viewers <count>', 'Minimum viewer count to include streams')
+  .option('-l, --limit <count>', 'Maximum number of streams to fetch per source')
+  .option('-m, --max <count>', 'Maximum number of concurrent streams (overrides player.json setting)')
+  .action(async (players: string[], options) => {
+    try {
+      // Convert arguments to numbers
+      const screenPlayers = players.map(Number);
+      
+      // Set environment variables for screen configuration
+      if (screenPlayers.length > 0) {
+        process.env.START_SCREENS = screenPlayers.length.toString();
+        screenPlayers.forEach((numPlayers: number, index: number) => {
+          process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
+        });
+      }
+
+      // Handle screen selection
+      if (options.screen) {
+        // Process screen options - could be comma-separated or multiple flags
+        let screens: number[] = [];
+        
+        if (Array.isArray(options.screen)) {
+          // Multiple -s flags were used
+          screens = options.screen.flatMap((s: string) => s.split(',')).map(Number).filter((n: number) => !isNaN(n));
+        } else {
+          // Single flag with possible comma-separated values
+          screens = options.screen.split(',').map(Number).filter((n: number) => !isNaN(n));
+        }
+        
+        if (screens.length > 0) {
+          process.env.SELECTED_SCREENS = screens.join(',');
+          console.log(chalk.blue(`Starting only screens: ${screens.join(', ')}`));
+        }
+      }
+
+      // Handle organization selection
+      if (options.organization) {
+        // Process organization options - could be comma-separated or multiple flags
+        let organizations: string[] = [];
+        
+        if (Array.isArray(options.organization)) {
+          // Multiple -o flags were used
+          organizations = options.organization.flatMap((o: string) => o.split(','));
+        } else {
+          // Single flag with possible comma-separated values
+          organizations = options.organization.split(',');
+        }
+        
+        if (organizations.length > 0) {
+          // Check if any values are numeric (priority) or range (e.g., "1-4")
+          const priorityValues: string[] = [];
+          const nameValues: string[] = [];
+          
+          organizations.forEach(org => {
+            // Check if it's a range like "1-4"
+            if (/^\d+-\d+$/.test(org)) {
+              priorityValues.push(org);
+            }
+            // Check if it's a number (priority)
+            else if (/^\d+$/.test(org)) {
+              priorityValues.push(org);
+            }
+            // Otherwise it's an organization name
+            else {
+              nameValues.push(org);
+            }
+          });
+          
+          if (priorityValues.length > 0) {
+            process.env.ORGANIZATION_PRIORITIES = priorityValues.join(',');
+            console.log(chalk.blue(`Using organization priorities: ${priorityValues.join(', ')}`));
+          }
+          
+          if (nameValues.length > 0) {
+            process.env.ORGANIZATION_NAMES = nameValues.join(',');
+            console.log(chalk.blue(`Using organizations: ${nameValues.join(', ')}`));
+          }
+        }
+      }
+      
+      // Handle sorting option
+      if (options.sort) {
+        const sortDirection = options.sort.toLowerCase();
+        if (sortDirection === 'asc' || sortDirection === 'desc') {
+          process.env.STREAM_SORT = sortDirection;
+          console.log(chalk.blue(`Sorting streams by viewer count: ${sortDirection}`));
+        } else {
+          console.warn(chalk.yellow(`Invalid sort direction: ${sortDirection}. Using default 'desc'`));
+          process.env.STREAM_SORT = 'desc';
+        }
+      }
+      
+      // Handle minimum viewers option
+      if (options.minViewers) {
+        const minViewers = parseInt(options.minViewers);
+        if (!isNaN(minViewers) && minViewers >= 0) {
+          process.env.MIN_VIEWERS = minViewers.toString();
+          console.log(chalk.blue(`Filtering streams with minimum ${minViewers} viewers`));
+        } else {
+          console.warn(chalk.yellow(`Invalid minimum viewers: ${options.minViewers}. Not applying filter.`));
+        }
+      }
+      
+      // Handle stream limit option
+      if (options.limit) {
+        const limit = parseInt(options.limit);
+        if (!isNaN(limit) && limit > 0) {
+          process.env.STREAM_LIMIT = limit.toString();
+          console.log(chalk.blue(`Setting stream fetch limit to ${limit} per source`));
+        } else {
+          console.warn(chalk.yellow(`Invalid stream limit: ${options.limit}. Using default from config.`));
+        }
+      }
+      
+      // Handle max concurrent streams option
+      if (options.max) {
+        const maxStreams = parseInt(options.max);
+        if (!isNaN(maxStreams) && maxStreams > 0) {
+          process.env.MAX_STREAMS = maxStreams.toString();
+          console.log(chalk.blue(`Setting maximum concurrent streams to ${maxStreams}`));
+        } else {
+          console.warn(chalk.yellow(`Invalid max streams: ${options.max}. Using default from player.json.`));
+        }
+      }
+
+      // Start both server and frontend
+      console.log(chalk.blue('Starting LiveLink server and web frontend...'));
+      await import('../server/api.js');
+      console.log(chalk.green('LiveLink server started'));
+      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
+    } catch (error) {
+      console.error(chalk.red('Failed to start:'), error);
+      process.exit(1);
+    }
+  });
 
 // Parse command line arguments
 program.parse(process.argv);
 
-// Start both server and frontend if no arguments provided (except for help)
+// Handle default case when no arguments are provided
 if (process.argv.length <= 2 && !process.argv.includes('-h') && !process.argv.includes('--help')) {
   // Get the number of players to start on each screen from arguments
   const args = process.argv.slice(2);

@@ -990,10 +990,23 @@ export class StreamManager extends EventEmitter {
     logger.info('Auto-starting streams...', 'StreamManager');
     
     try {
+      // Check for selected screens from environment variables
+      let selectedScreens: number[] = [];
+      if (process.env.SELECTED_SCREENS) {
+        selectedScreens = process.env.SELECTED_SCREENS.split(',').map(Number).filter(n => !isNaN(n));
+        logger.info(`Using selected screens from CLI: ${selectedScreens.join(', ')}`, 'StreamManager');
+      }
+      
       // Get all enabled screens with autoStart enabled from streams config
-      const autoStartScreens = this.config.streams
+      let autoStartScreens = this.config.streams
         .filter(stream => stream.enabled && stream.autoStart)
         .map(stream => stream.screen);
+      
+      // Filter by selected screens if specified
+      if (selectedScreens.length > 0) {
+        autoStartScreens = autoStartScreens.filter(screen => selectedScreens.includes(screen));
+        logger.info(`Filtered auto-start screens to: ${autoStartScreens.join(', ')}`, 'StreamManager');
+      }
       
       if (autoStartScreens.length === 0) {
         logger.info('No screens configured for auto-start', 'StreamManager');
@@ -1001,6 +1014,70 @@ export class StreamManager extends EventEmitter {
       }
       
       logger.info(`Auto-starting streams for screens: ${autoStartScreens.join(', ')}`, 'StreamManager');
+      
+      // Check for organization filters from environment variables
+      const organizationNames: string[] = [];
+      const organizationPriorities: (number | [number, number])[] = [];
+      
+      if (process.env.ORGANIZATION_NAMES) {
+        organizationNames.push(...process.env.ORGANIZATION_NAMES.split(','));
+        logger.info(`Using organization names from CLI: ${organizationNames.join(', ')}`, 'StreamManager');
+      }
+      
+      if (process.env.ORGANIZATION_PRIORITIES) {
+        const priorities = process.env.ORGANIZATION_PRIORITIES.split(',');
+        for (const priority of priorities) {
+          // Check if it's a range like "1-4"
+          if (priority.includes('-')) {
+            const [start, end] = priority.split('-').map(Number);
+            if (!isNaN(start) && !isNaN(end)) {
+              organizationPriorities.push([start, end]);
+            }
+          } else {
+            const num = Number(priority);
+            if (!isNaN(num)) {
+              organizationPriorities.push(num);
+            }
+          }
+        }
+        logger.info(`Using organization priorities from CLI: ${process.env.ORGANIZATION_PRIORITIES}`, 'StreamManager');
+      }
+      
+      // Get minimum viewers filter
+      let minViewers = 0;
+      if (process.env.MIN_VIEWERS) {
+        minViewers = parseInt(process.env.MIN_VIEWERS);
+        if (!isNaN(minViewers)) {
+          logger.info(`Filtering streams with minimum ${minViewers} viewers`, 'StreamManager');
+        }
+      }
+      
+      // Get stream limit per source
+      let streamLimit: number | undefined;
+      if (process.env.STREAM_LIMIT) {
+        streamLimit = parseInt(process.env.STREAM_LIMIT);
+        if (!isNaN(streamLimit)) {
+          logger.info(`Setting stream fetch limit to ${streamLimit} per source`, 'StreamManager');
+        }
+      }
+      
+      // Get max concurrent streams
+      let maxStreams: number | undefined;
+      if (process.env.MAX_STREAMS) {
+        maxStreams = parseInt(process.env.MAX_STREAMS);
+        if (!isNaN(maxStreams)) {
+          logger.info(`Setting maximum concurrent streams to ${maxStreams}`, 'StreamManager');
+        }
+      }
+      
+      // Get sort direction
+      let sortDirection: 'asc' | 'desc' = 'desc';
+      if (process.env.STREAM_SORT) {
+        if (process.env.STREAM_SORT === 'asc' || process.env.STREAM_SORT === 'desc') {
+          sortDirection = process.env.STREAM_SORT;
+          logger.info(`Sorting streams by viewer count: ${sortDirection}`, 'StreamManager');
+        }
+      }
       
       // First, fetch all available streams
       const allStreams = await this.getLiveStreams();
@@ -1045,6 +1122,36 @@ export class StreamManager extends EventEmitter {
               return false;
             }
             
+            // Apply minimum viewers filter if set
+            if (minViewers > 0 && (stream.viewerCount === undefined || stream.viewerCount < minViewers)) {
+              return false;
+            }
+            
+            // Apply organization name filter if set
+            if (organizationNames.length > 0 && stream.organization) {
+              if (!organizationNames.some(name => stream.organization?.toLowerCase() === name.toLowerCase())) {
+                return false;
+              }
+            }
+            
+            // Apply organization priority filter if set
+            if (organizationPriorities.length > 0 && stream.priority !== undefined) {
+              const matchesPriority = organizationPriorities.some(priority => {
+                if (Array.isArray(priority)) {
+                  // It's a range
+                  const [start, end] = priority;
+                  return stream.priority !== undefined && stream.priority >= start && stream.priority <= end;
+                } else {
+                  // It's a single value
+                  return stream.priority === priority;
+                }
+              });
+              
+              if (!matchesPriority) {
+                return false;
+              }
+            }
+            
             // Check if this stream matches the screen's configured sources
             const matchesSource = streamConfig.sources?.some(source => {
               if (!source.enabled) return false;
@@ -1071,13 +1178,41 @@ export class StreamManager extends EventEmitter {
             const bPriority = b.priority ?? 999;
             if (aPriority !== bPriority) return aPriority - bPriority;
             
+            // Then sort by viewer count if specified
+            if (sortDirection) {
+              const aViewers = a.viewerCount ?? 0;
+              const bViewers = b.viewerCount ?? 0;
+              
+              if (sortDirection === 'asc') {
+                return aViewers - bViewers;
+              } else {
+                return bViewers - aViewers;
+              }
+            }
+            
             return 0;
           });
           
+          // Apply stream limit if specified
+          let limitedStreams = screenStreams;
+          if (streamLimit !== undefined && streamLimit > 0 && screenStreams.length > streamLimit) {
+            limitedStreams = screenStreams.slice(0, streamLimit);
+            logger.info(`Limited streams for screen ${screen} from ${screenStreams.length} to ${limitedStreams.length}`, 'StreamManager');
+          }
+          
+          // Apply max streams setting if specified
+          if (maxStreams !== undefined && maxStreams > 0) {
+            const screenConfig = this.getScreenConfig(screen);
+            if (screenConfig) {
+              screenConfig.maxStreams = maxStreams;
+              logger.info(`Set maximum concurrent streams for screen ${screen} to ${maxStreams}`, 'StreamManager');
+            }
+          }
+          
           // Set up the queue first
-          if (screenStreams.length > 0) {
-            queueService.setQueue(screen, screenStreams);
-            logger.info(`Initialized queue for screen ${screen} with ${screenStreams.length} streams`, 'StreamManager');
+          if (limitedStreams.length > 0) {
+            queueService.setQueue(screen, limitedStreams);
+            logger.info(`Initialized queue for screen ${screen} with ${limitedStreams.length} streams`, 'StreamManager');
           }
           
           continue; // Skip to next screen
@@ -1108,6 +1243,36 @@ export class StreamManager extends EventEmitter {
             return false;
           }
           
+          // Apply minimum viewers filter if set
+          if (minViewers > 0 && (stream.viewerCount === undefined || stream.viewerCount < minViewers)) {
+            return false;
+          }
+          
+          // Apply organization name filter if set
+          if (organizationNames.length > 0 && stream.organization) {
+            if (!organizationNames.some(name => stream.organization?.toLowerCase() === name.toLowerCase())) {
+              return false;
+            }
+          }
+          
+          // Apply organization priority filter if set
+          if (organizationPriorities.length > 0 && stream.priority !== undefined) {
+            const matchesPriority = organizationPriorities.some(priority => {
+              if (Array.isArray(priority)) {
+                // It's a range
+                const [start, end] = priority;
+                return stream.priority !== undefined && stream.priority >= start && stream.priority <= end;
+              } else {
+                // It's a single value
+                return stream.priority === priority;
+              }
+            });
+            
+            if (!matchesPriority) {
+              return false;
+            }
+          }
+          
           // Check if this stream matches the screen's configured sources
           const matchesSource = streamConfig.sources?.some(source => {
             if (!source.enabled) return false;
@@ -1134,12 +1299,40 @@ export class StreamManager extends EventEmitter {
           const bPriority = b.priority ?? 999;
           if (aPriority !== bPriority) return aPriority - bPriority;
           
-          return 0; //(b.viewerCount || 0) - (a.viewerCount || 0);
+          // Then sort by viewer count if specified
+          if (sortDirection) {
+            const aViewers = a.viewerCount ?? 0;
+            const bViewers = b.viewerCount ?? 0;
+            
+            if (sortDirection === 'asc') {
+              return aViewers - bViewers;
+            } else {
+              return bViewers - aViewers;
+            }
+          }
+          
+          return 0;
         });
         
-        if (screenStreams.length > 0) {
+        // Apply stream limit if specified
+        let limitedStreams = screenStreams;
+        if (streamLimit !== undefined && streamLimit > 0 && screenStreams.length > streamLimit) {
+          limitedStreams = screenStreams.slice(0, streamLimit);
+          logger.info(`Limited streams for screen ${screen} from ${screenStreams.length} to ${limitedStreams.length}`, 'StreamManager');
+        }
+        
+        // Apply max streams setting if specified
+        if (maxStreams !== undefined && maxStreams > 0) {
+          const screenConfig = this.getScreenConfig(screen);
+          if (screenConfig) {
+            screenConfig.maxStreams = maxStreams;
+            logger.info(`Set maximum concurrent streams for screen ${screen} to ${maxStreams}`, 'StreamManager');
+          }
+        }
+        
+        if (limitedStreams.length > 0) {
           // Take the first stream to play and queue the rest
-          const [firstStream, ...queueStreams] = screenStreams;
+          const [firstStream, ...queueStreams] = limitedStreams;
           
           // Set up the queue first
           if (queueStreams.length > 0) {
