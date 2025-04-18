@@ -43,7 +43,7 @@ export class PlayerService {
 	private readonly MAX_NETWORK_RETRIES = 5; // Separate counter for network-related issues
 	private readonly RETRY_INTERVAL = 500;
 	private readonly NETWORK_RETRY_INTERVAL = 5000; // 5 seconds for network retries
-	private readonly MAX_BACKOFF_TIME = 20000; // 20 seconds maximum backoff (reduced from 60s)
+	private readonly MAX_BACKOFF_TIME = 60000; // 1 minute maximum backoff
 	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
 	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 	private readonly STARTUP_TIMEOUT = 60000; // 1 minute
@@ -319,13 +319,11 @@ export class PlayerService {
 			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
 			this.ipcPaths.set(options.screen, ipcPath);
 			
-			// Remove old socket file if it exists
-			if (fs.existsSync(ipcPath)) {
-				try {
-					fs.unlinkSync(ipcPath);
-				} catch {
-					// Ignore errors if file doesn't exist
-				}
+			// Remove existing socket file if it exists
+			try {
+				fs.unlinkSync(ipcPath);
+			} catch (_) {
+				// Ignore errors if file doesn't exist
 			}
 		}
 
@@ -645,8 +643,8 @@ export class PlayerService {
 		// Stop existing stream and wait for cleanup
 		await this.stopStream(screen);
 		
-		// Use a shorter delay to ensure cleanup is complete
-		await new Promise((resolve) => setTimeout(resolve, 300));
+		// Add a longer delay to ensure cleanup is complete
+		await new Promise((resolve) => setTimeout(resolve, 500));
 		
 		// Double check no existing process before starting new one
 		const existingStream = this.streams.get(screen);
@@ -694,12 +692,8 @@ export class PlayerService {
 			
 			// Check if we should retry
 			if (networkRetryCount < this.MAX_NETWORK_RETRIES) {
-				// Calculate backoff time with linear-capped approach instead of pure exponential
-				// This provides a gentler curve that won't exceed MAX_BACKOFF_TIME
-				const backoffTime = Math.min(
-					this.NETWORK_RETRY_INTERVAL * (networkRetryCount + 1),
-					this.MAX_BACKOFF_TIME
-				);
+				// Calculate backoff time with exponential backoff
+				const backoffTime = Math.min(this.NETWORK_RETRY_INTERVAL * Math.pow(1.5, networkRetryCount), this.MAX_BACKOFF_TIME);
 				
 				logger.info(`Network error detected for ${url} on screen ${screen}, retry ${networkRetryCount + 1}/${this.MAX_NETWORK_RETRIES} in ${Math.round(backoffTime/1000)}s`, 'PlayerService');
 				
@@ -709,13 +703,6 @@ export class PlayerService {
 				// Clean up but don't emit error yet
 				this.cleanup_after_stop(screen);
 				this.clearMonitoring(screen);
-				
-				// Clear any existing retry timer first
-				const existingTimer = this.retryTimers.get(screen);
-				if (existingTimer) {
-					clearTimeout(existingTimer);
-					this.retryTimers.delete(screen);
-				}
 				
 				// Set up retry timer
 				const retryTimer = setTimeout(async () => {
@@ -835,14 +822,18 @@ export class PlayerService {
 			// Send quit command via IPC
 			await this.sendMpvCommand(screen, 'quit');
 			
-			// Give it a moment to shutdown gracefully
-			await new Promise((resolve) => setTimeout(resolve, 800)); // Reduced from 1000ms
+			// Give it a moment to shutdown gracefully (increased timeout)
+			await new Promise((resolve) => setTimeout(resolve, 1000));
 			
-			// Check if process is still running
+			// Check if the process has exited
 			gracefulShutdown = !this.isProcessRunning(player.process.pid);
-		} catch {
-			// If IPC fails, move on to force kill
-			logger.debug(`Failed to gracefully stop stream on screen ${screen}`, 'PlayerService');
+			if (gracefulShutdown) {
+				logger.debug(`Graceful shutdown successful for screen ${screen}`, 'PlayerService');
+			} else {
+				logger.debug(`Graceful shutdown failed for screen ${screen}, will try force kill`, 'PlayerService');
+			}
+		} catch (error) {
+			logger.debug(`IPC command failed for screen ${screen}, will try force kill: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
 		}
 		
 		// If not force but graceful shutdown worked, use normal cleanup

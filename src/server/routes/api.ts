@@ -1203,26 +1203,4 @@ router.post('/streams/manual-start', async (ctx: Context) => {
   }
 });
 
-// Add a more powerful refresh endpoint that also restarts streams
-router.post('/api/streams/force-refresh-all', async (ctx: Context) => {
-  try {
-    logger.info('Force refreshing all streams and restarting empty screens', 'API');
-    
-    // Get the restart parameter (default to true)
-    const { restart = true } = ctx.request.body as { restart?: boolean };
-    
-    // Call the new forceRefreshAll method
-    await streamManager.forceRefreshAll(restart);
-    
-    ctx.body = { 
-      success: true, 
-      message: `Force refresh complete. ${restart ? 'Empty screens were restarted.' : 'No streams were restarted.'}`
-    };
-  } catch (error) {
-    logError('Failed during force refresh operation', 'API', error);
-    ctx.status = 500;
-    ctx.body = { success: false, error: 'Failed to complete force refresh operation' };
-  }
-});
-
 export const apiRouter = router; 
