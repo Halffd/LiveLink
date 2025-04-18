@@ -700,17 +700,17 @@ export class StreamManager extends EventEmitter {
     // Check if we have a recent cache
     const now = Date.now();
     if (this.cachedStreams.length > 0 && now - this.lastStreamFetch < this.STREAM_CACHE_TTL) {
-      logger.info(`Using cached streams (${this.cachedStreams.length} streams, age: ${(now - this.lastStreamFetch) / 1000}s)`, 'StreamManager');
+      logger.debug(
+        `Using cached streams (${this.cachedStreams.length} streams, age: ${
+          now - this.lastStreamFetch
+        }ms)`,
+        'StreamManager'
+      );
       return this.cachedStreams;
     }
 
-    // If we're currently offline based on network checks, use cache and don't try to fetch
-    if (this.isOffline && this.cachedStreams.length > 0) {
-      logger.warn(`Network appears to be offline, using ${this.cachedStreams.length} cached streams instead of fetching`, 'StreamManager');
-      return this.cachedStreams;
-    }
-
-    logger.info(`Fetching fresh stream data (cache expired or forced refresh)`, 'StreamManager');
+    logger.info('Fetching fresh stream data...', 'StreamManager');
+    
     try {
       const results: Array<StreamSource & { screen?: number; sourceName?: string; priority?: number }> = [];
       const streamConfigs = this.config.streams;
@@ -740,219 +740,92 @@ export class StreamManager extends EventEmitter {
           String(screenNumber),
           sortedSources.map(s => `${s.type}:${s.subtype || 'other'} (${s.priority || 999})`).join(', ')
         );
-        
-        for (const source of sortedSources) {
-          const limit = source.limit || 25;
-          let streams: StreamSource[] = [];
-          let sourceSuccess = false;
-          let attemptCount = 0;
-          const MAX_SOURCE_ATTEMPTS = 2;
 
-          while (!sourceSuccess && attemptCount < MAX_SOURCE_ATTEMPTS) {
+        // Process each source
+        for (const source of sortedSources) {
           try {
-              attemptCount++;
-              
+            // Get streams based on source type
+            let sourceStreams: StreamSource[] = [];
+
             if (source.type === 'holodex') {
-                if (!this.holodexService) {
-                  logger.warn('Holodex service not initialized, skipping source', 'StreamManager');
-                  break;
-                }
-                
-              if (source.subtype === 'favorites') {
-                  // Check that we have valid favorite channels
-                  // Get flattened list of all holodex favorites across all groups
-                  const flattenedHolodexFavorites = this.getFlattenedFavorites('holodex');
-                  if (!flattenedHolodexFavorites || flattenedHolodexFavorites.length === 0) {
-                    logger.warn('No Holodex favorite channels configured, skipping source', 'StreamManager');
-                    break;
-                  }
-                  
-                streams = await this.holodexService.getLiveStreams({
+              if (source.subtype === 'organization' && source.name) {
+                sourceStreams = await this.holodexService.getLiveStreams({
+                  organization: source.name as string,
+                  limit: source.limit || 50
+                });
+              } else if (source.subtype === 'favorites') {
+                sourceStreams = await this.holodexService.getLiveStreams({
                   channels: this.getFlattenedFavorites('holodex'),
-                  limit: limit,
-                  sort: 'start_scheduled'  // Sort by scheduled start time
+                  limit: source.limit || 50
                 });
-                logger.debug(
-                  'Fetched %s favorite Holodex streams for screen %s',
-                  String(streams.length),
-                  String(screenNumber)
-                );
-                
-                // For favorites, assign a higher priority based on source priority
-                // This ensures favorites are always prioritized over other sources
-                const basePriority = source.priority || 999;
-                streams.forEach(s => {
-                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
-                    s.screen = screenNumber; // Assign screen number
-                });
-                  
-                  sourceSuccess = true;
-              } else if (source.subtype === 'organization' && source.name) {
-                streams = await this.holodexService.getLiveStreams({
-                  organization: source.name,
-                  limit: limit,
-                  sort: 'start_scheduled'  // Sort by scheduled start time
-                });
-                  // Assign screen number and source priority to organization streams
-                  streams.forEach(s => {
-                    s.screen = screenNumber;
-                    s.priority = source.priority || 999;
-                  });
-                  
-                  sourceSuccess = true;
               }
             } else if (source.type === 'twitch') {
-                if (!this.twitchService) {
-                  logger.warn('Twitch service not initialized, skipping source', 'StreamManager');
-                  break;
-                }
-                
               if (source.subtype === 'favorites') {
-                  // Check that we have valid favorite channels
-                  // Get flattened list of all twitch favorites across all groups
-                  const flattenedTwitchFavorites = this.getFlattenedFavorites('twitch');
-                  if (!flattenedTwitchFavorites || flattenedTwitchFavorites.length === 0) {
-                    logger.warn('No Twitch favorite channels configured, skipping source', 'StreamManager');
-                    break;
-                  }
-                  
-                streams = await this.twitchService.getStreams({
+                sourceStreams = await this.twitchService.getStreams({
                   channels: this.getFlattenedFavorites('twitch'),
-                  limit: limit
+                  limit: source.limit || 50
                 });
-                  // Assign screen number and source priority to Twitch favorite streams
-                  streams.forEach(s => {
-                    s.screen = screenNumber;
-                    s.priority = source.priority || 999;
-                  });
-                  
-                  sourceSuccess = true;
-                } else {
-                  streams = await this.twitchService.getStreams({
-                    tags: source.tags,
-                    limit: limit
-                  });
-                  // Assign screen number and source priority to Twitch streams
-                streams.forEach(s => {
-                    s.screen = screenNumber;
-                    s.priority = source.priority || 999;
-                  });
-                  
-                  sourceSuccess = true;
               }
-            } else if (source.type === 'youtube') {
-                if (!this.youtubeService) {
-                  logger.warn('YouTube service not initialized, skipping source', 'StreamManager');
-                  break;
-                }
-                
-              if (source.subtype === 'favorites') {
-                  // Check that we have valid favorite channels
-                  // Get flattened list of all youtube favorites across all groups
-                  const flattenedYoutubeFavorites = this.getFlattenedFavorites('youtube');
-                  if (!flattenedYoutubeFavorites || flattenedYoutubeFavorites.length === 0) {
-                    logger.warn('No YouTube favorite channels configured, skipping source', 'StreamManager');
-                    break;
-                  }
-                  
-                streams = await this.youtubeService.getLiveStreams({
-                  channels: this.getFlattenedFavorites('youtube'),
-                  limit
-                });
-                
-                // For favorites, assign a higher priority based on source priority
-                const basePriority = source.priority || 999;
-                streams.forEach(s => {
-                  s.priority = basePriority - 100; // Make favorites 100 points higher priority
-                });
-                  
-                  sourceSuccess = true;
+            }
+
+            // Filter out any streams with 'ended' status
+            sourceStreams = sourceStreams.filter(stream => {
+              // For ended streams, filter them out
+              if (stream.sourceStatus === 'ended') {
+                logger.debug(`Filtering out ended stream: ${stream.url}`, 'StreamManager');
+                return false;
+              }
+              
+              // For upcoming streams, check if they're in the past
+              if (stream.sourceStatus === 'upcoming' && stream.startTime) {
+                // If the start time is in the past by more than 30 minutes, filter it out
+                if (stream.startTime < now - 30 * 60 * 1000) {
+                  logger.debug(`Filtering out past upcoming stream: ${stream.url}`, 'StreamManager');
+                  return false;
                 }
               }
               
-              // Add streams to results
-              if (streams.length > 0) {
-                results.push(...streams);
-              }
+              return true;
+            });
+
+            // Add screen and priority information to all streams from this source
+            sourceStreams.forEach(stream => {
+              stream.screen = screenNumber;
+              stream.priority = source.priority || 999;
+              stream.subtype = source.subtype;
+            });
+
+            // Add the streams to our results
+            results.push(...sourceStreams);
           } catch (error) {
-              const errorMsg = error instanceof Error ? error.message : String(error);
-              
-              if (attemptCount < MAX_SOURCE_ATTEMPTS) {
-                logger.warn(
-                  `Failed to fetch streams for source ${source.type}:${source.subtype || 'other'} on screen ${screenNumber} (attempt ${attemptCount}/${MAX_SOURCE_ATTEMPTS}), retrying...`,
-                  'StreamManager'
-                );
-                
-                // Short delay before retry
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              } else {
             logger.error(
-                  `Failed to fetch streams for source ${source.type}:${source.subtype || 'other'} on screen ${screenNumber} after ${MAX_SOURCE_ATTEMPTS} attempts`,
+              `Error fetching streams for ${source.type}:${source.subtype}`,
               'StreamManager',
               error instanceof Error ? error : new Error(String(error))
             );
-                
-                // If this is a retry and we still failed, increment error count
-                if (retryCount > 0) {
-                  this.streamRetries.set(screenNumber, (this.streamRetries.get(screenNumber) || 0) + 1);
-                }
-                
-                // Check if error might indicate network failure
-                if (errorMsg.includes('network') || 
-                    errorMsg.includes('ECONNREFUSED') || 
-                    errorMsg.includes('ENOTFOUND') || 
-                    errorMsg.includes('timeout')) {
-                  this.isOffline = true;
-                  logger.warn('Network error detected, marking as offline', 'StreamManager');
-                }
-              }
-            }
           }
         }
       }
 
-      // Update cache if we got results (even if partial)
-      if (results.length > 0) {
+      // Save to cache
+      this.cachedStreams = results;
       this.lastStreamFetch = now;
-        this.cachedStreams = results;
-        this.isOffline = false; // Reset offline flag if we successfully got results
-      } else if (this.cachedStreams.length > 0) {
-        // If we got no results but have cached data, use the cache and log a warning
-        logger.warn('Failed to fetch new streams, using cached streams (possible network issue)', 'StreamManager');
-        return this.cachedStreams;
-      }
 
+      logger.info(`Fetched ${results.length} streams from all sources`, 'StreamManager');
+      
       return results;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      logger.error('Failed to fetch live streams', 'StreamManager');
-      logger.debug(errorMsg, 'StreamManager');
+      logger.error('Failed to fetch streams', 'StreamManager', 
+        error instanceof Error ? error : new Error(String(error)));
       
-      // Check if error might indicate network failure
-      if (errorMsg.includes('network') || 
-          errorMsg.includes('ECONNREFUSED') || 
-          errorMsg.includes('ENOTFOUND') || 
-          errorMsg.includes('timeout')) {
-        this.isOffline = true;
-        logger.warn('Network error detected, marking as offline', 'StreamManager');
-      }
-      
-      // If we haven't exceeded max retries, try again
-      if (retryCount < 3) {
-        const retryDelay = 2000 * (retryCount + 1); // Increasing backoff
-        logger.info(`Retrying stream fetch in ${retryDelay/1000}s (attempt ${retryCount + 1}/3)`, 'StreamManager');
-        
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      // If this is not a retry, try once more
+      if (retryCount < 1) {
+        logger.info('Retrying stream fetch...', 'StreamManager');
         return this.getLiveStreams(retryCount + 1);
       }
       
-      // Return cached streams if available, even if they're old
-      if (this.cachedStreams.length > 0) {
-        logger.warn(`Using expired cached streams (${this.cachedStreams.length} streams) after failed fetch attempts`, 'StreamManager');
-        return this.cachedStreams;
-      }
-      
-      return [];
+      // Return cached streams if available, otherwise empty array
+      return this.cachedStreams.length > 0 ? this.cachedStreams : [];
     }
   }
 
@@ -1401,8 +1274,21 @@ export class StreamManager extends EventEmitter {
 
   public async addToQueue(screen: number, source: StreamSource): Promise<void> {
     const queue = this.queues.get(screen) || [];
+    
+    // Check if stream already exists in queue
+    const exists = queue.some(item => item.url === source.url);
+    if (exists) {
+      logger.info(`Stream ${source.url} already in queue for screen ${screen}`, 'StreamManager');
+      return;
+    }
+    
     queue.push(source);
     this.queues.set(screen, queue);
+    
+    // Also update the queue service to ensure consistency
+    queueService.setQueue(screen, queue);
+    
+    logger.info(`Added stream ${source.url} to queue for screen ${screen}`, 'StreamManager');
     this.emit('queueUpdate', screen, queue);
   }
 
@@ -1833,6 +1719,19 @@ export class StreamManager extends EventEmitter {
 
       // Get streams from all sources
       const streams = await this.getAllStreamsForScreen(screen);
+      if (streams.length === 0) {
+        logger.info(`No streams found for screen ${screen}, queue will be empty`, 'StreamManager');
+      }
+      
+      // Log stream status distribution
+      const liveCount = streams.filter(s => s.sourceStatus === 'live').length;
+      const upcomingCount = streams.filter(s => s.sourceStatus === 'upcoming').length;
+      const otherCount = streams.length - liveCount - upcomingCount;
+      
+      logger.info(
+        `Stream status breakdown for screen ${screen}: ${liveCount} live, ${upcomingCount} upcoming, ${otherCount} other`,
+        'StreamManager'
+      );
       
       // Filter out watched streams based on configuration
       const filteredStreams = this.filterUnwatchedStreams(streams, screen);
@@ -1842,6 +1741,7 @@ export class StreamManager extends EventEmitter {
 
       // Update queue
       this.queues.set(screen, sortedStreams);
+      queueService.setQueue(screen, sortedStreams);
       
       logger.info(
         `Updated queue for screen ${screen}: ${sortedStreams.length} streams (${streams.length - sortedStreams.length} filtered)`,
@@ -1941,15 +1841,54 @@ export class StreamManager extends EventEmitter {
   // Add method to force queue refresh
   public async forceQueueRefresh(): Promise<void> {
     logger.info('Forcing queue refresh for all screens', 'StreamManager');
+    
+    // Save existing manually added streams
+    const manuallyAddedStreams = new Map<number, StreamSource[]>();
+    for (const [screen, queue] of this.queues.entries()) {
+      // Consider streams without subtype as manually added
+      const manual = queue.filter(stream => !stream.subtype);
+      if (manual.length > 0) {
+        manuallyAddedStreams.set(screen, manual);
+        logger.info(`Preserving ${manual.length} manually added streams for screen ${screen}`, 'StreamManager');
+      }
+    }
+    
     // Reset all refresh timestamps to force update
     this.lastStreamFetch = 0;
-    for (const screen of this.getEnabledScreens()) {
+    
+    // Get all enabled screens
+    const enabledScreens = this.getEnabledScreens();
+    
+    // Clear last refresh timestamps for all screens to force fresh fetch
+    for (const screen of enabledScreens) {
       this.lastStreamRefresh.set(screen, 0);
     }
-    // Clear any existing queues
+    
+    // Clear any existing queues before fetching new data
     queueService.clearAllQueues();
+    logger.info('Cleared all existing queues', 'StreamManager');
+    
+    // Clear cached streams to ensure we get fresh data
+    this.cachedStreams = [];
+    
     // Force update all queues
+    logger.info('Fetching fresh stream data for all screens', 'StreamManager');
     await this.updateAllQueues(true);
+    
+    // Restore manually added streams
+    for (const [screen, manual] of manuallyAddedStreams.entries()) {
+      const currentQueue = this.queues.get(screen) || [];
+      // Avoid duplicates by checking URLs
+      const currentUrls = new Set(currentQueue.map(stream => stream.url));
+      const uniqueManual = manual.filter(stream => !currentUrls.has(stream.url));
+      
+      if (uniqueManual.length > 0) {
+        const newQueue = [...currentQueue, ...uniqueManual];
+        this.queues.set(screen, newQueue);
+        queueService.setQueue(screen, newQueue);
+        logger.info(`Restored ${uniqueManual.length} manually added streams for screen ${screen}`, 'StreamManager');
+      }
+    }
   }
 
   // Add network recovery handler
@@ -2142,6 +2081,32 @@ export class StreamManager extends EventEmitter {
     }
   }
 
+  /**
+   * Force refresh all streams and optionally restart them
+   * @param restart Whether to restart all streams after refreshing
+   */
+  public async forceRefreshAll(restart: boolean = false): Promise<void> {
+    logger.info(`Force refreshing all streams${restart ? ' and restarting them' : ''}`, 'StreamManager');
+    
+    try {
+      // Force refresh all queues first
+      await this.forceQueueRefresh();
+      
+      if (restart) {
+        // Restart all streams
+        await this.restartStreams();
+        logger.info('All streams have been restarted successfully', 'StreamManager');
+      }
+    } catch (error) {
+      logger.error(
+        'Failed to force refresh all streams', 
+        'StreamManager', 
+        error instanceof Error ? error : new Error(String(error))
+      );
+      throw error;
+    }
+  }
+
   // Add a method to periodically clean up finished streams
   private setupStreamCleanup(): void {
     setInterval(() => {
@@ -2200,10 +2165,32 @@ export class StreamManager extends EventEmitter {
           }
         }
 
+        // Filter out finished streams (keep live and upcoming)
+        sourceStreams = sourceStreams.filter(stream => {
+          // For YouTube/Holodex, sourceStatus could be 'live', 'upcoming', or 'ended'
+          if (stream.sourceStatus === 'ended') {
+            logger.debug(`Filtering out ended stream: ${stream.url}`, 'StreamManager');
+            return false;
+          }
+          
+          // For upcoming streams, check if they're in the past
+          if (stream.sourceStatus === 'upcoming' && stream.startTime) {
+            const now = Date.now();
+            // If the start time is in the past by more than 30 minutes, filter it out
+            if (stream.startTime < now - 30 * 60 * 1000) {
+              logger.debug(`Filtering out past upcoming stream: ${stream.url}`, 'StreamManager');
+              return false;
+            }
+          }
+          
+          return true;
+        });
+
         // Add source metadata to streams
         sourceStreams.forEach(stream => {
           stream.subtype = source.subtype;
           stream.priority = source.priority;
+          stream.screen = screen;
         });
 
         streams.push(...sourceStreams);
@@ -2216,6 +2203,7 @@ export class StreamManager extends EventEmitter {
       }
     }
 
+    logger.info(`Retrieved ${streams.length} total streams for screen ${screen}`, 'StreamManager');
     return streams;
   }
 

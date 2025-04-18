@@ -315,15 +315,33 @@ export class PlayerService {
 
 		// Ensure IPC path is initialized
 		if (!this.ipcPaths.has(options.screen)) {
-			// Use a more reliable path for IPC sockets
-			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
+			// Create a consistent directory for IPC socket files
+			const userHomeDir = process.env.HOME || '/tmp';
+			const ipcDir = path.join(userHomeDir, '.livelink');
+			
+			// Ensure directory exists
+			try {
+				if (!fs.existsSync(ipcDir)) {
+					fs.mkdirSync(ipcDir, { recursive: true });
+				}
+			} catch (error) {
+				logger.error(`Failed to create IPC directory ${ipcDir}`, 'PlayerService', error as Error);
+			}
+			
+			// Use the user's home directory for more reliable socket location
+			const ipcPath = path.join(ipcDir, `mpv-ipc-${options.screen}`);
 			this.ipcPaths.set(options.screen, ipcPath);
 			
 			// Remove existing socket file if it exists
 			try {
-				fs.unlinkSync(ipcPath);
-			} catch (_) {
-				// Ignore errors if file doesn't exist
+				if (fs.existsSync(ipcPath)) {
+					fs.unlinkSync(ipcPath);
+					logger.info(`Removed existing socket file at ${ipcPath}`, 'PlayerService');
+				}
+			} catch (error) {
+				// Ignore errors if file doesn't exist or can't be removed
+				logger.warn(`Could not remove existing socket at ${ipcPath}`, 'PlayerService',
+					error instanceof Error ? error.message : String(error));
 			}
 		}
 
@@ -351,7 +369,7 @@ export class PlayerService {
 		}
 
 		// Wait a moment to let MPV create the socket
-		await new Promise(resolve => setTimeout(resolve, 500));
+		await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms
 		
 		return mpvProcess;
 	}

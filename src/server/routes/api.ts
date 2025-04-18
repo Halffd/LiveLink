@@ -1203,4 +1203,109 @@ router.post('/streams/manual-start', async (ctx: Context) => {
   }
 });
 
+// Force refresh all screens and restart streams
+router.post('/api/streams/force-refresh-all', async (ctx: Context) => {
+  try {
+    // Get the restart parameter from request (optional)
+    const { restart = false } = ctx.request.body as { restart?: boolean };
+    
+    logger.log({
+      level: LogLevel.INFO,
+      message: `Force refreshing all screens${restart ? ' and restarting streams' : ''}`,
+      context: 'API'
+    });
+    
+    await streamManager.forceRefreshAll(restart);
+    
+    ctx.body = { 
+      success: true, 
+      message: 'All screens refreshed successfully' 
+    };
+  } catch (error) {
+    logger.log({
+      level: LogLevel.ERROR,
+      message: 'Failed to force refresh all screens',
+      context: 'API',
+      error: error instanceof Error ? error : new Error(String(error))
+    });
+    
+    ctx.status = 500;
+    ctx.body = { 
+      success: false, 
+      message: 'Failed to refresh screens' 
+    };
+  }
+});
+
+// Endpoint to manually add a live stream to the queue for testing
+router.post('/api/streams/add-test-stream', async (ctx: Context) => {
+  try {
+    const { url, title, platform, screen = 1 } = ctx.request.body as { 
+      url: string; 
+      title?: string;
+      platform?: 'youtube' | 'twitch';
+      screen?: number;
+    };
+    
+    if (!url) {
+      ctx.status = 400;
+      ctx.body = { 
+        success: false, 
+        message: 'URL is required' 
+      };
+      return;
+    }
+    
+    // Create a stream source
+    const streamSource: StreamSource = {
+      url,
+      title: title || `Test Stream (${new Date().toLocaleTimeString()})`,
+      platform: platform || (url.includes('youtube') ? 'youtube' : 'twitch'),
+      viewerCount: 100,
+      thumbnail: '',
+      sourceStatus: 'live',
+      startTime: Date.now(),
+      priority: 1,
+      screen,
+      // Don't set subtype so it's recognized as manually added
+    };
+    
+    logger.log({
+      level: LogLevel.INFO,
+      message: `Adding test stream to screen ${screen} queue: ${url}`,
+      context: 'API'
+    });
+    
+    // Add to the queue
+    await streamManager.addToQueue(screen, streamSource);
+    
+    // Force refresh the queue to make sure our change is visible
+    await streamManager.updateQueue(screen);
+    
+    logger.log({
+      level: LogLevel.INFO,
+      message: `Manually added test stream to screen ${screen} queue: ${url}`,
+      context: 'API'
+    });
+    
+    ctx.body = { 
+      success: true, 
+      message: `Test stream added to screen ${screen} queue` 
+    };
+  } catch (error) {
+    logger.log({
+      level: LogLevel.ERROR,
+      message: 'Failed to add test stream',
+      context: 'API',
+      error: error instanceof Error ? error : new Error(String(error))
+    });
+    
+    ctx.status = 500;
+    ctx.body = { 
+      success: false, 
+      message: 'Failed to add test stream' 
+    };
+  }
+});
+
 export const apiRouter = router; 

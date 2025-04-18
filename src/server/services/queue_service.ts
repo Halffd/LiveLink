@@ -156,6 +156,14 @@ class QueueService extends EventEmitter {
     }
 
     const queue = this.getQueue(screen);
+    
+    // Check if this URL is already in the queue
+    const exists = queue.some(item => item.url === source.url);
+    if (exists) {
+      logger.info(`Stream ${source.url} already in queue for screen ${screen}`, 'QueueService');
+      return;
+    }
+    
     queue.push(source);
     this.setQueue(screen, queue);
     logger.info(`Added stream ${source.url} to queue for screen ${screen}`, 'QueueService');
