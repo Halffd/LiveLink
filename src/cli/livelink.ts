@@ -1263,36 +1263,58 @@ async function handleStreamList() {
 
     const streams = await response.json() as Stream[];
     if (!streams || streams.length === 0) {
-      console.log('No active streams');
+      console.log('\nNo active streams');
       return;
     }
 
     console.log('\nActive Streams:\n');
 
-    for (const stream of streams) {
+    for (let i = 0; i < streams.length; i++) {
+      const stream = streams[i];
+      
       // Get additional details for each stream
-      const detailsResponse = await fetch(`${API_URL}/streams/${stream.screen}/details`);
-      const details = detailsResponse.ok ? await detailsResponse.json() as Stream : null;
-      
-      console.log(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`);
-      console.log(`Title: ${stream.title || details?.title || 'No Title'}`);
-      console.log(`URL: ${stream.url}`);
-      console.log(`Platform: ${stream.platform}`);
-      console.log(`Quality: ${stream.quality}`);
-      console.log(`Status: ${stream.status}`);
-      
-      if (details) {
-        if (details.viewerCount) console.log(`Viewers: ${details.viewerCount.toLocaleString()}`);
-        if (details.organization) console.log(`Organization: ${details.organization}`);
-        if (stream.startTime) {
-          const uptime = formatUptime(stream.startTime);
-          console.log(`Uptime: ${uptime}`);
+      try {
+        const detailsResponse = await fetch(`${API_URL}/streams/${stream.screen}/details`);
+        const details = detailsResponse.ok ? await detailsResponse.json() as Stream : null;
+        
+        console.log(chalk.cyan(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`));
+        console.log(`Title: ${stream.title || details?.title || 'No Title'}`);
+        console.log(`URL: ${stream.url}`);
+        console.log(`Platform: ${stream.platform || 'unknown'}`);
+        console.log(`Quality: ${stream.quality || 'default'}`);
+        console.log(`Status: ${stream.status || 'unknown'}`);
+        
+        if (details) {
+          if (details.viewerCount) console.log(`Viewers: ${details.viewerCount.toLocaleString()}`);
+          if (details.organization) console.log(`Organization: ${details.organization}`);
+          if (stream.startTime) {
+            const uptime = formatUptime(stream.startTime);
+            console.log(`Uptime: ${uptime}`);
+          }
+        }
+        
+        // Add a divider between streams unless it's the last one
+        if (i < streams.length - 1) {
+          console.log('\n' + '-'.repeat(30) + '\n');
+        }
+      } catch (error) {
+        console.error(chalk.yellow(`Error getting details for screen ${stream.screen}:`), 
+          error instanceof Error ? error.message : String(error));
+        
+        // Print basic info even if details fail
+        console.log(chalk.cyan(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`));
+        console.log(`Title: ${stream.title || 'No Title'}`);
+        console.log(`URL: ${stream.url}`);
+        console.log(`Status: ${stream.status || 'unknown'}`);
+        
+        // Add a divider between streams unless it's the last one
+        if (i < streams.length - 1) {
+          console.log('\n' + '-'.repeat(30) + '\n');
         }
       }
-      console.log('');
     }
   } catch (error) {
-    console.error('Error:', error instanceof Error ? error.message : String(error));
+    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
   }
 }
 

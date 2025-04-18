@@ -1,5 +1,5 @@
 /** @type {import('ts-jest').JestConfigWithTsJest} */
-module.exports = {
+export default {
   testEnvironment: 'node',
   preset: 'ts-jest',
   roots: ['<rootDir>/src'],
@@ -27,5 +27,10 @@ module.exports = {
   ],
   coverageReporters: ['text', 'lcov', 'clover', 'html'],
   setupFilesAfterEnv: ['./jest.setup.js'],
-  verbose: true
+  verbose: true,
+  // Support ESM modules
+  extensionsToTreatAsEsm: ['.ts', '.tsx'],
+  transformIgnorePatterns: [
+    'node_modules/(?!(.*\\.mjs$|@/.*|holodex\\.js))'
+  ]
 };

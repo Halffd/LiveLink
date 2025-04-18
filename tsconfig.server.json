@@ -31,6 +31,9 @@
     ".svelte-kit",
     "build",
     "dist",
-    "node_modules/@types/mdx"
+    "node_modules/@types/mdx",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/__tests__/**"
   ]
 } 
