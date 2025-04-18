@@ -1215,7 +1215,49 @@ router.post('/api/streams/force-refresh-all', async (ctx: Context) => {
       context: 'API'
     });
     
+    // Save current active streams before refreshing
+    const activeStreams = streamManager.getActiveStreams();
+    logger.log({
+      level: LogLevel.INFO,
+      message: `Current active streams: ${activeStreams.length}`,
+      context: 'API'
+    });
+    
+    // Perform the refresh
     await streamManager.forceRefreshAll(restart);
+    
+    // Check if we lost any streams during refresh
+    const newActiveStreams = streamManager.getActiveStreams();
+    if (!restart && activeStreams.length > 0 && newActiveStreams.length === 0) {
+      logger.log({
+        level: LogLevel.WARN,
+        message: 'Streams were lost during refresh, attempting to restore',
+        context: 'API'
+      });
+      
+      // Attempt to restart lost streams
+      for (const stream of activeStreams) {
+        try {
+          await streamManager.startStream({
+            url: stream.url,
+            screen: stream.screen,
+            quality: stream.quality || 'best'
+          });
+          logger.log({
+            level: LogLevel.INFO,
+            message: `Restored stream on screen ${stream.screen}`,
+            context: 'API'
+          });
+        } catch (streamError) {
+          logger.log({
+            level: LogLevel.ERROR,
+            message: `Failed to restore stream on screen ${stream.screen}`,
+            context: 'API',
+            error: streamError instanceof Error ? streamError : new Error(String(streamError))
+          });
+        }
+      }
+    }
     
     ctx.body = { 
       success: true, 
