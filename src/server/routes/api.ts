@@ -1117,9 +1117,7 @@ router.post('/streams/queue/:screen/refresh', async (ctx: Context) => {
     logger.error('Failed to refresh queue', 'API', errorObj);
     ctx.status = 500;
     ctx.body = { 
-      error: 'Failed to refresh queue', 
-      message: errorObj.message || 'Internal server error',
-      details: 'Check server logs for more information'
+      error: 'Failed to refresh queue'
     };
   }
 });
@@ -1203,78 +1201,30 @@ router.post('/streams/manual-start', async (ctx: Context) => {
   }
 });
 
-// Force refresh all screens and restart streams
-router.post('/api/streams/force-refresh-all', async (ctx: Context) => {
+// Force refresh all screens and optionally restart streams
+router.post('/streams/force-refresh-all', async (ctx: Context) => {
   try {
-    // Get the restart parameter from request (optional)
     const { restart = false } = ctx.request.body as { restart?: boolean };
     
-    logger.log({
-      level: LogLevel.INFO,
-      message: `Force refreshing all screens${restart ? ' and restarting streams' : ''}`,
-      context: 'API'
-    });
+    logger.info(`API request to force refresh all streams${restart ? ' and restart them' : ''}`, 'API');
     
-    // Save current active streams before refreshing
-    const activeStreams = streamManager.getActiveStreams();
-    logger.log({
-      level: LogLevel.INFO,
-      message: `Current active streams: ${activeStreams.length}`,
-      context: 'API'
-    });
-    
-    // Perform the refresh
     await streamManager.forceRefreshAll(restart);
     
-    // Check if we lost any streams during refresh
-    const newActiveStreams = streamManager.getActiveStreams();
-    if (!restart && activeStreams.length > 0 && newActiveStreams.length === 0) {
-      logger.log({
-        level: LogLevel.WARN,
-        message: 'Streams were lost during refresh, attempting to restore',
-        context: 'API'
-      });
-      
-      // Attempt to restart lost streams
-      for (const stream of activeStreams) {
-        try {
-          await streamManager.startStream({
-            url: stream.url,
-            screen: stream.screen,
-            quality: stream.quality || 'best'
-          });
-          logger.log({
-            level: LogLevel.INFO,
-            message: `Restored stream on screen ${stream.screen}`,
-            context: 'API'
-          });
-        } catch (streamError) {
-          logger.log({
-            level: LogLevel.ERROR,
-            message: `Failed to restore stream on screen ${stream.screen}`,
-            context: 'API',
-            error: streamError instanceof Error ? streamError : new Error(String(streamError))
-          });
-        }
-      }
-    }
-    
+    ctx.status = 200;
     ctx.body = { 
       success: true, 
-      message: 'All screens refreshed successfully' 
+      message: `All streams have been refreshed${restart ? ' and restarted' : ''} successfully` 
     };
   } catch (error) {
-    logger.log({
-      level: LogLevel.ERROR,
-      message: 'Failed to force refresh all screens',
-      context: 'API',
-      error: error instanceof Error ? error : new Error(String(error))
-    });
-    
+    logger.error(
+      'Failed to force refresh all streams', 
+      'API', 
+      error instanceof Error ? error : new Error(String(error))
+    );
     ctx.status = 500;
     ctx.body = { 
       success: false, 
-      message: 'Failed to refresh screens' 
+      error: 'Failed to force refresh all streams' 
     };
   }
 });

@@ -65,6 +65,21 @@
           "enabled": true,
           "limit": 100,
           "priority": 1
+        },
+        {
+          "type": "holodex",
+          "subtype": "favorites",
+          "enabled": true,
+          "limit": 100,
+          "priority": 2
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "Hololive",
+          "enabled": true,
+          "limit": 50,
+          "priority": 3
         }
       ],
       "sorting": {
@@ -272,7 +287,7 @@
       {
         "id": 2,
         "screen": 2,
-        "enabled": false,
+        "enabled": true,
         "width": 1366,
         "height": 768,
         "x": 0,
