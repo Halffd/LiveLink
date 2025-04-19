@@ -43,10 +43,10 @@ export class StreamManager extends EventEmitter {
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
   private updateInterval: NodeJS.Timeout | null = null;
-  private readonly QUEUE_UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes in milliseconds
-  private readonly STREAM_START_TIMEOUT = 30 * 1000; // 30 seconds timeout for stream start
-  private readonly QUEUE_PROCESSING_TIMEOUT = 60 * 1000; // 1 minute timeout for queue processing
-  private readonly STREAM_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes refresh interval
+  private readonly QUEUE_UPDATE_INTERVAL = 3 * 60 * 1000; // 3 minutes in milliseconds (reduced from 15 minutes)
+  private readonly STREAM_START_TIMEOUT = 20 * 1000; // 20 seconds timeout for stream start (reduced from 30 seconds)
+  private readonly QUEUE_PROCESSING_TIMEOUT = 20 * 1000; // 20 seconds timeout for queue processing (reduced from 60 seconds)
+  private readonly STREAM_REFRESH_INTERVAL = 2 * 60 * 1000; // 2 minutes refresh interval (reduced from 5 minutes)
   private favoriteChannels: FavoriteChannels = {
     groups: {
       default: {
@@ -59,7 +59,7 @@ export class StreamManager extends EventEmitter {
     youtube: { default: [] }
   };
   private queues: Map<number, StreamSource[]> = new Map();
-  private readonly RETRY_INTERVAL = 5000; // 5 seconds
+  private readonly RETRY_INTERVAL = 2000; // 2 seconds (reduced from 5 seconds)
   private errorCallback?: (data: StreamError) => void;
   private manuallyClosedScreens: Set<number> = new Set();
   private streamRetries: Map<number, number> = new Map();
@@ -368,8 +368,7 @@ export class StreamManager extends EventEmitter {
     // Ensure player service has fully stopped the previous stream
     await this.playerService.stopStream(screen, true);
     
-    // Add a very short delay to ensure resources are properly released
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Removed delay here to speed up transition to next stream
 
     // Get next stream from queue immediately
     const nextStream = this.queues.get(screen)?.[0];
@@ -427,7 +426,7 @@ export class StreamManager extends EventEmitter {
         logger.warn(`Queue processing timed out for screen ${screen}`, 'StreamManager');
         this.queueProcessing.delete(screen);
         this.queueProcessingStartTimes.delete(screen);
-      }, 30000); // Reduced from 60s to 30s
+      }, 15000); // Reduced from 30s to 15s
       
       this.queueProcessingTimeouts.set(screen, timeoutId);
 
@@ -542,31 +541,24 @@ export class StreamManager extends EventEmitter {
   }
 
   private async handleAllStreamsWatched(screen: number) {
-    logger.info(`All streams watched for screen ${screen}, waiting before refetching...`);
+    logger.info(`All streams watched for screen ${screen}, refetching immediately...`);
     
     // Clear watched history to allow playing again
     queueService.clearWatchedStreams();
     logger.info(`Cleared watched streams history for screen ${screen}`, 'StreamManager');
     
-    // Check if we should immediately refetch based on time since last refresh
-    const now = Date.now();
-    const lastRefresh = this.lastStreamRefresh.get(screen) || 0;
-    const timeSinceLastRefresh = now - lastRefresh;
+    // Skip the waiting period and refresh immediately
+    logger.info(`Fetching new streams after all watched for screen ${screen}`, 'StreamManager');
     
-    if (timeSinceLastRefresh >= this.STREAM_REFRESH_INTERVAL) {
-      // If refresh interval has elapsed, fetch new streams
-      logger.info(`Refresh interval elapsed for screen ${screen}, fetching new streams after all watched`, 'StreamManager');
-      
-      // Wait a bit before refetching to avoid hammering the APIs
-      await new Promise(resolve => setTimeout(resolve, 5000)); // 5 second delay
-      
-      if (!this.isShuttingDown) {
-        await this.handleEmptyQueue(screen);
-      }
-    } else {
-      logger.info(`Refresh interval not elapsed for screen ${screen}, will wait for next periodic update`, 'StreamManager');
-      // Leave it for the next periodic update to handle
-    }
+    // Force reset cache timestamp to get fresh data
+    this.lastStreamFetch = 0;
+    this.lastStreamRefresh.set(screen, 0);
+    
+    // Update queue to get fresh streams
+    await this.updateQueue(screen);
+    
+    // Process the queue immediately
+    await this.handleEmptyQueue(screen);
   }
 
   /**
@@ -1929,8 +1921,8 @@ export class StreamManager extends EventEmitter {
     let recoveryAttempts = 0;
     let lastSuccessfulNetworkCheck = Date.now();
     let lastQueueRefreshAfterRecovery = 0;
-    const RECOVERY_DELAY = 5000; // 5 seconds between recovery attempts
-    const MINIMUM_RECOVERY_INTERVAL = 60000; // Minimum 1 minute between queue refreshes after recovery
+    const RECOVERY_DELAY = 2000; // 2 seconds between recovery attempts (reduced from 5 seconds)
+    const MINIMUM_RECOVERY_INTERVAL = 20000; // 20 seconds between queue refreshes after recovery (reduced from 60 seconds)
     const MAX_OFFLINE_TIME_BEFORE_FULL_RESET = 3600000; // 1 hour - after this time, do a full reset
     
     const CHECK_URLS = [
@@ -2103,7 +2095,7 @@ export class StreamManager extends EventEmitter {
           );
         }
       }
-    }, 10000); // Check every 10 seconds
+    }, 5000); // Check every 5 seconds (reduced from 10 seconds)
   }
 
   async refreshStreams(): Promise<void> {

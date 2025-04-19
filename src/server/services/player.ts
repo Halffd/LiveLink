@@ -41,13 +41,13 @@ export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
 	private readonly MAX_RETRIES = 3; // Increased from 2 to 3
 	private readonly MAX_NETWORK_RETRIES = 5; // Separate counter for network-related issues
-	private readonly RETRY_INTERVAL = 500;
-	private readonly NETWORK_RETRY_INTERVAL = 5000; // 5 seconds for network retries
-	private readonly MAX_BACKOFF_TIME = 60000; // 1 minute maximum backoff
-	private readonly STREAM_REFRESH_INTERVAL = 4 * 60 * 60 * 1000; // 4 hours
-	private readonly INACTIVE_RESET_TIMEOUT = 5 * 60 * 1000; // 5 minutes
-	private readonly STARTUP_TIMEOUT = 60000; // 1 minute
-	private readonly SHUTDOWN_TIMEOUT = 2000; // 2 seconds
+	private readonly RETRY_INTERVAL = 200; // Reduced from 500ms to 200ms
+	private readonly NETWORK_RETRY_INTERVAL = 2000; // Reduced from 5s to 2s for network retries
+	private readonly MAX_BACKOFF_TIME = 30000; // Reduced from 60s to 30s maximum backoff
+	private readonly STREAM_REFRESH_INTERVAL = 2 * 60 * 60 * 1000; // Reduced from 4 hours to 2 hours
+	private readonly INACTIVE_RESET_TIMEOUT = 2 * 60 * 1000; // Reduced from 5 minutes to 2 minutes
+	private readonly STARTUP_TIMEOUT = 30000; // Reduced from 60s to 30s
+	private readonly SHUTDOWN_TIMEOUT = 1000; // Reduced from 2s to 1s
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
@@ -630,7 +630,7 @@ export class PlayerService {
 					});
 				}
 			}
-		}, 30000); // Increased from 60s to 30s for more responsive detection
+		}, 15000); // Reduced from 30s to 15s for more responsive detection
 
 		this.healthCheckIntervals.set(screen, healthCheck);
 
@@ -661,8 +661,8 @@ export class PlayerService {
 		// Stop existing stream and wait for cleanup
 		await this.stopStream(screen);
 		
-		// Add a longer delay to ensure cleanup is complete
-		await new Promise((resolve) => setTimeout(resolve, 500));
+		// Reduced delay to ensure cleanup is complete
+		await new Promise((resolve) => setTimeout(resolve, 200)); // Reduced from 500ms to 200ms
 		
 		// Double check no existing process before starting new one
 		const existingStream = this.streams.get(screen);
@@ -670,7 +670,7 @@ export class PlayerService {
 			logger.warn(`Found existing process for screen ${screen}, forcing cleanup`, 'PlayerService');
 			try {
 				existingStream.process.kill('SIGKILL');
-				await new Promise(resolve => setTimeout(resolve, 200));
+				await new Promise(resolve => setTimeout(resolve, 100)); // Reduced from 200ms to 100ms
 			} catch {
 				// Process might already be gone
 			}
@@ -700,7 +700,7 @@ export class PlayerService {
 			const timeSinceLastError = now - lastError;
 			
 			// Reset network retry count if it's been a while since the last error
-			if (timeSinceLastError > 5 * 60 * 1000) { // 5 minutes
+			if (timeSinceLastError > 2 * 60 * 1000) { // Reduced from 5 minutes to 2 minutes
 				logger.info(`Resetting network retry count for screen ${screen} as it's been ${Math.round(timeSinceLastError/1000)}s since last error`, 'PlayerService');
 				this.networkRetries.set(screen, 0);
 			}
@@ -819,96 +819,85 @@ export class PlayerService {
 	 * Stop a stream that is currently playing on a screen
 	 */
 	async stopStream(screen: number, force: boolean = false, isManualStop: boolean = false): Promise<boolean> {
-		logger.debug(`Stopping stream on screen ${screen}`, 'PlayerService');
-		
-		const player = this.streams.get(screen);
-		if (!player || !player.process) {
-			logger.debug(`No player to stop on screen ${screen}`, 'PlayerService');
-			// Clean up any resources that might be left even if no player is active
-			this.cleanup_after_stop(screen);
-			return true; // Nothing to stop, so consider it a success
-		}
-		
-		// Only track manually closed screens when it's a manual stop
-		if (isManualStop) {
-		this.manuallyClosedScreens.add(screen);
+		// Check if screen is already disabled
+		if (this.disabledScreens.has(screen)) {
+			logger.debug(`Screen ${screen} is disabled, no stream to stop`, 'PlayerService');
+			return true;
 		}
 
-		// Try graceful shutdown via IPC first
-		let gracefulShutdown = false;
-		try {
-			// Send quit command via IPC
-			await this.sendMpvCommand(screen, 'quit');
-			
-			// Give it a moment to shutdown gracefully (increased timeout)
-			await new Promise((resolve) => setTimeout(resolve, 1000));
-			
-			// Check if the process has exited
-			gracefulShutdown = !this.isProcessRunning(player.process.pid);
-			if (gracefulShutdown) {
-				logger.debug(`Graceful shutdown successful for screen ${screen}`, 'PlayerService');
-			} else {
-				logger.debug(`Graceful shutdown failed for screen ${screen}, will try force kill`, 'PlayerService');
-			}
-		} catch (error) {
-			logger.debug(`IPC command failed for screen ${screen}, will try force kill: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+		// Remove from manually closed screens
+		if (isManualStop) {
+			this.manuallyClosedScreens.add(screen);
+		} else {
+			this.manuallyClosedScreens.delete(screen);
+		}
+
+		// Clear network error status
+		this.isNetworkError.delete(screen);
+
+		// Get the stream object
+		const player = this.streams.get(screen);
+
+		// If there's no stream, consider it already stopped
+		if (!player) {
+			logger.debug(`No stream found for screen ${screen}`, 'PlayerService');
+			return true;
 		}
 		
-		// If not force but graceful shutdown worked, use normal cleanup
-		if (gracefulShutdown && !force) {
+		// Check if process exists
+		if (!player.process) {
+			logger.debug(`No process found for stream on screen ${screen}`, 'PlayerService');
 			this.cleanup_after_stop(screen);
 			return true;
 		}
 		
-		// If graceful shutdown failed or force is true, use the forceful method
+		// If process is already gone, clean up
+		if (!this.isProcessRunning(player.process.pid)) {
+			logger.debug(`Process for screen ${screen} is already gone`, 'PlayerService');
+			this.cleanup_after_stop(screen);
+			return true;
+		}
+		
+		// Log action
+		logger.info(`Stopping stream on screen ${screen} (${isManualStop ? 'manual' : 'automatic'})`, 'PlayerService');
+		
 		try {
-			// First, try to find and kill any child processes
-			this.killChildProcesses(player.process.pid);
+			// Use more aggressive kill if force is true
+			const signal = force ? 'SIGKILL' : 'SIGTERM';
 			
-			// Now send SIGTERM to the main process
-			player.process.kill('SIGTERM');
+			// Try to gracefully stop the process
+			player.process.kill(signal);
 			
-			// Give it a moment to respond to SIGTERM (increased timeout)
-			await new Promise((resolve) => setTimeout(resolve, 500));
-			
-			// Check if we need to force kill with SIGKILL
-			if (this.isProcessRunning(player.process.pid)) {
-				logger.debug(`SIGTERM didn't work for screen ${screen}, using SIGKILL`, 'PlayerService');
-				player.process.kill('SIGKILL');
-				
-				// Give it a moment for SIGKILL to take effect
-				await new Promise((resolve) => setTimeout(resolve, 200));
-				
-				// If process still exists, try more aggressive approach with system kill command
-				if (this.isProcessRunning(player.process.pid)) {
-					logger.warn(`Process for screen ${screen} resistant to SIGKILL, using system kill command`, 'PlayerService');
+			// Wait a moment for process to exit gracefully
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(() => {
+					logger.warn(`Stream stop timeout on screen ${screen}, forcing kill`, 'PlayerService');
 					try {
-						execSync(`kill -9 ${player.process.pid}`);
+						if (player.process && this.isProcessRunning(player.process.pid)) {
+							player.process.kill('SIGKILL');
+						}
 					} catch (error) {
-						this.logError(`System kill failed for screen ${screen}`, 'PlayerService', error);
+						logger.error(`Error killing process on screen ${screen}`, 'PlayerService', 
+							error instanceof Error ? error : new Error(String(error)));
 					}
-				}
-			}
+					resolve();
+				}, 500); // Reduced from SHUTDOWN_TIMEOUT to 500ms
+				
+				// If process exits gracefully, clear timeout and resolve
+				player.process.once('exit', () => {
+					clearTimeout(timeout);
+					resolve();
+				});
+			});
+			
+			// Clean up regardless of kill success
+			this.cleanup_after_stop(screen);
+			
+			return true;
 		} catch (error) {
-			this.logError(`Error killing process for screen ${screen}`, 'PlayerService', error);
+			this.logError(`Error stopping stream on screen ${screen}`, 'PlayerService', error);
+			return false;
 		}
-		
-		// Clean up regardless of kill success
-		this.cleanup_after_stop(screen);
-		
-		// Verify the stream was actually stopped and removed
-		const streamStillExists = this.streams.has(screen);
-		if (streamStillExists) {
-			logger.warn(`Stream for screen ${screen} still exists in the streams map after cleanup`, 'PlayerService');
-			// Force removal again to be sure
-			this.streams.delete(screen);
-		}
-		
-		// Log active streams count
-		const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
-		logger.info(`Stream stopped on screen ${screen}. Active streams: ${activeStreams.length}/${this.config.player.maxStreams}`, 'PlayerService');
-		
-		return true;
 	}
 	
 	/**
