@@ -59,3 +59,4 @@ scripts/mpv
 *.webm
 *.mpg
 *.mpeg
+*.log

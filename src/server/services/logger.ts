@@ -154,7 +154,7 @@ export class Logger {
     });
   }
 
-  error(message: string, context?: string, error?: Error) {
+  error(message: string, context?: string, error?: Error | unknown) {
     this.log({ 
       level: LogLevel.ERROR, 
       message: this.formatMessage(message), 

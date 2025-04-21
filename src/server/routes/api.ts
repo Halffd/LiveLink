@@ -4,6 +4,7 @@ import { streamManager } from '../stream_manager.js';
 import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo, Config } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
+import { execSync } from 'child_process';
 
 const router = new Router();
 
@@ -485,19 +486,80 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
         // Get all active streams and stop them
         const activeStreams = streamManager.getActiveStreams();
         logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
+        
         if (activeStreams.length > 0) {
           logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
           
+          // First attempt - stop streams through the API
           const stopPromises = activeStreams.map((stream: StreamInfo) => {
             logger.info(`Stopping player on screen ${stream.screen}`, 'API');
             return streamManager.stopStream(stream.screen, true);
           });
           
-          // Wait for all streams to be stopped
-          await Promise.allSettled(stopPromises);
-          logger.info('All player processes stopped', 'API');
+          // Wait for all streams to be stopped with a timeout
+          const results = await Promise.allSettled(stopPromises);
+          logger.info(`Stop results: ${JSON.stringify(results)}`, 'API');
+          
+          // Check if all streams were stopped
+          const allStopped = results.every(r => r.status === 'fulfilled' && r.value === true);
+          if (!allStopped) {
+            logger.warn('Not all streams stopped successfully, using fallback methods', 'API');
+          }
         } else {
-          logger.info('No active streams to stop', 'API');
+          logger.info('No active streams found through API, checking for orphaned processes', 'API');
+        }
+        
+        // Fallback - directly kill processes that might have been missed
+        try {
+          logger.info('Using fallback process termination methods...', 'API');
+          
+          // First try graceful termination
+          execSync('pkill -f streamlink || true', { stdio: 'ignore' });
+          execSync('pkill -f mpv || true', { stdio: 'ignore' });
+          
+          // Wait a moment
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Then try more aggressive termination
+          execSync('pkill -9 -f streamlink || true', { stdio: 'ignore' });
+          execSync('pkill -9 -f mpv || true', { stdio: 'ignore' });
+          
+          // Final check for any remaining processes
+          const checkStreamlink = execSync('pgrep -f streamlink || echo ""', { encoding: 'utf8' }).trim();
+          const checkMpv = execSync('pgrep -f mpv || echo ""', { encoding: 'utf8' }).trim();
+          
+          if (checkStreamlink || checkMpv) {
+            logger.warn(`There are still player processes running after termination attempts: ${checkStreamlink} ${checkMpv}`, 'API');
+            
+            // Last resort - try to kill by process group
+            if (checkStreamlink) {
+              const pids = checkStreamlink.split('\n');
+              for (const pid of pids) {
+                if (pid.trim()) {
+                  try {
+                    execSync(`kill -9 -$(ps -o pgid= ${pid} | grep -o '[0-9]*') || true`, { stdio: 'ignore' });
+                  } catch (e) {
+                    // Ignore errors
+                  }
+                }
+              }
+            }
+            
+            if (checkMpv) {
+              const pids = checkMpv.split('\n');
+              for (const pid of pids) {
+                if (pid.trim()) {
+                  try {
+                    execSync(`kill -9 -$(ps -o pgid= ${pid} | grep -o '[0-9]*') || true`, { stdio: 'ignore' });
+                  } catch (e) {
+                    // Ignore errors
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          logger.error('Error during fallback process termination', 'API', error);
         }
         
         // Then perform server cleanup
@@ -506,7 +568,7 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
         logger.info('Server cleanup complete, exiting...', 'API');
         process.exit(0);
       } catch (error) {
-        logError('Failed during stop-all sequence', 'API', error instanceof Error ? error : new Error(String(error)));
+        logError('Failed during stop-all sequence', 'API', error);
         process.exit(1);
       }
     }, 1000);
