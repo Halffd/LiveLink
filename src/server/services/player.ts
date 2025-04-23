@@ -770,38 +770,55 @@ export class PlayerService {
 	}
 
 	private clearMonitoring(screen: number): void {
+		logger.debug(`Clearing monitoring for screen ${screen}`, 'PlayerService');
+		
 		// Clear health check
 		const healthCheck = this.healthCheckIntervals.get(screen);
 		if (healthCheck) {
+			logger.debug(`Clearing health check interval for screen ${screen}`, 'PlayerService');
 			clearInterval(healthCheck);
 			this.healthCheckIntervals.delete(screen);
+		} else {
+			logger.debug(`No health check interval found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear refresh timer
 		const refreshTimer = this.streamRefreshTimers.get(screen);
 		if (refreshTimer) {
+			logger.debug(`Clearing refresh timer for screen ${screen}`, 'PlayerService');
 			clearTimeout(refreshTimer);
 			this.streamRefreshTimers.delete(screen);
+		} else {
+			logger.debug(`No refresh timer found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear inactive timer
 		const inactiveTimer = this.inactiveTimers.get(screen);
 		if (inactiveTimer) {
+			logger.debug(`Clearing inactive timer for screen ${screen}`, 'PlayerService');
 			clearTimeout(inactiveTimer);
 			this.inactiveTimers.delete(screen);
+		} else {
+			logger.debug(`No inactive timer found for screen ${screen}`, 'PlayerService');
 		}
 		
 		// Clear retry timer if exists
 		const retryTimer = this.retryTimers.get(screen);
 		if (retryTimer) {
+			logger.debug(`Clearing retry timer for screen ${screen}`, 'PlayerService');
 			clearTimeout(retryTimer);
 			this.retryTimers.delete(screen);
+		} else {
+			logger.debug(`No retry timer found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear other state
+		logger.debug(`Clearing other state maps for screen ${screen}`, 'PlayerService');
 		this.streamStartTimes.delete(screen);
 		this.streamRetries.delete(screen);
 		// Don't clear networkRetries or lastNetworkError here to maintain retry history
+		
+		logger.debug(`Monitoring cleared for screen ${screen}`, 'PlayerService');
 	}
 
 	/**
@@ -969,50 +986,105 @@ export class PlayerService {
 	 */
 	private cleanup_after_stop(screen: number): void {
 		try {
-			// Clear monitoring and state
+			logger.info(`Cleaning up resources for screen ${screen}`, 'PlayerService');
+			
+			// First, clear all monitoring timers
+			logger.debug(`Clearing monitoring timers for screen ${screen}`, 'PlayerService');
 			this.clearMonitoring(screen);
+			
+			// Get stream instance before deleting it
 			const stream = this.streams.get(screen);
-		this.streams.delete(screen);
-		
-		// Clean up IPC socket if it exists
-		const ipcPath = this.ipcPaths.get(screen);
-		if (ipcPath && fs.existsSync(ipcPath)) {
-			try {
-				// Close any existing socket connection
-				const socket = net.createConnection(ipcPath);
-				socket.end();
-				socket.destroy();
+			
+			// Log stream details for debugging
+			if (stream) {
+				logger.debug(`Cleaning up stream: screen=${stream.screen}, url=${stream.url}, pid=${stream.process?.pid || 'none'}, platform=${stream.platform}`, 'PlayerService');
 				
-				// Remove the socket file
-				if (fs.existsSync(ipcPath)) {
-				fs.unlinkSync(ipcPath);
-					logger.debug(`Removed IPC socket for screen ${screen}`, 'PlayerService');
+				// Log stream process details if available
+				if (stream.process?.pid) {
+					logger.debug(`Stream process info: pid=${stream.process.pid}, killed=${stream.process.killed}, exitCode=${stream.process.exitCode}`, 'PlayerService');
 				}
-			} catch (error) {
-					// Only log as warning if file still exists
-					if (fs.existsSync(ipcPath)) {
-						const errorMsg = error instanceof Error ? error.message : String(error);
-						logger.warn(`Failed to remove IPC socket for screen ${screen}: ${errorMsg}`, 'PlayerService');
-					}
+			} else {
+				logger.debug(`No stream found for screen ${screen} during cleanup`, 'PlayerService');
 			}
-		}
-		this.ipcPaths.delete(screen);
-		
+			
+			// Delete from streams map immediately to prevent double processing
+			logger.debug(`Removing stream from tracking map for screen ${screen}`, 'PlayerService');
+			this.streams.delete(screen);
+			
+			// Clear all retry related maps
+			logger.debug(`Clearing retry maps for screen ${screen}`, 'PlayerService');
+			this.streamRetries.delete(screen);
+			this.networkRetries.delete(screen);
+			this.lastNetworkError.delete(screen);
+			this.isNetworkError.delete(screen);
+			this.streamStartTimes.delete(screen);
+			this.startupLocks.delete(screen);
+			
+			// Clean up IPC socket if it exists
+			const ipcPath = this.ipcPaths.get(screen);
+			if (ipcPath) {
+				logger.debug(`Checking IPC socket ${ipcPath} for screen ${screen}`, 'PlayerService');
+				if (fs.existsSync(ipcPath)) {
+					try {
+						logger.debug(`Closing socket connection for screen ${screen}`, 'PlayerService');
+						// Close any existing socket connection
+						const socket = net.createConnection(ipcPath);
+						socket.end();
+						socket.destroy();
+						
+						// Remove the socket file
+						if (fs.existsSync(ipcPath)) {
+							logger.debug(`Removing IPC socket file ${ipcPath} for screen ${screen}`, 'PlayerService');
+							fs.unlinkSync(ipcPath);
+							logger.debug(`Successfully removed IPC socket for screen ${screen}`, 'PlayerService');
+						}
+					} catch (error) {
+						// Only log as warning if file still exists
+						if (fs.existsSync(ipcPath)) {
+							const errorMsg = error instanceof Error ? error.message : String(error);
+							logger.warn(`Failed to remove IPC socket for screen ${screen}: ${errorMsg}`, 'PlayerService');
+						}
+					}
+				} else {
+					logger.debug(`IPC socket ${ipcPath} does not exist for screen ${screen}`, 'PlayerService');
+				}
+			} else {
+				logger.debug(`No IPC path found for screen ${screen}`, 'PlayerService');
+			}
+			logger.debug(`Removing IPC path mapping for screen ${screen}`, 'PlayerService');
+			this.ipcPaths.delete(screen);
+			
 			// Kill any remaining processes
 			if (stream?.process?.pid) {
+				logger.debug(`Killing child processes for parent PID ${stream.process.pid} for screen ${screen}`, 'PlayerService');
 				try {
 					this.killChildProcesses(stream.process.pid);
+					logger.debug(`Successfully requested kill for child processes of PID ${stream.process.pid}`, 'PlayerService');
 				} catch (error) {
-					logger.debug(`Error killing processes for screen ${screen}: ${error}`, 'PlayerService');
+					logger.warn(`Error killing processes for screen ${screen}: ${error}`, 'PlayerService');
 				}
+			} else {
+				logger.debug(`No process PID found for screen ${screen}, nothing to kill`, 'PlayerService');
+			}
+
+			// Verify cleanup completed successfully
+			if (this.streams.has(screen)) {
+				logger.warn(`Stream for screen ${screen} still exists after cleanup - forcing removal`, 'PlayerService');
+				this.streams.delete(screen);
 			}
 
 			// Log the number of active streams after cleanup
 			const remainingStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
-			logger.debug(`Cleanup complete for screen ${screen}. Remaining active streams: ${remainingStreams.length}/${this.config.player.maxStreams}`, 'PlayerService');
+			const streamInfo = remainingStreams.map(s => `screen:${s.screen}, pid:${s.process?.pid}`).join('; ');
+			
+			logger.info(`Cleanup complete for screen ${screen}. Remaining active streams: ${remainingStreams.length}/${this.config.player.maxStreams} - ${streamInfo}`, 'PlayerService');
 		} catch (error) {
 			const errorMsg = error instanceof Error ? error.message : String(error);
 			logger.error(`Error during cleanup for screen ${screen}: ${errorMsg}`, 'PlayerService');
+			
+			// Ensure stream is deleted even if there was an error
+			logger.debug(`Forcing stream deletion for screen ${screen} after cleanup error`, 'PlayerService');
+			this.streams.delete(screen);
 		}
 	}
 	
