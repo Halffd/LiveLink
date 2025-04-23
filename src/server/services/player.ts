@@ -1408,11 +1408,24 @@ export class PlayerService {
 	}
 
 	public disableScreen(screen: number): void {
+		logger.info(`Disabling screen ${screen} in player service`, 'PlayerService');
 		this.disabledScreens.add(screen);
+
+		// Also add to manually closed screens to prevent auto-restart attempts
+		this.manuallyClosedScreens.add(screen);
+		
+		// Check if there's an active stream on this screen
+		if (this.streams.has(screen)) {
+			logger.info(`Marking active stream on screen ${screen} for shutdown due to screen disable`, 'PlayerService');
+		}
 	}
 
 	public enableScreen(screen: number): void {
+		logger.info(`Enabling screen ${screen} in player service`, 'PlayerService');
 		this.disabledScreens.delete(screen);
+		
+		// Remove from manually closed screens to allow streams to start
+		this.manuallyClosedScreens.delete(screen);
 	}
 
 	// Helper method to extract title from URL

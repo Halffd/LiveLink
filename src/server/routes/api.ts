@@ -1058,6 +1058,24 @@ router.post('/screens/new-player', async (ctx) => {
 });
 
 // Add new routes for screen toggle and new player
+// router.post('/screens/:screen/toggle', async (ctx) => {
+//   const screen = parseInt(ctx.params.screen);
+//   if (isNaN(screen)) {
+//     ctx.status = 400;
+//     ctx.body = { error: 'Invalid screen number' };
+//     return;
+//   }
+
+//   const isEnabled = !streamManager.getScreenConfig(screen)?.enabled;
+//   if (isEnabled) {
+//     await streamManager.enableScreen(screen);
+//   } else {
+//     await streamManager.disableScreen(screen);
+//   }
+  
+//   ctx.body = { screen, enabled: isEnabled };
+// });
+
 router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
   try {
     const screen = parseInt(ctx.params.screen);
@@ -1066,18 +1084,22 @@ router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
+    
     const config = streamManager.getScreenConfig(screen);
     if (!config) {
       ctx.status = 404;
       ctx.body = { error: 'Screen not found' };
       return;
     }
+    
+    // Toggle screen status
     if (config.enabled) {
       await streamManager.disableScreen(screen);
+      ctx.body = { success: true, enabled: false };
     } else {
       await streamManager.enableScreen(screen);
+      ctx.body = { success: true, enabled: true };
     }
-    ctx.body = { success: true, enabled: !config.enabled };
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };

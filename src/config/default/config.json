@@ -32,18 +32,74 @@
         {
           "type": "holodex",
           "subtype": "organization",
+          "name": "VSpo",
+          "enabled": true,
+          "limit": 30,
+          "priority": 4
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
           "name": "Nijisanji",
           "enabled": true,
-          "limit": 3,
-          "priority": 4
+          "limit": 10,
+          "priority": 5
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "Varium",
+          "enabled": true,
+          "limit": 30,
+          "priority": 6
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "VEE",
+          "enabled": true,
+          "limit": 30,
+          "priority": 7
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "VOMS",
+          "enabled": true,
+          "limit": 50,
+          "priority": 8
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": ".LIVE",
+          "enabled": true,
+          "limit": 30,
+          "priority": 9
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "VReverie",
+          "enabled": true,
+          "limit": 30,
+          "priority": 10
+        },
+        {
+          "type": "holodex",
+          "subtype": "organization",
+          "name": "V4Mirai",
+          "enabled": true,
+          "limit": 11,
+          "priority": 40
         },
         {
           "type": "holodex",
           "subtype": "organization",
           "name": "Independents",
           "enabled": true,
-          "limit": 2,
-          "priority": 5
+          "limit": 50,
+          "priority": 12
         }
       ],
       "sorting": {
@@ -63,23 +119,16 @@
           "type": "twitch",
           "subtype": "favorites",
           "enabled": true,
-          "limit": 100,
+          "limit": 500,
           "priority": 1
         },
         {
           "type": "holodex",
-          "subtype": "favorites",
-          "enabled": true,
-          "limit": 100,
-          "priority": 2
-        },
-        {
-          "type": "holodex",
           "subtype": "organization",
-          "name": "Hololive",
+          "name": "Twitch Independents",
           "enabled": true,
           "limit": 50,
-          "priority": 3
+          "priority": 2
         }
       ],
       "sorting": {
@@ -115,26 +164,30 @@
       },
       "mid_priority": {
         "description": "Mid priority channels",
-        "priority": 3
+        "priority": 2
       },
       "low_priority": {
         "description": "Low priority channels",
-        "priority": 1
+        "priority": 3
       }
     },
     "holodex": {
       "mid_priority": [
+        "UC5CwaMl1eIgY8h02uZw7u8A",
         "UC54JqsuIbMw_d1Ieb4hjKoQ",
         "UCIfAvpeIWGHb0duCkMkmm2Q",
         "UC6T7TJZbW6nO-qsc5coo8Pg",
         "UC5CwaMl1eIgY8h02uZw7u8A",
         "UC7YXqPO3eUnxbJ6rN0z2z1Q",
-        "UComInW10MkHJs-_vi4rHQCQ",
         "UC4WvIIAo89_AzGUh1AZ6Dkg",
         "UCt30jJgChL8qeT9VPadidSw",
         "UC3K7pmiHsNSx1y0tdx2bbCw",
         "UCcHHkJ98eSfa5aj0mdTwwLQ",
-        "UCJ46YTYBQVXsfsp8-HryoUA"
+        "UCYiIgZVotTS9K3eb7nine0g"
+      ],
+      "low_priority": [
+        "UCJ46YTYBQVXsfsp8-HryoUA",
+        "UComInW10MkHJs-_vi4rHQCQ"
       ],
       "high_priority": [],
       "must_watch": []
@@ -144,7 +197,6 @@
         "amemiyanazuna",
         "nekoko88",
         "rosemilovelock",
-        "ksonsouchou",
         "sakuramiko_hololive",
         "nakiriayame_hololive",
         "natsuiromatsuri_hololive",
@@ -154,30 +206,33 @@
         "anny",
         "vedal987",
         "filian",
+        "ninaninin",
         "henyathegenius",
         "projektmelody",
         "apricot",
-        "ironmouse",
-        "silvervale",
-        "harukakaribu",
-        "matarakan",
+        "ksonsouchou",
         "nyanners",
-        "aquwa",
-        "batatvideogames",
-        "tobs",
-        "hestiahappiness",
-        "akatsukidhotaru",
-        "dokibird",
-        "ninaninin",
-        "shylily",
-        "kanekolumi",
         "fallenshadow",
+        "silvervale",
+        "ironmouse",
+        "kanekolumi",
+        "tobs",
+        "nagisekaied",
+        "aquwa",
+        "dokibird",
+        "shylily",
+        "hestiahappiness",
         "pocketchalk",
+        "harukakaribu",
+        "batatvideogames",
+        "akatsukidhotaru",
+        "leeandlie",
         "vividlyvivi",
         "inislein",
         "soyapoya",
         "kitanya_is_here",
         "tenma",
+        "matarakan",
         "prayersfromabigail",
         "toma",
         "yuniiho",
@@ -238,6 +293,7 @@
         "toshiruz",
         "jaidenanimations",
         "limealicious",
+        "pekeispeak",
         "emiru",
         "cellbit",
         "sotibllec",
@@ -273,7 +329,7 @@
       {
         "id": 1,
         "screen": 1,
-        "enabled": true,
+        "enabled": false,
         "width": 1920,
         "height": 1080,
         "x": 1366,

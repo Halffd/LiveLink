@@ -1116,61 +1116,85 @@ export class StreamManager extends EventEmitter {
   }
 
   async disableScreen(screen: number): Promise<void> {
-    const streamConfig = this.config.player.screens.find(s => s.screen === screen);
+    logger.info(`Disabling screen ${screen}`, 'StreamManager');
+    
+    // Find the screen configuration
+    const streamConfig = this.getScreenConfig(screen);
     if (!streamConfig) {
       throw new Error(`Invalid screen number: ${screen}`);
     }
     
-    // Notify the PlayerService first that the screen is disabled
-    // This ensures any new attempts to start streams will be blocked
-    this.playerService.disableScreen(screen);
-    
-    // Stop any active streams with up to 3 attempts
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const result = await this.stopStream(screen, true);
-      if (result) {
-        break;
+    try {
+      // Notify the PlayerService first that the screen is disabled
+      // This ensures any new attempts to start streams will be blocked
+      this.playerService.disableScreen(screen);
+      logger.debug(`Screen ${screen} disabled in player service`, 'StreamManager');
+      
+      // Stop any active streams with up to 3 attempts
+      let streamStopped = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        logger.debug(`Attempt ${attempt + 1} to stop stream on screen ${screen}`, 'StreamManager');
+        const result = await this.stopStream(screen, true);
+        if (result) {
+          streamStopped = true;
+          logger.debug(`Successfully stopped stream on screen ${screen} on attempt ${attempt + 1}`, 'StreamManager');
+          break;
+        }
+        
+        // If stopping failed, wait a bit and try again
+        if (attempt < 2) {
+          logger.warn(`Failed to stop stream on screen ${screen}, attempt ${attempt + 1}, retrying...`, 'StreamManager');
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
-      // If stopping failed, wait a bit and try again
-      if (attempt < 2) {
-        logger.warn(`Failed to stop stream on screen ${screen}, attempt ${attempt + 1}, retrying...`, 'StreamManager');
-        await new Promise(resolve => setTimeout(resolve, 500));
+      
+      if (!streamStopped) {
+        logger.warn(`Failed to stop stream on screen ${screen} after 3 attempts, forcing cleanup`, 'StreamManager');
       }
-    }
-    
-    // Force kill the stream process if it exists
-    const stream = this.streams.get(screen);
-    if (stream && stream.process) {
-      logger.warn(`Forcibly killing stream process for screen ${screen}`, 'StreamManager');
-      try {
-        stream.process.kill('SIGKILL');
-      } catch (e) {
-        logger.error(`Failed to kill stream process: ${e}`, 'StreamManager');
+      
+      // Force kill the stream process if it exists
+      const stream = this.streams.get(screen);
+      if (stream && stream.process) {
+        logger.warn(`Forcibly killing stream process for screen ${screen}`, 'StreamManager');
+        try {
+          stream.process.kill('SIGKILL');
+        } catch (e) {
+          logger.error(`Failed to kill stream process: ${e}`, 'StreamManager');
+        }
       }
-    }
-    
-    // Force clean up any remaining streams on this screen
-    if (this.streams.has(screen)) {
-      logger.warn(`Stream on screen ${screen} could not be stopped properly, forcing cleanup`, 'StreamManager');
-      this.streams.delete(screen);
-    }
-    
-    // Disable the screen in config
-    streamConfig.enabled = false;
-    
-    // Also make sure PlayerService has cleaned up its stream data
-    const activeStreams = this.playerService.getActiveStreams();
-    if (activeStreams.some(s => s.screen === screen)) {
-      logger.warn(`PlayerService still has active stream for screen ${screen}, forcing cleanup`, 'StreamManager');
-      // Send a direct command to clean up
-      try {
-        await this.playerService.stopStream(screen, true);
-      } catch (e) {
-        logger.error(`Failed final PlayerService cleanup: ${e}`, 'StreamManager');
+      
+      // Force clean up any remaining streams on this screen
+      if (this.streams.has(screen)) {
+        logger.warn(`Stream on screen ${screen} could not be stopped properly, forcing cleanup`, 'StreamManager');
+        this.streams.delete(screen);
       }
+      
+      // Update config and save
+      streamConfig.enabled = false;
+      this.screenConfigs.set(screen, streamConfig);
+      await this.saveConfig();
+      
+      // Also make sure PlayerService has cleaned up its stream data
+      const activeStreams = this.playerService.getActiveStreams();
+      if (activeStreams.some(s => s.screen === screen)) {
+        logger.warn(`PlayerService still has active stream for screen ${screen}, forcing cleanup`, 'StreamManager');
+        // Send a direct command to clean up
+        try {
+          await this.playerService.stopStream(screen, true);
+        } catch (e) {
+          logger.error(`Failed final PlayerService cleanup: ${e}`, 'StreamManager');
+        }
+      }
+      
+      // Add to manually closed screens to prevent auto-restart
+      this.manuallyClosedScreens.add(screen);
+      
+      logger.info(`Screen ${screen} disabled successfully`, 'StreamManager');
+    } catch (error) {
+      logger.error(`Error disabling screen ${screen}`, 'StreamManager', 
+        error instanceof Error ? error : new Error(String(error)));
+      throw error;
     }
-    
-    logger.info(`Screen ${screen} disabled`, 'StreamManager');
   }
 
   async enableScreen(screen: number): Promise<void> {
@@ -1180,20 +1204,34 @@ export class StreamManager extends EventEmitter {
         throw new Error(`No configuration found for screen ${screen}`);
       }
 
+      logger.info(`Enabling screen ${screen}`, 'StreamManager');
+
+      // Update config
       config.enabled = true;
       this.screenConfigs.set(screen, config);
+      
+      // Make sure to enable the screen in the player service
+      this.playerService.enableScreen(screen);
+      logger.debug(`Screen ${screen} enabled in player service`, 'StreamManager');
+
+      // Save the configuration
       await this.saveConfig();
 
       // Remove from manually closed screens when enabling
       this.manuallyClosedScreens.delete(screen);
       logger.info(`Screen ${screen} enabled and removed from manuallyClosedScreens`, 'StreamManager');
 
-      // Start stream if autoStart is enabled
-      if (config.autoStart) {
+      // Start a stream if there's something in the queue or we should auto-start
+      const queue = this.queues.get(screen) || [];
+      if (queue.length > 0 || config.autoStart) {
+        logger.info(`Starting stream on newly enabled screen ${screen}`, 'StreamManager');
         await this.handleStreamEnd(screen);
+      } else {
+        logger.info(`Screen ${screen} enabled, but no streams in queue to start`, 'StreamManager');
       }
     } catch (error) {
-      logger.error(`Error enabling screen ${screen}: ${error}`, 'StreamManager');
+      logger.error(`Error enabling screen ${screen}`, 'StreamManager', 
+        error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
