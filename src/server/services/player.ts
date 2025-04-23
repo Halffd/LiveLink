@@ -39,15 +39,15 @@ export interface StreamOptions {
 
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
-	private readonly MAX_RETRIES = 3; // Increased from 2 to 3
-	private readonly MAX_NETWORK_RETRIES = 5; // Separate counter for network-related issues
-	private readonly RETRY_INTERVAL = 200; // Reduced from 500ms to 200ms
-	private readonly NETWORK_RETRY_INTERVAL = 2000; // Reduced from 5s to 2s for network retries
-	private readonly MAX_BACKOFF_TIME = 30000; // Reduced from 60s to 30s maximum backoff
-	private readonly STREAM_REFRESH_INTERVAL = 2 * 60 * 60 * 1000; // Reduced from 4 hours to 2 hours
-	private readonly INACTIVE_RESET_TIMEOUT = 2 * 60 * 1000; // Reduced from 5 minutes to 2 minutes
-	private readonly STARTUP_TIMEOUT = 30000; // Reduced from 60s to 30s
-	private readonly SHUTDOWN_TIMEOUT = 1000; // Reduced from 2s to 1s
+	private readonly MAX_RETRIES = 3; // Maximum number of retries
+	private readonly MAX_NETWORK_RETRIES = 5; // Maximum network-specific retries
+	private readonly RETRY_INTERVAL = 100; // 100ms (reduced from 200ms)
+	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
+	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
+	private readonly STREAM_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour (reduced from 2 hours)
+	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
+	private readonly STARTUP_TIMEOUT = 15000; // 15 seconds (reduced from 30 seconds)
+	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
@@ -885,7 +885,7 @@ export class PlayerService {
 			// Try to gracefully stop the process
 			player.process.kill(signal);
 			
-			// Wait a moment for process to exit gracefully
+			// Wait a shorter time for process to exit gracefully
 			await new Promise<void>((resolve) => {
 				const timeout = setTimeout(() => {
 					logger.warn(`Stream stop timeout on screen ${screen}, forcing kill`, 'PlayerService');
@@ -898,7 +898,7 @@ export class PlayerService {
 							error instanceof Error ? error : new Error(String(error)));
 					}
 					resolve();
-				}, 500); // Reduced from SHUTDOWN_TIMEOUT to 500ms
+				}, 250); // Reduced from 500ms to 250ms for faster transitions
 				
 				// If process exits gracefully, clear timeout and resolve
 				player.process.once('exit', () => {

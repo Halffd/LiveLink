@@ -43,10 +43,12 @@ export class StreamManager extends EventEmitter {
   private cleanupHandler: (() => void) | null = null;
   private isShuttingDown = false;
   private updateInterval: NodeJS.Timeout | null = null;
-  private readonly QUEUE_UPDATE_INTERVAL = 3 * 60 * 1000; // 3 minutes in milliseconds (reduced from 15 minutes)
-  private readonly STREAM_START_TIMEOUT = 20 * 1000; // 20 seconds timeout for stream start (reduced from 30 seconds)
-  private readonly QUEUE_PROCESSING_TIMEOUT = 20 * 1000; // 20 seconds timeout for queue processing (reduced from 60 seconds)
-  private readonly STREAM_REFRESH_INTERVAL = 2 * 60 * 1000; // 2 minutes refresh interval (reduced from 5 minutes)
+  private readonly QUEUE_UPDATE_INTERVAL = 60 * 1000; // 1 minute (reduced from 3 minutes)
+  private readonly STREAM_START_TIMEOUT = 10 * 1000; // 10 seconds (reduced from 20 seconds)
+  private readonly QUEUE_PROCESSING_TIMEOUT = 10 * 1000; // 10 seconds (reduced from 20 seconds)
+  private readonly STREAM_REFRESH_INTERVAL = 60 * 1000; // 1 minute (reduced from 2 minutes)
+  private readonly RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
+  private readonly STREAM_CACHE_TTL = 30000; // 30 seconds (reduced from 60 seconds)
   private favoriteChannels: FavoriteChannels = {
     groups: {
       default: {
@@ -59,7 +61,6 @@ export class StreamManager extends EventEmitter {
     youtube: { default: [] }
   };
   private queues: Map<number, StreamSource[]> = new Map();
-  private readonly RETRY_INTERVAL = 2000; // 2 seconds (reduced from 5 seconds)
   private errorCallback?: (data: StreamError) => void;
   private manuallyClosedScreens: Set<number> = new Set();
   private streamRetries: Map<number, number> = new Map();
@@ -69,7 +70,6 @@ export class StreamManager extends EventEmitter {
   private ipcPaths: Map<number, string> = new Map();
   private cachedStreams: StreamSource[] = []; // Cache for stream metadata
   private lastStreamFetch: number = 0; // Timestamp of last stream fetch
-  private readonly STREAM_CACHE_TTL = 60000; // 1 minute cache TTL
   private queueProcessing: Set<number> = new Set(); // Track screens where queue is being processed
   private lastStreamRefresh: Map<number, number> = new Map(); // Track last refresh time per screen
   private screenConfigs: Map<number, ScreenConfig> = new Map();
@@ -375,9 +375,17 @@ export class StreamManager extends EventEmitter {
     logger.debug(`Starting queue processing for screen ${screen} at ${new Date().toISOString()}`, 'StreamManager');
 
     try {
-      // Ensure stream is actually stopped first
-      logger.debug(`Stopping current stream on screen ${screen}`, 'StreamManager');
-      await this.playerService.stopStream(screen, true);
+      // Process concurrently for faster transitions
+      const stopPromise = this.playerService.stopStream(screen, true);
+      
+      // While stopping, prepare the next stream
+      const queue = this.queues.get(screen) || [];
+      logger.debug(`Current queue for screen ${screen} has ${queue.length} items`, 'StreamManager');
+      
+      const nextStream = queue.length > 0 ? queue[0] : null;
+
+      // Await the stop operation
+      await stopPromise;
       
       // Ensure we're no longer tracking this stream
       if (this.streams.has(screen)) {
@@ -386,12 +394,6 @@ export class StreamManager extends EventEmitter {
       } else {
         logger.debug(`No stream to remove from tracking for screen ${screen}`, 'StreamManager');
       }
-      
-      // Get the current queue and check if there's a next stream
-      const queue = this.queues.get(screen) || [];
-      logger.debug(`Current queue for screen ${screen} has ${queue.length} items`, 'StreamManager');
-      
-      const nextStream = queue.length > 0 ? queue[0] : null;
 
       if (!nextStream) {
         logger.info(`No next stream in queue for screen ${screen}, looking for new streams`, 'StreamManager');
