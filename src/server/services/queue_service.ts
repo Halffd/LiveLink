@@ -296,6 +296,41 @@ class QueueService extends EventEmitter {
       return false;
     });
   }
+
+  /**
+   * Safely get and remove the next stream from the queue
+   * @param screen Screen number
+   * @returns The next stream or undefined if queue is empty
+   */
+  public dequeueNextStream(screen: number): StreamSource | undefined {
+    const queue = this.queues.get(screen) || [];
+    
+    if (queue.length === 0) {
+      logger.debug(`No streams in queue for screen ${screen}`, 'QueueService');
+      return undefined;
+    }
+    
+    // Get the next stream
+    const nextStream = queue[0];
+    
+    // Remove it from the queue
+    queue.shift();
+    this.queues.set(screen, queue);
+    
+    logger.info(`Dequeued stream ${nextStream.url} from queue for screen ${screen}`, 'QueueService');
+    logger.debug(`Queue size after dequeue: ${queue.length}`, 'QueueService');
+    
+    // Emit queue updated event
+    this.emit('queue:updated', screen, queue);
+    
+    // If queue is now empty, emit queue empty event
+    if (queue.length === 0) {
+      logger.info(`Queue for screen ${screen} is now empty after dequeue`, 'QueueService');
+      this.emit('queue:empty', screen);
+    }
+    
+    return nextStream;
+  }
 }
 
 // Create and export singleton instance

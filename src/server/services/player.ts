@@ -62,6 +62,10 @@ export class PlayerService {
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
 	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
+	private heartbeatIntervals: Map<number, NodeJS.Timeout> = new Map();
+	private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds
+	private readonly HEARTBEAT_TIMEOUT = 5000; // 5 seconds
+	private heartbeatStatuses: Map<number, boolean> = new Map(); // true = alive, false = unresponsive
 
 	private config: Config;
 	private mpvPath: string;
@@ -188,10 +192,13 @@ export class PlayerService {
 
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		try {
+			// Log attempt with URL for better debugging
+			logger.info(`Attempting to start stream on screen ${options.screen}: ${options.url}`, 'PlayerService');
+
 			// Check if screen is disabled
 			if (this.disabledScreens.has(options.screen)) {
 				logger.warn(`Attempted to start stream on disabled screen ${options.screen}`, 'PlayerService');
-			return {
+				return {
 					screen: options.screen,
 					success: false,
 					error: 'Screen is disabled'
@@ -212,7 +219,7 @@ export class PlayerService {
 			// Check if we're already starting a stream on this screen
 			if (this.startupLocks.get(options.screen)) {
 				logger.warn(`Stream startup already in progress for screen ${options.screen}`, 'PlayerService');
-			return {
+				return {
 					screen: options.screen,
 					success: false,
 					error: 'Stream startup already in progress'
@@ -297,7 +304,7 @@ export class PlayerService {
 			this.cleanup_after_stop(options.screen);
 			
 			logger.error(
-				`Failed to start stream on screen ${options.screen}`,
+				`Failed to start stream on screen ${options.screen}: ${options.url}`,
 				'PlayerService',
 				error instanceof Error ? error : new Error(String(error))
 			);
@@ -476,6 +483,9 @@ export class PlayerService {
 	private setupProcessHandlers(process: ChildProcess, screen: number): void {
 		let hasEndedStream = false;
 		let cleanupTimeout: NodeJS.Timeout | null = null;
+
+		// Set up heartbeat monitoring
+		this.setupHeartbeat(screen);
 
 		const cleanup = () => {
 			if (cleanupTimeout) {
@@ -772,6 +782,9 @@ export class PlayerService {
 	private clearMonitoring(screen: number): void {
 		logger.debug(`Clearing monitoring for screen ${screen}`, 'PlayerService');
 		
+		// Clear heartbeat monitoring
+		this.clearHeartbeat(screen);
+		
 		// Clear health check
 		const healthCheck = this.healthCheckIntervals.get(screen);
 		if (healthCheck) {
@@ -842,6 +855,11 @@ export class PlayerService {
 			return true;
 		}
 
+		// Log with URL information for better tracking
+		const streamInstance = this.streams.get(screen);
+		const url = streamInstance?.url || '';
+		logger.info(`Stopping stream on screen ${screen}${url ? ` (${url})` : ''}, manual=${isManualStop}, force=${force}`, 'PlayerService');
+
 		// Remove from manually closed screens
 		if (isManualStop) {
 			this.manuallyClosedScreens.add(screen);
@@ -858,6 +876,7 @@ export class PlayerService {
 		// If there's no stream, consider it already stopped
 		if (!player) {
 			logger.debug(`No stream found for screen ${screen}`, 'PlayerService');
+			this.cleanup_after_stop(screen);
 			return true;
 		}
 		
@@ -1358,6 +1377,14 @@ export class PlayerService {
 				this.clearMonitoring(screen);
 			});
 
+			// Clear all heartbeat intervals
+			for (const [screen, interval] of this.heartbeatIntervals.entries()) {
+				clearInterval(interval);
+				logger.debug(`Cleared heartbeat interval for screen ${screen} during cleanup`, 'PlayerService');
+			}
+			this.heartbeatIntervals.clear();
+			this.heartbeatStatuses.clear();
+
 			// Clean up IPC sockets
 			this.ipcPaths.forEach((ipcPath) => {
 				try {
@@ -1545,5 +1572,159 @@ export class PlayerService {
 		} else {
 			logger.error(message, service, new Error(String(error)));
 		}
+	}
+
+	/**
+	 * Set up heartbeat monitoring for a stream to detect if it becomes unresponsive
+	 */
+	private setupHeartbeat(screen: number): void {
+		// Clear any existing heartbeat interval
+		this.clearHeartbeat(screen);
+		
+		logger.debug(`Setting up heartbeat monitoring for screen ${screen}`, 'PlayerService');
+		
+		// Create a new heartbeat interval
+		const interval = setInterval(() => this.checkStreamHealth(screen), this.HEARTBEAT_INTERVAL);
+		this.heartbeatIntervals.set(screen, interval);
+		
+		// Initialize status as alive
+		this.heartbeatStatuses.set(screen, true);
+		
+		// Do an initial health check
+		this.checkStreamHealth(screen);
+	}
+
+	/**
+	 * Clear heartbeat monitoring for a screen
+	 */
+	private clearHeartbeat(screen: number): void {
+		const interval = this.heartbeatIntervals.get(screen);
+		if (interval) {
+			clearInterval(interval);
+			this.heartbeatIntervals.delete(screen);
+			logger.debug(`Cleared heartbeat monitoring for screen ${screen}`, 'PlayerService');
+		}
+		
+		this.heartbeatStatuses.delete(screen);
+	}
+
+	/**
+	 * Check if a stream is still responsive by sending a simple command to the player
+	 */
+	private async checkStreamHealth(screen: number): Promise<void> {
+		// Skip if stream is not active
+		const stream = this.streams.get(screen);
+		if (!stream || !stream.process || !this.isProcessRunning(stream.process.pid)) {
+			return;
+		}
+		
+		const ipcPath = this.ipcPaths.get(screen);
+		if (!ipcPath || !fs.existsSync(ipcPath)) {
+			// No IPC socket means we can't communicate - consider unresponsive
+			logger.warn(`No IPC socket found for screen ${screen} during heartbeat check`, 'PlayerService');
+			this.handleUnresponsiveStream(screen);
+			return;
+		}
+		
+		try {
+			// Set a flag to track if we get a response
+			let hasResponded = false;
+			
+			// Create a timeout to detect if the command doesn't respond
+			const timeout = setTimeout(() => {
+				if (!hasResponded) {
+					logger.warn(`Heartbeat check timed out for screen ${screen}`, 'PlayerService');
+					this.heartbeatStatuses.set(screen, false);
+					this.handleUnresponsiveStream(screen);
+				}
+			}, this.HEARTBEAT_TIMEOUT);
+			
+			// Send a simple get_property command to check if player responds
+			const socket = net.createConnection(ipcPath);
+			socket.on('connect', () => {
+				const command = JSON.stringify({ command: ['get_property', 'playback-time'] });
+				socket.write(command + '\n');
+			});
+			
+			socket.on('data', (data) => {
+				// We got a response, stream is alive
+				hasResponded = true;
+				clearTimeout(timeout);
+				
+				// Only log if previous status was false (stream recovered)
+				if (this.heartbeatStatuses.get(screen) === false) {
+					logger.info(`Stream on screen ${screen} is responsive again`, 'PlayerService');
+				}
+				
+				this.heartbeatStatuses.set(screen, true);
+				socket.end();
+			});
+			
+			socket.on('error', (err) => {
+				// Socket connection error - stream likely unresponsive
+				clearTimeout(timeout);
+				if (!hasResponded) {
+					logger.warn(`Heartbeat check socket error for screen ${screen}: ${err.message}`, 'PlayerService');
+					this.heartbeatStatuses.set(screen, false);
+					this.handleUnresponsiveStream(screen);
+				}
+				socket.destroy();
+			});
+			
+			socket.on('timeout', () => {
+				// Socket timeout - stream likely unresponsive
+				clearTimeout(timeout);
+				if (!hasResponded) {
+					logger.warn(`Heartbeat check socket timeout for screen ${screen}`, 'PlayerService');
+					this.heartbeatStatuses.set(screen, false);
+					this.handleUnresponsiveStream(screen);
+				}
+				socket.destroy();
+			});
+		} catch (error) {
+			logger.error(
+				`Error during heartbeat check for screen ${screen}`, 
+				'PlayerService',
+				error instanceof Error ? error : new Error(String(error))
+			);
+			
+			// Consider stream unresponsive if we can't even connect
+			this.heartbeatStatuses.set(screen, false);
+			this.handleUnresponsiveStream(screen);
+		}
+	}
+
+	/**
+	 * Handle an unresponsive stream by attempting recovery
+	 */
+	private handleUnresponsiveStream(screen: number): void {
+		// Check if the stream was previously marked unresponsive
+		const wasUnresponsiveBefore = this.heartbeatStatuses.get(screen) === false;
+		
+		// Update status to unresponsive
+		this.heartbeatStatuses.set(screen, false);
+		
+		// Skip if already handled (avoid duplicate recovery attempts)
+		if (wasUnresponsiveBefore) {
+			return;
+		}
+		
+		logger.warn(`Stream on screen ${screen} appears to be unresponsive, attempting recovery`, 'PlayerService');
+		
+		// Get stream info for recovery
+		const stream = this.streams.get(screen);
+		if (!stream) {
+			logger.error(`No stream data found for unresponsive screen ${screen}`, 'PlayerService');
+			return;
+		}
+		
+		// Emit error to trigger external recovery
+		this.errorCallback?.({
+			screen,
+			error: 'Stream unresponsive (heartbeat failure)',
+			code: 1000, // Custom code for heartbeat failure
+			url: stream.url,
+			moveToNext: true // Signal to move to next stream
+		});
 	}
 }
