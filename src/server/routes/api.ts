@@ -184,8 +184,30 @@ router.post('/api/screens/:screen/enable', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    await streamManager.enableScreen(screen);
-    ctx.body = { success: true };
+    
+    // Set a timeout to prevent hanging requests
+    const enablePromise = streamManager.enableScreen(screen);
+    
+    // Only wait for a limited time to prevent hanging
+    const timeout = new Promise<void>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Enable screen operation timed out after 5 seconds. Screen ${screen} is being enabled in the background.`));
+      }, 5000); // 5 second timeout
+    });
+    
+    // Return quickly if the operation takes too long
+    try {
+      await Promise.race([enablePromise, timeout]);
+      ctx.body = { success: true, message: `Screen ${screen} enabled successfully` };
+    } catch (timeoutError) {
+      // Still consider this a success since the operation continues in the background
+      logger.warn(`Enable operation for screen ${screen} is taking longer than expected, returning early`, 'API');
+      ctx.body = {
+        success: true,
+        message: 'Screen enable operation started',
+        note: 'The operation is continuing in the background and may take a few more seconds to complete.'
+      };
+    }
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };

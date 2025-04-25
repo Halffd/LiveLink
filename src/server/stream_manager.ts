@@ -1226,16 +1226,51 @@ export class StreamManager extends EventEmitter {
         this.emit('screenConfigUpdate', screen, config);
       }
       
+      // Force reset cache timestamp to get fresh data
+      this.lastStreamFetch = 0;
+      this.lastStreamRefresh.set(screen, 0);
+      
       // Initialize queue for this screen if needed
       if (!this.queues.has(screen)) {
-        await this.updateQueue(screen);
+        try {
+          await this.updateQueue(screen);
+        } catch (error) {
+          logger.warn(`Failed to update queue for screen ${screen}, will try default stream instead`, 'StreamManager');
+        }
       }
       
-      // Auto-start stream if configured
-      const screenConfig = this.screenConfigs.get(screen);
-      if (screenConfig?.autoStart) {
-        logger.info(`Auto-starting stream on newly enabled screen ${screen}`, 'StreamManager');
-        await this.handleEmptyQueue(screen);
+      // Check if we have streams in the queue
+      const queue = this.queues.get(screen) || [];
+      
+      try {
+        if (queue.length > 0) {
+          // Start the first stream in the queue
+          const nextStream = queue.shift();
+          if (nextStream) {
+            logger.info(`Starting queued stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
+            await this.startStream({
+              url: nextStream.url,
+              screen,
+              quality: config?.quality || 'best',
+              windowMaximized: config?.windowMaximized || true
+            });
+          }
+        } else {
+          // No streams in queue, start a default test stream
+          logger.info(`No streams in queue for screen ${screen}, starting default test stream`, 'StreamManager');
+          await this.addDefaultTestStream(screen);
+        }
+      } catch (error) {
+        logger.error(`Failed to start stream after enabling screen ${screen}`, 'StreamManager',
+          error instanceof Error ? error : new Error(String(error)));
+        
+        // Fall back to default test stream on error
+        try {
+          await this.addDefaultTestStream(screen);
+        } catch (testError) {
+          logger.error(`Failed to start default test stream for screen ${screen}`, 'StreamManager',
+            testError instanceof Error ? testError : new Error(String(testError)));
+        }
       }
       
       logger.info(`Screen ${screen} enabled`, 'StreamManager');
