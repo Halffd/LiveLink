@@ -167,7 +167,8 @@ router.post('/api/screens/:screen/disable', async (ctx: Context) => {
       ctx.body = { error: 'Invalid screen number' };
       return;
     }
-    await streamManager.disableScreen(screen);
+    // Use fast disable for better responsiveness
+    await streamManager.disableScreen(screen, true);
     ctx.body = { success: true };
   } catch (error) {
     ctx.status = 500;
@@ -1139,9 +1140,15 @@ router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
       return;
     }
     
-    // Use the new toggleScreen method
-    const isEnabled = await streamManager.toggleScreen(screen);
-    ctx.body = { success: true, enabled: isEnabled };
+    // Check current state and toggle with fast disable
+    const config = streamManager.getScreenConfig(screen);
+    if (config?.enabled) {
+      await streamManager.disableScreen(screen, true);
+      ctx.body = { success: true, enabled: false };
+    } else {
+      await streamManager.enableScreen(screen);
+      ctx.body = { success: true, enabled: true };
+    }
     
   } catch (error) {
     ctx.status = 500;

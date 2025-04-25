@@ -345,12 +345,32 @@ export class StreamManager extends EventEmitter {
   }
 
   // Add method to safely transition screen state with proper logging
-  private async setScreenState(screen: number, state: StreamState, setupCallback?: () => Promise<void>): Promise<boolean> {
+  private async setScreenState(screen: number, state: StreamState, setupCallback?: () => Promise<void>, fastUpdate: boolean = false): Promise<boolean> {
     if (!this.stateMachines.has(screen)) {
       this.stateMachines.set(screen, new StreamStateMachine(screen));
     }
     
-    return this.stateMachines.get(screen)!.transition(state, setupCallback);
+    const stateMachine = this.stateMachines.get(screen)!;
+    
+    // For fast updates, bypass the normal transition validation
+    if (fastUpdate) {
+      // Just log the transition
+      logger.info(`Screen ${screen} fast state transition: ${stateMachine.getState()} -> ${state}`, 'StreamManager');
+      
+      // Execute callback if provided
+      if (setupCallback) {
+        await setupCallback();
+      }
+      
+      // Force set the state directly using private access
+      // We access the state machine's private property directly
+      // This is a hack, but it's needed for performance in this case
+      (stateMachine as any).currentState = state;
+      return true;
+    }
+    
+    // Otherwise use normal transition validation
+    return stateMachine.transition(state, setupCallback);
   }
 
   // Add method to get current screen state with a default
@@ -1104,7 +1124,58 @@ export class StreamManager extends EventEmitter {
   }
 
   // Modify disableScreen to use state machine
-  async disableScreen(screen: number): Promise<void> {
+  async disableScreen(screen: number, fastDisable: boolean = false): Promise<void> {
+    // If fast disable is requested, immediately update state and return
+    if (fastDisable) {
+      // Update state to disabled immediately (without lock)
+      this.setScreenState(screen, StreamState.DISABLED, undefined, true); // Use fastUpdate=true
+      
+      // Send quit command to MPV directly - this is more reliable than process kill
+      try {
+        logger.info(`Sending quit command to MPV on screen ${screen}`, 'StreamManager');
+        this.playerService.sendCommandToScreen(screen, 'quit');
+        
+        // Give MPV a moment to quit cleanly
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        logger.warn(`Failed to send quit command to screen ${screen}`, 'StreamManager');
+      }
+      
+      // Update player service (non-blocking)
+      this.playerService.disableScreen(screen);
+      
+      // Update screen config
+      const config = this.screenConfigs.get(screen);
+      if (config) {
+        config.enabled = false;
+        this.screenConfigs.set(screen, config);
+        this.emit('screenConfigUpdate', screen, config);
+      }
+      
+      // Start the full cleanup in the background
+      this.withLock(screen, 'backgroundDisableScreen', async () => {
+        logger.info(`Processing background cleanup for disabled screen ${screen}`, 'StreamManager');
+        
+        // First stop any active stream on this screen
+        const hasActiveStream = this.streams.has(screen);
+        if (hasActiveStream) {
+          logger.info(`Stopping active stream on screen ${screen} in background`, 'StreamManager');
+          await this.stopStream(screen, true);
+        }
+        
+        // Synchronize disabled screens to ensure consistency
+        this.synchronizeDisabledScreens();
+        
+        logger.info(`Background cleanup completed for screen ${screen}`, 'StreamManager');
+      }).catch(error => {
+        logger.error(`Error in background cleanup for screen ${screen}`, 'StreamManager', 
+          error instanceof Error ? error : new Error(String(error)));
+      });
+      
+      return;
+    }
+    
+    // Otherwise use the regular path with locking
     return this.withLock(screen, 'disableScreen', async () => {
       logger.info(`Disabling screen ${screen}`, 'StreamManager');
       
@@ -2402,7 +2473,7 @@ export class StreamManager extends EventEmitter {
       
       const isCurrentlyEnabled = screenConfig.enabled;
       if (isCurrentlyEnabled) {
-        await this.disableScreen(screen);
+        await this.disableScreen(screen, true); // Use fast disable for better responsiveness
         logger.info(`Screen ${screen} toggled to disabled`, 'StreamManager');
         return false; // Now disabled
       } else {

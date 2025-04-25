@@ -1454,10 +1454,29 @@ export class PlayerService {
 		// Also add to manually closed screens to prevent auto-restart attempts
 		this.manuallyClosedScreens.add(screen);
 		
-		// Check if there's an active stream on this screen
-		if (this.streams.has(screen)) {
-			logger.info(`Marking active stream on screen ${screen} for shutdown due to screen disable`, 'PlayerService');
+		// Immediately clear all monitoring for this screen to reduce resource usage
+		this.clearMonitoring(screen);
+		
+		// Try to directly kill any MPV process for this screen
+		const streamInstance = this.streams.get(screen);
+		if (streamInstance && streamInstance.process) {
+			logger.info(`Force killing MPV process on screen ${screen}`, 'PlayerService');
+			try {
+				// Send SIGKILL for immediate termination
+				streamInstance.process.kill('SIGKILL');
+			} catch (error) {
+				logger.warn(`Error killing MPV process on screen ${screen}`, 'PlayerService', 
+					error instanceof Error ? error.message : String(error));
+			}
+			
+			// Make sure we clean up even if kill fails
+			this.cleanup_after_stop(screen);
+		} else {
+			logger.info(`No active process found for screen ${screen} during disable`, 'PlayerService');
 		}
+		
+		// Last resort: Use pkill to make sure the process is truly gone
+		this.killProcessByScreenNumber(screen);
 	}
 
 	public enableScreen(screen: number): void {
@@ -1739,5 +1758,26 @@ export class PlayerService {
 			url: stream.url,
 			moveToNext: true // Signal to move to next stream
 		});
+	}
+
+	/**
+	 * Last resort attempt to kill MPV for a specific screen using pkill
+	 */
+	private killProcessByScreenNumber(screen: number): void {
+		try {
+			logger.debug(`Trying to force kill MPV for screen ${screen} using pkill`, 'PlayerService');
+			
+			// Try to kill MPV instance for this specific screen 
+			// using the mpv IPC identifier in command line arguments
+			exec(`pkill -f "mpv.*mpv-ipc-${screen}$" || true`, (error) => {
+				if (error) {
+					// Just log error, don't throw - this is a best-effort cleanup
+					logger.debug(`Pkill command failed for screen ${screen}: ${error.message}`, 'PlayerService');
+				}
+			});
+		} catch (error) {
+			// Just log the error, this is just a last-resort cleanup attempt
+			logger.debug(`Failed to execute pkill for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+		}
 	}
 }
