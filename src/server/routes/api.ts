@@ -56,6 +56,12 @@ interface MarkWatchedBody {
   screen?: number;
 }
 
+interface FavoriteGroup {
+  name: string;
+  description: string;
+  priority: number;
+}
+
 // Static routes first (most specific to least specific)
 router.get('/api/organizations', (ctx: Context) => {
   ctx.body = streamManager.getOrganizations();
@@ -513,53 +519,85 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
         try {
           logger.info('Using fallback process termination methods...', 'API');
           
+          // Helper function to safely execute shell commands
+          const safeExec = (cmd: string, description: string) => {
+            try {
+              logger.debug(`Executing command: ${cmd}`, 'API');
+              execSync(cmd, { stdio: 'ignore' });
+              return true;
+            } catch (err) {
+              logger.warn(`Failed to execute ${description} - command may not be available on this system: ${err instanceof Error ? err.message : String(err)}`, 'API');
+              return false;
+            }
+          };
+          
+          // Check if pkill is available
+          const hasPkill = safeExec('which pkill >/dev/null 2>&1 || exit 1', 'pkill check');
+          
           // First try graceful termination
-          execSync('pkill -f streamlink || true', { stdio: 'ignore' });
-          execSync('pkill -f mpv || true', { stdio: 'ignore' });
+          if (hasPkill) {
+            safeExec('pkill -f streamlink || true', 'streamlink termination');
+            safeExec('pkill -f mpv || true', 'mpv termination');
+          } else {
+            // Fallback to killall if pkill is not available
+            safeExec('killall streamlink 2>/dev/null || true', 'streamlink termination (killall)');
+            safeExec('killall mpv 2>/dev/null || true', 'mpv termination (killall)');
+          }
           
           // Wait a moment
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Increased wait time
           
           // Then try more aggressive termination
-          execSync('pkill -9 -f streamlink || true', { stdio: 'ignore' });
-          execSync('pkill -9 -f mpv || true', { stdio: 'ignore' });
+          if (hasPkill) {
+            safeExec('pkill -9 -f streamlink || true', 'streamlink force termination'); 
+            safeExec('pkill -9 -f mpv || true', 'mpv force termination');
+          } else {
+            safeExec('killall -9 streamlink 2>/dev/null || true', 'streamlink force termination (killall)');
+            safeExec('killall -9 mpv 2>/dev/null || true', 'mpv force termination (killall)');
+          }
+          
+          // Helper function to safely get process IDs
+          const safeGetPids = (processName: string): string[] => {
+            try {
+              // Prefer pgrep but fall back to ps | grep if not available
+              const hasPgrep = safeExec('which pgrep >/dev/null 2>&1 || exit 1', 'pgrep check');
+              
+              let output = '';
+              if (hasPgrep) {
+                output = execSync(`pgrep -f ${processName} || echo ""`, { encoding: 'utf8' }).trim();
+              } else {
+                // Fallback to ps + grep
+                output = execSync(`ps aux | grep "${processName}" | grep -v grep | awk '{print $2}' || echo ""`, { encoding: 'utf8' }).trim();
+              }
+              
+              return output ? output.split('\n').filter(id => id.trim()) : [];
+            } catch (err) {
+              logger.warn(`Failed to get PIDs for ${processName}: ${err instanceof Error ? err.message : String(err)}`, 'API');
+              return [];
+            }
+          };
           
           // Final check for any remaining processes
-          const checkStreamlink = execSync('pgrep -f streamlink || echo ""', { encoding: 'utf8' }).trim();
-          const checkMpv = execSync('pgrep -f mpv || echo ""', { encoding: 'utf8' }).trim();
+          const streamlinkPids = safeGetPids('streamlink');
+          const mpvPids = safeGetPids('mpv');
           
-          if (checkStreamlink || checkMpv) {
-            logger.warn(`There are still player processes running after termination attempts: ${checkStreamlink} ${checkMpv}`, 'API');
+          if (streamlinkPids.length > 0 || mpvPids.length > 0) {
+            logger.warn(`There are still player processes running after termination attempts: streamlink=${streamlinkPids.join(',')} mpv=${mpvPids.join(',')}`, 'API');
             
-            // Last resort - try to kill by process group
-            if (checkStreamlink) {
-              const pids = checkStreamlink.split('\n');
-              for (const pid of pids) {
-                if (pid.trim()) {
-                  try {
-                    execSync(`kill -9 -$(ps -o pgid= ${pid} | grep -o '[0-9]*') || true`, { stdio: 'ignore' });
-                  } catch (e) {
-                    // Ignore errors
-                  }
-                }
-              }
+            // Last resort - kill processes directly by PID
+            for (const pid of streamlinkPids) {
+              safeExec(`kill -9 ${pid} 2>/dev/null || true`, `kill streamlink process ${pid}`);
             }
             
-            if (checkMpv) {
-              const pids = checkMpv.split('\n');
-              for (const pid of pids) {
-                if (pid.trim()) {
-                  try {
-                    execSync(`kill -9 -$(ps -o pgid= ${pid} | grep -o '[0-9]*') || true`, { stdio: 'ignore' });
-                  } catch (e) {
-                    // Ignore errors
-                  }
-                }
-              }
+            for (const pid of mpvPids) {
+              safeExec(`kill -9 ${pid} 2>/dev/null || true`, `kill mpv process ${pid}`);
             }
+          } else {
+            logger.info('No remaining player processes found after cleanup', 'API');
           }
         } catch (error) {
-          logger.error('Error during fallback process termination', 'API', error);
+          logger.error('Error during fallback process termination', 'API', error instanceof Error ? error : new Error(String(error)));
+          // Continue with server cleanup even if process termination failed
         }
         
         // Then perform server cleanup
@@ -910,7 +948,7 @@ router.post('/api/streams/refresh', async (ctx: Context) => {
     streamManager.resetRefreshTimestamps(enabledScreens);
     
     // Update streams queue for all enabled screens
-    await streamManager.updateAllQueues(true);
+    await streamManager.updateAllQueues();
     
     ctx.body = { success: true, message: 'Stream data refresh initiated for all screens' };
   } catch (error) {
@@ -985,20 +1023,36 @@ router.get('/api/server/status', async (ctx: Context) => {
   }
 });
 
-// Helper function to format uptime
+// Helper function to format uptime in a more readable way
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / (3600 * 24));
   const hours = Math.floor((seconds % (3600 * 24)) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainingSeconds = Math.floor(seconds % 60);
   
-  const parts = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (remainingSeconds > 0 || parts.length === 0) parts.push(`${remainingSeconds}s`);
+  // Define parts as an explicit typed array
+  const parts = new Array<string>();
   
-  return parts.join(' ');
+  if (days > 0) {
+    parts.push(`${days} day${days > 1 ? 's' : ''}`);
+  }
+  
+  if (hours > 0 || days > 0) {
+    parts.push(`${hours} hour${hours !== 1 ? 's' : ''}`);
+  }
+  
+  if (minutes > 0 || hours > 0 || days > 0) {
+    parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+  }
+  
+  parts.push(`${remainingSeconds} second${remainingSeconds !== 1 ? 's' : ''}`);
+  
+  if (parts.length > 1) {
+    const lastPart = parts.pop();
+    return `${parts.join(', ')} and ${lastPart}`;
+  } else {
+    return parts[0];
+  }
 }
 
 // Add new routes for screen management
@@ -1085,21 +1139,10 @@ router.post('/api/screens/:screen/toggle', async (ctx: Context) => {
       return;
     }
     
-    const config = streamManager.getScreenConfig(screen);
-    if (!config) {
-      ctx.status = 404;
-      ctx.body = { error: 'Screen not found' };
-      return;
-    }
+    // Use the new toggleScreen method
+    const isEnabled = await streamManager.toggleScreen(screen);
+    ctx.body = { success: true, enabled: isEnabled };
     
-    // Toggle screen status
-    if (config.enabled) {
-      await streamManager.disableScreen(screen);
-      ctx.body = { success: true, enabled: false };
-    } else {
-      await streamManager.enableScreen(screen);
-      ctx.body = { success: true, enabled: true };
-    }
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };

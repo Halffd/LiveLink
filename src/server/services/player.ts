@@ -938,6 +938,7 @@ export class PlayerService {
 	
 	/**
 	 * Kill child processes of a given parent process
+	 * Only kills processes that are directly related to our managed streams
 	 */
 	private killChildProcesses(parentPid?: number): void {
 		if (!parentPid) {
@@ -971,27 +972,39 @@ export class PlayerService {
 						}
 					}
 
-					// Try to get child processes
-					const childPidsStr = execSync(`pgrep -P ${parentPid}`, { encoding: 'utf8' }).trim();
-					if (childPidsStr) {
-						const childPids = childPidsStr.split('\n').map(Number);
-						for (const pid of childPids) {
-							try {
-					process.kill(pid, 'SIGTERM');
-								logger.debug(`Sent SIGTERM to child process ${pid}`, 'PlayerService');
-							} catch (error) {
-								if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-									logger.warn(`Error killing child process ${pid}`, 'PlayerService');
+					// Try to get only the immediate child processes of the managed parent
+					try {
+						const childPidsStr = execSync(`pgrep -P ${parentPid}`, { encoding: 'utf8' }).trim();
+						if (childPidsStr) {
+							const childPids = childPidsStr.split('\n').map(Number);
+							for (const pid of childPids) {
+								try {
+									// Check if this child process is part of our managed streams
+									// before killing it
+									const processInfo = execSync(`ps -p ${pid} -o comm=`, { encoding: 'utf8' }).trim();
+									if (processInfo.includes('mpv') || processInfo.includes('streamlink')) {
+										process.kill(pid, 'SIGTERM');
+										logger.debug(`Sent SIGTERM to child process ${pid} (${processInfo})`, 'PlayerService');
+									} else {
+										logger.debug(`Skipping unrelated child process ${pid} (${processInfo})`, 'PlayerService');
+									}
+								} catch (error) {
+									if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+										logger.warn(`Error handling child process ${pid}`, 'PlayerService');
+									}
 								}
 							}
-				}
-			}
-		} catch (error) {
-					// Ignore pgrep errors as the parent process might already be gone
-					if (!(error as NodeJS.ErrnoException).message?.includes('Command failed: pgrep')) {
-						const errorMsg = error instanceof Error ? error.message : String(error);
-						logger.warn(`Error killing child processes: ${errorMsg}`, 'PlayerService');
+						}
+					} catch (error) {
+						// Ignore pgrep errors as the parent process might already be gone
+						if (!(error as NodeJS.ErrnoException).message?.includes('Command failed: pgrep')) {
+							const errorMsg = error instanceof Error ? error.message : String(error);
+							logger.warn(`Error killing child processes: ${errorMsg}`, 'PlayerService');
+						}
 					}
+				} catch (error) {
+					const errorMsg = error instanceof Error ? error.message : String(error);
+					logger.error(`Error in killChildProcesses: ${errorMsg}`, 'PlayerService');
 				}
 			}, 500); // Wait 500ms before checking/killing remaining processes
 		} catch (error) {

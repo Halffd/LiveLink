@@ -99,15 +99,55 @@ async function startServer(retries = 3): Promise<void> {
         });
       });
 
-      // Handle server shutdown
-      process.on('SIGINT', async () => {
-        logger.info('Received SIGINT. Shutting down gracefully...', 'Server');
-        await streamManager.cleanup();
-        server.close(() => {
-          logger.info('Server closed', 'Server');
-          process.exit(0);
-        });
-      });
+      // Track shutdown state to avoid multiple handlers running
+      let isShuttingDown = false;
+      
+      // Add a more robust shutdown handler
+      const handleShutdown = async (signal: string) => {
+        if (isShuttingDown) {
+          // If already shutting down and user is impatient, force exit
+          logger.warn(`Received multiple ${signal} signals during shutdown, forcing exit`, 'Server');
+          process.exit(1);
+          return;
+        }
+        
+        isShuttingDown = true;
+        logger.info(`Received ${signal}. Shutting down gracefully...`, 'Server');
+        
+        // Create a timeout to force exit if cleanup takes too long
+        const forceExitTimeout = setTimeout(() => {
+          logger.error('Shutdown timed out after 10 seconds, forcing exit', 'Server');
+          process.exit(1);
+        }, 10000); // 10 seconds timeout
+        
+        try {
+          // Perform cleanup
+          await streamManager.cleanup();
+          
+          // Close the server
+          server.close(() => {
+            logger.info('Server closed', 'Server');
+            clearTimeout(forceExitTimeout);
+            process.exit(0);
+          });
+          
+          // In case server.close callback doesn't fire
+          setTimeout(() => {
+            logger.info('Server close callback timed out, exiting anyway', 'Server');
+            clearTimeout(forceExitTimeout);
+            process.exit(0);
+          }, 3000);
+        } catch (error) {
+          logger.error('Error during shutdown:', 'Server', error instanceof Error ? error : new Error(String(error)));
+          clearTimeout(forceExitTimeout);
+          process.exit(1);
+        }
+      };
+
+      // Handle various termination signals
+      process.on('SIGINT', () => handleShutdown('SIGINT'));
+      process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+      process.on('SIGHUP', () => handleShutdown('SIGHUP'));
 
       return;
     } catch (error) {

@@ -80,7 +80,8 @@ export class TwitchService implements StreamService {
             viewerCount: stream.viewers,
             startTime: stream.startDate.getTime(),
             sourceStatus: 'live' as const,
-            channelId: stream.userName.toLowerCase()
+            channelId: stream.userName.toLowerCase(),
+            tags: stream.tags || []
           }))
         );
 
@@ -89,21 +90,62 @@ export class TwitchService implements StreamService {
           results = results.slice(0, limit);
         }
       } else {
-        // No specific channels, just fetch by limit and language
-        const streams = await this.client.streams.getStreams({
+        // No specific channels, fetch by limit, tags, and language
+        let apiOptions: any = {
           limit,
           ...(options.language ? { language: options.language } : {})
-        });
-
-        results = streams.data.map(stream => ({
-          url: `https://twitch.tv/${stream.userName}`,
-          title: stream.title,
-          platform: 'twitch' as const,
-          viewerCount: stream.viewers,
-          startTime: stream.startDate.getTime(),
-          sourceStatus: 'live' as const,
-          channelId: stream.userName.toLowerCase()
-        }));
+        };
+        
+        // Handle tag-based filtering
+        if (options.tags && options.tags.length > 0) {
+          logger.info(`Fetching Twitch streams with tags: ${options.tags.join(', ')}`, 'TwitchService');
+          
+          // First search for streams by tag
+          const taggedStreams = await this.client.streams.getStreams({
+            ...apiOptions,
+            // The Twitch API only supports filtering by a single tag at a time
+            // So we use the first tag and filter the rest in-memory
+            type: 'live'
+          });
+          
+          // Convert to StreamSource format
+          results = taggedStreams.data.map(stream => ({
+            url: `https://twitch.tv/${stream.userName}`,
+            title: stream.title,
+            platform: 'twitch' as const,
+            viewerCount: stream.viewers,
+            startTime: stream.startDate.getTime(),
+            sourceStatus: 'live' as const,
+            channelId: stream.userName.toLowerCase(),
+            tags: stream.tags || []
+          }));
+          
+          // Filter for the requested tags in memory if there are multiple tags
+          if (options.tags.length > 1) {
+            results = results.filter(stream => 
+              options.tags!.every(tag => 
+                stream.tags?.some(streamTag => 
+                  streamTag.toLowerCase() === tag.toLowerCase()
+                )
+              )
+            );
+          }
+        } else {
+          // No tags specified, just get popular streams
+          const streams = await this.client.streams.getStreams(apiOptions);
+          
+          // Convert to StreamSource format
+          results = streams.data.map(stream => ({
+            url: `https://twitch.tv/${stream.userName}`,
+            title: stream.title,
+            platform: 'twitch' as const,
+            viewerCount: stream.viewers,
+            startTime: stream.startDate.getTime(),
+            sourceStatus: 'live' as const,
+            channelId: stream.userName.toLowerCase(),
+            tags: stream.tags || []
+          }));
+        }
       }
 
       // If these are favorite channels, then re-sort preserving favorite order

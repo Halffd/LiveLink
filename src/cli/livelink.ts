@@ -17,16 +17,33 @@ function formatUptime(startTime: number | string): string {
   const now = Date.now();
   const diff = Math.floor((now - start) / 1000);
   
-  const hours = Math.floor(diff / 3600);
+  const days = Math.floor(diff / (3600 * 24));
+  const hours = Math.floor((diff % (3600 * 24)) / 3600);
   const minutes = Math.floor((diff % 3600) / 60);
   const seconds = diff % 60;
   
-  if (hours > 0) {
-    return `${hours}h ${minutes}m ${seconds}s`;
-  } else if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
+  // Use a more consistent format that's easier to read
+  const parts = [];
+  
+  if (days > 0) {
+    parts.push(`${days} day${days > 1 ? 's' : ''}`);
+  }
+  
+  if (hours > 0 || days > 0) {
+    parts.push(`${hours} hour${hours !== 1 ? 's' : ''}`);
+  }
+  
+  if (minutes > 0 || hours > 0 || days > 0) {
+    parts.push(`${minutes} minute${minutes !== 1 ? 's' : ''}`);
+  }
+  
+  parts.push(`${seconds} second${seconds !== 1 ? 's' : ''}`);
+  
+  if (parts.length > 1) {
+    const lastPart = parts.pop();
+    return `${parts.join(', ')} and ${lastPart}`;
   } else {
-    return `${seconds}s`;
+    return parts[0];
   }
 }
 

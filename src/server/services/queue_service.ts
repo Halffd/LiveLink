@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
+import * as dns from 'dns';
 import type { StreamSource } from '../../types/stream.js';
 import { logger } from './logger.js';
+import { safeAsync, withTimeout } from '../utils/async_helpers.js';
 
 export interface QueueEvents {
   'queue:updated': (screen: number, queue: StreamSource[]) => void;
@@ -20,10 +22,19 @@ interface FavoritesNode {
 class QueueService extends EventEmitter {
   private queues: Map<number, StreamSource[]> = new Map();
   private watchedStreams: Set<string> = new Set();
+  private isShuttingDown = false;
+  private isOffline = false;
+  private networkStateEmitter = new EventEmitter();
+
+  // Add getter for networkStateEmitter
+  public get networkEmitter(): EventEmitter {
+    return this.networkStateEmitter;
+  }
 
   constructor() {
     super();
     logger.info('QueueService initialized', 'QueueService');
+    this.setupNetworkRecovery();
   }
 
   // Queue Management
@@ -330,6 +341,69 @@ class QueueService extends EventEmitter {
     }
     
     return nextStream;
+  }
+
+  private setupNetworkRecovery(): void {
+    // Use DNS lookup instead of HTTP requests for more reliable checks
+    const DNS_SERVERS = [
+      'google.com',  // Google 
+      'cloudflare.com',  // Cloudflare
+      'amazon.com'   // Amazon
+    ];
+    
+    // Network state with debouncing
+    let networkState = 'online';
+    let pendingStateChange: NodeJS.Timeout | null = null;
+    let failedChecks = 0;
+    
+    // Check network connectivity every 10 seconds (reduced frequency to lower logs)
+    const checkInterval = setInterval(() => {
+      if (this.isShuttingDown) {
+        clearInterval(checkInterval);
+        return;
+      }
+
+      // Try multiple DNS servers
+      let checkPromises = DNS_SERVERS.map(server => {
+        return new Promise<boolean>(resolve => {
+          dns.lookup(server, { family: 4 }, (err: Error | null) => {
+            resolve(!err); // Resolve true if no error (successful lookup)
+          });
+        });
+      });
+      
+      // Wait for first success or all failures
+      Promise.any(checkPromises)
+        .then(() => {
+          // At least one lookup succeeded
+          failedChecks = 0;
+          if (networkState === 'offline') {
+            // Debounce recovery - wait 10 seconds of stable connection before recovering
+            if (pendingStateChange) clearTimeout(pendingStateChange);
+            
+            pendingStateChange = setTimeout(() => {
+              networkState = 'online';
+              this.isOffline = false;
+              logger.info('Network connection restored and stable', 'QueueService');
+              this.networkStateEmitter.emit('online');
+              pendingStateChange = null;
+            }, 10000);
+          }
+        })
+        .catch(() => {
+          // All lookups failed
+          failedChecks++;
+          if (networkState === 'online' && failedChecks >= 3) { // Require multiple failures
+            // Cancel any pending recovery
+            if (pendingStateChange) clearTimeout(pendingStateChange);
+            
+            networkState = 'offline';
+            this.isOffline = true;
+            logger.warn('Network connection lost, pausing stream operations', 'QueueService');
+            this.networkStateEmitter.emit('offline');
+          }
+        });
+    }, 10000); // Check less frequently to reduce log spam
   }
 }
 
