@@ -648,15 +648,93 @@ export class PlayerService {
 			const url = stream?.url || '';
 
 			logger.info(`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
-			logger.info(`Has ended stream: ${hasEndedStream}`, 'PlayerService');
-			// Determine if we should move to next stream or restart based on exit code
-			const moveToNext = code === 0; // Normal exit, move to next stream
-			const shouldRestart = code !== null && code !== 0 && !this.isShuttingDown; // Abnormal exit, try to restart
-			logger.info(`Moving to next stream: ${moveToNext}, restarting: ${shouldRestart}`, 'PlayerService');
-			// Call error callback with appropriate flags for stream manager to handle
+			
+			// External kill (code null) or missing URL should not be retried to prevent infinite loops
+			const isMissingUrl = !url || url.trim() === '';
+			const isExternalKill = code === null;
+
+			// Only retry network errors if we have a valid URL and it's not an external kill
+			if (this.isNetworkErrorCode(code) && !isMissingUrl && !isExternalKill && stream?.options) {
+				const networkRetryCount = this.networkRetries.get(screen) || 0;
+				const now = Date.now();
+				const lastError = this.lastNetworkError.get(screen) || 0;
+				const timeSinceLastError = now - lastError;
+
+				// Reset network retry count if it's been a while since the last error
+				if (timeSinceLastError > 2 * 60 * 1000) { // Reduced from 5 minutes to 2 minutes
+					logger.info(`Resetting network retry count for screen ${screen} as it's been ${Math.round(timeSinceLastError / 1000)}s since last error`, 'PlayerService');
+					this.networkRetries.set(screen, 0);
+				}
+
+				// Update last error time
+				this.lastNetworkError.set(screen, now);
+
+				// Check if we should retry
+				if (networkRetryCount < this.MAX_NETWORK_RETRIES) {
+					// Calculate backoff time with exponential backoff
+					const backoffTime = Math.min(this.NETWORK_RETRY_INTERVAL * Math.pow(1.5, networkRetryCount), this.MAX_BACKOFF_TIME);
+
+					logger.info(`Network error detected for ${url} on screen ${screen}, retry ${networkRetryCount + 1}/${this.MAX_NETWORK_RETRIES} in ${Math.round(backoffTime / 1000)}s`, 'PlayerService');
+
+					// Increment retry count
+					this.networkRetries.set(screen, networkRetryCount + 1);
+
+					// Clean up but don't emit error yet
+					this.cleanup_after_stop(screen);
+					this.clearMonitoring(screen);
+
+					// Set up retry timer
+					const retryTimer = setTimeout(async () => {
+						try {
+							logger.info(`Attempting to restart stream ${url} on screen ${screen} after network error`, 'PlayerService');
+							await this.startStream({
+								...stream.options,
+								isRetry: true
+							});
+						} catch (error) {
+							logger.error(`Failed to restart stream after network error on screen ${screen}`, 'PlayerService',
+								error instanceof Error ? error : new Error(String(error)));
+
+							// Now emit the error since retry failed
+							this.errorCallback?.({
+								screen,
+								error: `Failed to restart stream after network error: ${error instanceof Error ? error.message : String(error)}`,
+								code: code || 0,
+								url,
+								moveToNext: true
+							});
+						}
+					}, backoffTime);
+
+					// Store the timer
+					this.retryTimers.set(screen, retryTimer);
+					return; // Don't emit error yet, we're handling it with retry
+				} else {
+					logger.warn(`Maximum network retries (${this.MAX_NETWORK_RETRIES}) reached for screen ${screen}, giving up`, 'PlayerService');
+					// Reset retry count for future attempts
+					this.networkRetries.set(screen, 0);
+				}
+			} else if (isExternalKill) {
+				logger.warn(`Process on screen ${screen} was killed externally (code: ${code}), skipping retry`, 'PlayerService');
+			} else if (isMissingUrl) {
+				logger.warn(`Process on screen ${screen} has no URL, skipping retry to prevent infinite loop`, 'PlayerService');
+			}
+
+			// For non-network errors or if max retries reached, clean up and emit error
+			this.cleanup_after_stop(screen);
+			this.clearMonitoring(screen);
+
+			// Calculate whether to move to next or restart
+			const normalExit = code === 0;
+			const missingUrl = !url || url.trim() === '';
+			const externalKill = code === null;
+			const moveToNext = normalExit || missingUrl || externalKill; 
+			const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
+
+			// Emit stream error with URL if we have it
 			this.errorCallback?.({
 				screen,
-				error: `Process exited with code ${code || 0}`,
+				error: normalExit ? 'Stream ended normally' : `Stream ended with code ${code}`,
 				code: code || 0,
 				url,
 				moveToNext,
@@ -768,8 +846,12 @@ export class PlayerService {
 		const isNetworkError = this.isNetworkErrorCode(code);
 		this.isNetworkError.set(screen, isNetworkError);
 
-		// Handle retries for network errors differently
-		if (isNetworkError && url && options) {
+		// External kill (code null) or missing URL should not be retried to prevent infinite loops
+		const isMissingUrl = !url || url.trim() === '';
+		const isExternalKill = code === null;
+
+		// Handle network errors with valid URLs that are not external kills
+		if (isNetworkError && url && !isMissingUrl && !isExternalKill && options) {
 			const networkRetryCount = this.networkRetries.get(screen) || 0;
 			const now = Date.now();
 			const lastError = this.lastNetworkError.get(screen) || 0;
@@ -829,19 +911,31 @@ export class PlayerService {
 				// Reset retry count for future attempts
 				this.networkRetries.set(screen, 0);
 			}
+		} else if (isExternalKill) {
+			logger.warn(`Process on screen ${screen} was killed externally (code: ${code}), skipping retry`, 'PlayerService');
+		} else if (isMissingUrl) {
+			logger.warn(`Process on screen ${screen} has no URL, skipping retry to prevent infinite loop`, 'PlayerService');
 		}
 
 		// For non-network errors or if max retries reached, clean up and emit error
 		this.cleanup_after_stop(screen);
 		this.clearMonitoring(screen);
 
+		// Calculate whether to move to next or restart
+		const normalExit = code === 0;
+		const missingUrl = !url || url.trim() === '';
+		const externalKill = code === null;
+		const moveToNext = normalExit || missingUrl || externalKill; 
+		const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
+
 		// Emit stream error with URL if we have it
 		this.errorCallback?.({
 			screen,
-			error: code === 0 ? 'Stream ended normally' : `Stream ended with code ${code}`,
+			error: normalExit ? 'Stream ended normally' : `Stream ended with code ${code}`,
 			code: code || 0,
 			url,
-			moveToNext: true // Always signal to move to next stream
+			moveToNext,
+			shouldRestart
 		});
 	}
 
@@ -1402,6 +1496,11 @@ export class PlayerService {
 				if (stream?.url) {
 					data.url = stream.url;
 					logger.info(`Added missing URL ${stream.url} to stream error for screen ${data.screen}`, 'PlayerService');
+				} else {
+					// If still no URL, make sure we move to next stream to avoid infinite loops
+					logger.warn(`Cannot recover URL for screen ${data.screen}, ensuring moveToNext=true to prevent loops`, 'PlayerService');
+					data.moveToNext = true;
+					data.shouldRestart = false;
 				}
 			}
 			callback(data);

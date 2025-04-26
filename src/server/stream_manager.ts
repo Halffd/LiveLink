@@ -615,57 +615,56 @@ export class StreamManager extends EventEmitter {
 	}
 
 	private async handleStreamEnd(screen: number): Promise<void> {
-		logger.info(`Handling stream end for screen ${screen}`, 'StreamManager');
-
-		const currentState = this.getScreenState(screen);
-
-		// Only process if we're in a valid state for handling stream end
-		if (currentState !== StreamState.PLAYING && currentState !== StreamState.ERROR) {
-			logger.info(`Ignoring stream end for screen ${screen} in state ${currentState}`, 'StreamManager');
-			return;
-		}
-
-		logger.info(`Handling stream end for screen ${screen}`, 'StreamManager');
-
-		// Clear any existing processing timeout
-		this.clearQueueProcessingTimeout(screen);
-
+		// No need for mutex here as it's causing issues with queue processing
 		try {
-			// Set state to stopping while we handle the stream end
-			await this.setScreenState(screen, StreamState.STOPPING);
-
-			// Process concurrently for faster transitions
-			const stopPromise = this.playerService.stopStream(screen, true);
-
-			// While stopping, prepare the next stream
-			const nextStream = queueService.dequeueNextStream(screen);
-
-			// Await the stop operation
-			await stopPromise;
-
-			// Ensure we're no longer tracking this stream
-			if (this.streams.has(screen)) {
-				logger.info(`Removing stream tracking for screen ${screen}`, 'StreamManager');
-				this.streams.delete(screen);
-			} else {
-				logger.info(`No stream to remove from tracking for screen ${screen}`, 'StreamManager');
-			}
-
-			// Now we're effectively in IDLE state
-			await this.setScreenState(screen, StreamState.IDLE);
-
-			if (!nextStream) {
-				logger.info(`No next stream in queue for screen ${screen}, looking for new streams`, 'StreamManager');
-				await this.handleEmptyQueue(screen);
+			const currentState = this.getScreenState(screen);
+			
+			// Only process if we're in a valid state for handling stream end
+			if (currentState !== StreamState.PLAYING && currentState !== StreamState.ERROR) {
+				logger.info(`Ignoring stream end for screen ${screen} in state ${currentState}`, 'StreamManager');
 				return;
 			}
-
+			
+			logger.info(`Handling stream end for screen ${screen}`, 'StreamManager');
+			
+			// Clear any existing processing timeout
+			this.clearQueueProcessingTimeout(screen);
+			
+			// Set state to stopping while we handle the stream end
+			await this.setScreenState(screen, StreamState.STOPPING);
+			
+			// Process concurrently for faster transitions
+			const stopPromise = this.playerService.stopStream(screen, true);
+			
+			// While stopping, prepare the next stream
+			const nextStream = queueService.dequeueNextStream(screen);
+			
+			// Await the stop operation
+			await stopPromise;
+			
+			// Ensure we're no longer tracking this stream
+			if (this.streams.has(screen)) {
+				logger.debug(`Removing stream tracking for screen ${screen}`, 'StreamManager');
+				this.streams.delete(screen);
+			} else {
+				logger.debug(`No stream to remove from tracking for screen ${screen}`, 'StreamManager');
+			}
+			
+			// Now we're effectively in IDLE state
+			await this.setScreenState(screen, StreamState.IDLE);
+			
+			if (!nextStream) {
+				logger.info(`No next stream in queue for screen ${screen}, looking for new streams`, 'StreamManager');
+					await this.handleEmptyQueue(screen);
+					return;
+			}
+			
 			// Start the stream immediately
 			logger.info(`Moving to next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
-
+			
 			// Temporarily set to STARTING state
 			await this.setScreenState(screen, StreamState.STARTING);
-
+			
 			// Make sure screen config is available
 			const screenConfig = this.getScreenConfig(screen) || {
 				screen,
@@ -675,11 +674,11 @@ export class StreamManager extends EventEmitter {
 				quality: this.config.player.defaultQuality,
 				windowMaximized: this.config.player.windowMaximized
 			};
-
-			// Always call playerService.startStream directly to ensure stream starts
+			
+			// Always call playerService.startStream directly to start the next stream from queue
 			try {
 				logger.info(`Directly starting stream for screen ${screen}: ${nextStream.url}`, 'StreamManager');
-
+				
 				const startResult = await this.playerService.startStream({
 					url: nextStream.url,
 					screen,
@@ -691,10 +690,10 @@ export class StreamManager extends EventEmitter {
 					startTime: nextStream.startTime,
 					config: screenConfig
 				});
-
+				
 				if (startResult.success) {
 					logger.info(`Successfully started next stream on screen ${screen}`, 'StreamManager');
-
+					
 					// Update our stream tracking
 					this.streams.set(screen, {
 						id: Date.now(),
@@ -707,14 +706,14 @@ export class StreamManager extends EventEmitter {
 						process: null,
 						status: 'playing'
 					});
-
+					
 					await this.setScreenState(screen, StreamState.PLAYING);
 				} else {
 					logger.error(`Failed to start next stream on screen ${screen}: ${startResult.error}`, 'StreamManager');
 					await this.setScreenState(screen, StreamState.ERROR);
-
+					
 					// If starting the stream fails, try to update the queue immediately
-					logger.info(`Calling handleEmptyQueue after failure for screen ${screen}`, 'StreamManager');
+					logger.debug(`Calling handleEmptyQueue after failure for screen ${screen}`, 'StreamManager');
 					await this.handleEmptyQueue(screen);
 				}
 			} catch (startError) {
@@ -723,7 +722,7 @@ export class StreamManager extends EventEmitter {
 					'StreamManager',
 					startError instanceof Error ? startError : new Error(String(startError))
 				);
-
+				
 				await this.setScreenState(screen, StreamState.ERROR);
 				await this.handleEmptyQueue(screen);
 			}
@@ -733,9 +732,9 @@ export class StreamManager extends EventEmitter {
 				'StreamManager',
 				error instanceof Error ? error : new Error(String(error))
 			);
-
+			
 			await this.setScreenState(screen, StreamState.ERROR);
-
+			
 			// If there was an error, try to update the queue
 			try {
 				await this.handleEmptyQueue(screen);
@@ -1089,7 +1088,41 @@ export class StreamManager extends EventEmitter {
 	}
 
 	onStreamError(callback: (data: StreamError) => void) {
-		this.playerService.onStreamError(callback);
+		this.errorCallback = (data: StreamError) => {
+			logger.info(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
+			
+			// Make sure we always move to next stream if URL is missing to prevent loops
+			if (!data.url || data.url.trim() === '') {
+				logger.warn(`Stream error with missing URL on screen ${data.screen}, forcing moveToNext=true`, 'StreamManager');
+				data.moveToNext = true;
+			}
+			
+			// If the process tells us to move to next stream, call handleStreamEnd
+			if (data.moveToNext) {
+				logger.info(`Moving to next stream in queue after error on screen ${data.screen}`, 'StreamManager');
+				// Don't use withLock here as it's causing issues
+				this.handleStreamEnd(Number(data.screen)).catch(error => {
+					logger.error(
+						`Failed to handle stream end after error on screen ${data.screen}`,
+						'StreamManager',
+						error instanceof Error ? error : new Error(String(error))
+					);
+				});
+			} else if (data.shouldRestart) {
+				// Handle restart logic
+				logger.info(`Attempting to restart stream on screen ${data.screen}`, 'StreamManager');
+				this.restartStreams(Number(data.screen)).catch(error => {
+					logger.error(
+						`Failed to restart stream on screen ${data.screen}`,
+						'StreamManager',
+						error instanceof Error ? error : new Error(String(error))
+					);
+				});
+			}
+			
+			// Forward the data to the original callback
+			callback(data);
+		};
 	}
 
 	/**
