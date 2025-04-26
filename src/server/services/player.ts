@@ -226,78 +226,137 @@ export class PlayerService {
 				};
 			}
 
+			// Clear any stuck startup locks (if they've been set for > 30 seconds)
+			for (const [screen, locked] of this.startupLocks.entries()) {
+				if (locked) {
+					logger.warn(`Found stuck startup lock for screen ${screen}, clearing it`, 'PlayerService');
+					this.startupLocks.set(screen, false);
+				}
+			}
+
 			// Set startup lock
 			this.startupLocks.set(options.screen, true);
+			logger.debug(`Set startup lock for screen ${options.screen}`, 'PlayerService');
 
-			// Stop any existing stream first
-			await this.stopStream(options.screen);
+			// Create a timeout to clear the startup lock if something goes wrong
+			const lockTimeout = setTimeout(() => {
+				logger.error(`Startup lock timeout for screen ${options.screen}`, 'PlayerService');
+				this.startupLocks.set(options.screen, false);
+			}, 30000); // 30 second timeout
 
-			// Initialize directories if needed
-			this.initializeDirectories();
+			try {
+				// Stop any existing stream first
+				await this.stopStream(options.screen);
 
-			// Initialize IPC path
-			const homedir = process.env.HOME || process.env.USERPROFILE;
-			const ipcPath = homedir
-				? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
-				: `/tmp/mpv-ipc-${options.screen}`;
-			this.ipcPaths.set(options.screen, ipcPath);
+				// Initialize directories if needed
+				this.initializeDirectories();
 
-			logger.info(
-				`Starting stream with title: ${options.title}, viewers: ${options.viewerCount}, time: ${options.startTime}, screen: ${options.screen}`,
-				'PlayerService'
-			);
+				// Initialize IPC path
+				const homedir = process.env.HOME || process.env.USERPROFILE;
+				const ipcPath = homedir
+					? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
+					: `/tmp/mpv-ipc-${options.screen}`;
+				this.ipcPaths.set(options.screen, ipcPath);
 
-			let playerProcess: ChildProcess;
-			if (this.config.player.preferStreamlink || options.url.includes('twitch.tv')) {
-				logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
-				playerProcess = await this.startStreamlinkProcess(options);
-			} else {
-				logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
-				playerProcess = await this.startMpvProcess(options);
+				logger.info(
+					`Starting stream with title: ${options.title}, viewers: ${options.viewerCount}, time: ${options.startTime}, screen: ${options.screen}`,
+					'PlayerService'
+				);
+
+				// Detect mpv and streamlink paths
+				const mpvExists = await this.checkExecutableExists(this.mpvPath);
+				if (!mpvExists) {
+					logger.error(`MPV executable not found at path: ${this.mpvPath}`, 'PlayerService');
+					throw new Error(`MPV executable not found at ${this.mpvPath}`);
+				}
+
+				const streamlinkPath = this.streamlinkConfig.path || 'streamlink';
+				const streamlinkExists = await this.checkExecutableExists(streamlinkPath);
+				if (this.config.player.preferStreamlink && !streamlinkExists) {
+					logger.error(`Streamlink executable not found at path: ${streamlinkPath}`, 'PlayerService');
+					throw new Error(`Streamlink executable not found at ${streamlinkPath}`);
+				}
+
+				// Log executable paths
+				logger.info(`Using MPV at: ${this.mpvPath}`, 'PlayerService');
+				if (this.config.player.preferStreamlink) {
+					logger.info(`Using Streamlink at: ${streamlinkPath}`, 'PlayerService');
+				}
+
+				let playerProcess: ChildProcess;
+				if (this.config.player.preferStreamlink || options.url.includes('twitch.tv')) {
+					logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
+					playerProcess = await this.startStreamlinkProcess(options);
+				} else {
+					logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
+					playerProcess = await this.startMpvProcess(options);
+				}
+
+				if (!playerProcess || !playerProcess.pid) {
+					throw new Error('Failed to start player process - no process or PID returned');
+				}
+
+				logger.info(`Player process started with PID ${playerProcess.pid} for screen ${options.screen}`, 'PlayerService');
+
+				// Wait a moment to ensure process has actually started
+				await new Promise(resolve => setTimeout(resolve, 1000));
+
+				// Check if the process is still running after initialization
+				if (!this.isProcessRunning(playerProcess.pid)) {
+					throw new Error(`Player process exited immediately after starting (PID: ${playerProcess.pid})`);
+				}
+
+				// Create stream instance and store it
+				const streamInstance: LocalStreamInstance = {
+					id: Date.now(),
+					screen: options.screen,
+					url: options.url,
+					quality: options.quality || this.config.player.defaultQuality,
+					status: 'playing',
+					volume: options.volume || 0,
+					process: playerProcess,
+					platform: options.url.includes('twitch.tv') ? 'twitch' : 'youtube',
+					title: options.title,
+					startTime: typeof options.startTime === 'string' ? new Date(options.startTime).getTime() : options.startTime,
+					options
+				};
+
+				// Store stream instance before setting up handlers
+				this.streams.set(options.screen, streamInstance);
+				
+				// Set up process handlers and monitoring
+				this.setupProcessHandlers(playerProcess, options.screen);
+				this.setupStreamMonitoring(options.screen, playerProcess, options);
+
+				// Check health immediately
+				await this.checkStreamHealth(options.screen);
+
+				// Clear startup lock timeout
+				clearTimeout(lockTimeout);
+				
+				// Clear startup lock
+				this.startupLocks.set(options.screen, false);
+				logger.debug(`Cleared startup lock for screen ${options.screen}`, 'PlayerService');
+
+				// Double check the stream was added correctly
+				const addedStream = this.streams.get(options.screen);
+				if (!addedStream || !addedStream.process || !addedStream.process.pid) {
+					throw new Error('Stream was not properly initialized');
+				}
+
+				logger.info(`Stream started successfully on screen ${options.screen} with PID ${addedStream.process.pid}`, 'PlayerService');
+				return {
+					screen: options.screen,
+					success: true
+				};
+			} catch (err) {
+				// Clear the timeout and startup lock if we hit an exception
+				clearTimeout(lockTimeout);
+				this.startupLocks.set(options.screen, false);
+				throw err; // Re-throw to be caught by outer try-catch
 			}
-
-			if (!playerProcess || !playerProcess.pid) {
-				throw new Error('Failed to start player process');
-			}
-
-			// Create stream instance and store it
-			const streamInstance: LocalStreamInstance = {
-				id: Date.now(),
-				screen: options.screen,
-				url: options.url,
-				quality: options.quality || this.config.player.defaultQuality,
-				status: 'playing',
-				volume: options.volume || 0,
-				process: playerProcess,
-				platform: options.url.includes('twitch.tv') ? 'twitch' : 'youtube',
-				title: options.title,
-				startTime: typeof options.startTime === 'string' ? new Date(options.startTime).getTime() : options.startTime,
-				options
-			};
-
-			// Store stream instance before setting up handlers
-			this.streams.set(options.screen, streamInstance);
-			
-			// Set up process handlers and monitoring
-			this.setupProcessHandlers(playerProcess, options.screen);
-			this.setupStreamMonitoring(options.screen, playerProcess, options);
-
-			// Clear startup lock
-			this.startupLocks.set(options.screen, false);
-
-			// Double check the stream was added correctly
-			const addedStream = this.streams.get(options.screen);
-			if (!addedStream || !addedStream.process || !addedStream.process.pid) {
-				throw new Error('Stream was not properly initialized');
-			}
-
-			logger.info(`Stream started successfully on screen ${options.screen} with PID ${addedStream.process.pid}`, 'PlayerService');
-			return {
-				screen: options.screen,
-				success: true
-			};
 		} catch (error) {
-			// Clear startup lock on error
+			// Clear startup lock on error (just to be super sure)
 			this.startupLocks.set(options.screen, false);
 			
 			// Clean up any partially initialized stream
@@ -1779,5 +1838,21 @@ export class PlayerService {
 			// Just log the error, this is just a last-resort cleanup attempt
 			logger.debug(`Failed to execute pkill for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
 		}
+	}
+
+	// Helper method to check if an executable exists
+	private async checkExecutableExists(execPath: string): Promise<boolean> {
+		return new Promise<boolean>(resolve => {
+			exec(`which ${execPath}`, (error) => {
+				if (error) {
+					// Try with 'command -v' as a fallback
+					exec(`command -v ${execPath}`, (err2) => {
+						resolve(!err2);
+					});
+				} else {
+					resolve(true);
+				}
+			});
+		});
 	}
 }

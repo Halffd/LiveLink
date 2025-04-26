@@ -182,6 +182,15 @@ export class StreamManager extends EventEmitter {
   // Compatibility properties for backward compatibility
   private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
   
+  // Track streams that failed to start to avoid infinite retry loops
+  private failedStreamAttempts: Map<string, { timestamp: number, count: number }> = new Map();
+  private readonly MAX_STREAM_ATTEMPTS = 2;
+  private readonly STREAM_FAILURE_RESET_TIME = 3600000; // 1 hour in ms
+  
+  // Add a map to track when screens entered the STARTING state
+  private screenStartingTimestamps: Map<number, number> = new Map();
+  private readonly MAX_STARTING_TIME = 30000; // 30 seconds max in starting state
+
   constructor(
     config: Config,
     holodexService: HolodexService,
@@ -276,33 +285,115 @@ export class StreamManager extends EventEmitter {
       .filter(stream => stream.enabled)
       .map(stream => stream.screen);
 
+    // Check for stuck screens in STARTING state
+    const now = Date.now();
+    for (const screen of enabledScreens) {
+      const currentState = this.getScreenState(screen);
+      
+      if (currentState === StreamState.STARTING) {
+        // Record when the screen first entered STARTING state if not already tracked
+        if (!this.screenStartingTimestamps.has(screen)) {
+          this.screenStartingTimestamps.set(screen, now);
+        }
+        
+        const startTime = this.screenStartingTimestamps.get(screen)!;
+        const timeInStarting = now - startTime;
+        
+        if (timeInStarting > this.MAX_STARTING_TIME) {
+          // This screen has been stuck in STARTING state for too long - force reset it
+          logger.warn(`Screen ${screen} has been stuck in STARTING state for ${Math.floor(timeInStarting / 1000)}s, forcing reset`, 'StreamManager');
+          
+          try {
+            // Force stop any stream that might be in process
+            await this.playerService.stopStream(screen, true);
+            
+            // Reset the state to IDLE
+            await this.setScreenState(screen, StreamState.IDLE);
+            
+            // Clear the timestamp
+            this.screenStartingTimestamps.delete(screen);
+          } catch (error) {
+            logger.error(
+              `Error resetting stuck STARTING state for screen ${screen}`,
+              'StreamManager',
+              error instanceof Error ? error : new Error(String(error))
+            );
+          }
+        }
+      } else {
+        // If not in STARTING state anymore, clear the timestamp
+        this.screenStartingTimestamps.delete(screen);
+      }
+    }
+
     // Update queues for each screen
     for (const screen of enabledScreens) {
       try {
         // Check if there's an active stream on this screen
         const activeStream = this.getActiveStreams().find(s => s.screen === screen);
+        const currentState = this.getScreenState(screen);
         
         if (!activeStream) {
-          // If no active stream and screen isn't manually closed, try to start a new one
-          if (!this.manuallyClosedScreens.has(screen)) {
-            const now = Date.now();
+          // If screen is in ERROR state, reset it to IDLE to allow starting new streams
+          if (currentState === StreamState.ERROR) {
+            logger.info(`Resetting screen ${screen} from ERROR to IDLE state`, 'StreamManager');
+            await this.setScreenState(screen, StreamState.IDLE);
+          }
+          
+          // If no active stream and screen is in IDLE state, try to start a new one
+          if (currentState === StreamState.IDLE) {
             const lastRefresh = this.lastStreamRefresh.get(screen) || 0;
             const timeSinceLastRefresh = now - lastRefresh;
             
-            // Only attempt to start new streams if it's been long enough since last refresh
-            if (timeSinceLastRefresh >= this.STREAM_REFRESH_INTERVAL) {
+            // Reduced refresh interval check to be more aggressive
+            const minimumRefreshInterval = this.STREAM_REFRESH_INTERVAL / 3; // 20 seconds instead of 60
+            
+            if (timeSinceLastRefresh >= minimumRefreshInterval) {
               logger.info(`No active stream on screen ${screen}, fetching new streams`, 'StreamManager');
               
               try {
-                // Reset last stream fetch to force fresh data
-                this.lastStreamFetch = 0;
-                const streams = await this.getLiveStreams();
-                const availableStreams = streams.filter(s => s.screen === screen);
+                // Check if there are already queued streams for this screen
+                const existingQueue = this.queues.get(screen) || [];
                 
-                if (availableStreams.length > 0) {
-                  // Start first stream immediately
-                  const firstStream = availableStreams[0];
-                  await this.startStream({
+                if (existingQueue.length > 0) {
+                  // If there's already a queue, start the first stream immediately
+                  logger.info(`Found ${existingQueue.length} streams in queue for screen ${screen}, starting first one`, 'StreamManager');
+                  
+                  // Filter out streams that have repeatedly failed to start
+                  const filteredQueue = existingQueue.filter(stream => {
+                    const failRecord = this.failedStreamAttempts.get(stream.url);
+                    if (!failRecord) return true; // Never failed before
+                    
+                    // Reset failure count if it's been long enough
+                    if (now - failRecord.timestamp > this.STREAM_FAILURE_RESET_TIME) {
+                      this.failedStreamAttempts.delete(stream.url);
+                      return true;
+                    }
+                    
+                    // Skip if too many recent failures
+                    return failRecord.count < this.MAX_STREAM_ATTEMPTS;
+                  });
+                  
+                  if (filteredQueue.length === 0) {
+                    logger.warn(`All ${existingQueue.length} streams in queue for screen ${screen} have failed recently, fetching fresh streams`, 'StreamManager');
+                    this.queues.delete(screen);
+                    // Force fetch new streams
+                    this.lastStreamFetch = 0;
+                    await this.updateQueue(screen);
+                    continue;
+                  }
+                  
+                  // Save a copy of the queue before starting the stream
+                  const originalQueue = [...filteredQueue];
+                  
+                  const firstStream = filteredQueue[0];
+                  logger.info(`Attempting to start stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
+                  
+                  // Record when we enter STARTING state
+                  this.screenStartingTimestamps.set(screen, now);
+                  
+                  // Attempt to start the stream
+                  const startResult = await this.startStream({
                     url: firstStream.url,
                     screen,
                     quality: this.config.player.defaultQuality,
@@ -311,14 +402,133 @@ export class StreamManager extends EventEmitter {
                     startTime: firstStream.startTime
                   });
                   
-                  // Set remaining streams in queue
-                  if (availableStreams.length > 1) {
-                    this.queues.set(screen, availableStreams.slice(1));
+                  if (startResult.success) {
+                    logger.info(`Successfully started stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
+                    
+                    // Clear any failure record for this stream
+                    this.failedStreamAttempts.delete(firstStream.url);
+                    
+                    // Update queue to remove the started stream
+                    if (originalQueue.length > 1) {
+                      this.queues.set(screen, originalQueue.slice(1));
+                      logger.debug(`Updated queue for screen ${screen}, ${originalQueue.length - 1} streams remaining`, 'StreamManager');
+                    } else {
+                      this.queues.delete(screen);
+                      logger.debug(`Queue empty after starting stream on screen ${screen}`, 'StreamManager');
+                    }
+                    
+                    this.lastStreamRefresh.set(screen, now);
+                  } else {
+                    // Stream failed to start - record the failure
+                    const failRecord = this.failedStreamAttempts.get(firstStream.url) || { timestamp: now, count: 0 };
+                    failRecord.count++;
+                    failRecord.timestamp = now;
+                    this.failedStreamAttempts.set(firstStream.url, failRecord);
+                    
+                    // Log detailed error
+                    logger.error(`Failed to start stream on screen ${screen}: ${firstStream.url}. Error: ${startResult.error} (Attempt ${failRecord.count})`, 'StreamManager');
+                    
+                    // Remove the failed stream from queue and try the next one or fetch fresh streams
+                    if (originalQueue.length > 1) {
+                      logger.info(`Trying next stream in queue for screen ${screen}`, 'StreamManager');
+                      this.queues.set(screen, originalQueue.slice(1));
+                      
+                      // Schedule an immediate refresh to try the next stream
+                      setTimeout(() => this.updateAllQueues(), 1000);
+                    } else {
+                      // No more streams in queue, clear it
+                      this.queues.delete(screen);
+                      logger.debug(`Queue empty after failed start on screen ${screen}`, 'StreamManager');
+                      
+                      // Try to get fresh streams after a short delay
+                      logger.info(`Fetching fresh streams for screen ${screen} after failed start`, 'StreamManager');
+                      setTimeout(async () => {
+                        this.lastStreamFetch = 0; // Force fresh data
+                        await this.updateQueue(screen);
+                        this.updateAllQueues();
+                      }, 3000);
+                    }
                   }
-                  
-                  this.lastStreamRefresh.set(screen, now);
                 } else {
-                  logger.info(`No available streams found for screen ${screen}`, 'StreamManager');
+                  // No existing queue, fetch fresh streams
+                  // Reset last stream fetch to force fresh data
+                  this.lastStreamFetch = 0;
+                  logger.info(`No queue for screen ${screen}, fetching fresh streams`, 'StreamManager');
+                  const streams = await this.getLiveStreams();
+                  const availableStreams = streams.filter(s => s.screen === screen);
+                  
+                  if (availableStreams.length > 0) {
+                    // Filter out streams that have repeatedly failed
+                    const filteredStreams = availableStreams.filter(stream => {
+                      const failRecord = this.failedStreamAttempts.get(stream.url);
+                      if (!failRecord) return true; // Never failed before
+                      
+                      // Reset failure count if it's been long enough
+                      if (now - failRecord.timestamp > this.STREAM_FAILURE_RESET_TIME) {
+                        this.failedStreamAttempts.delete(stream.url);
+                        return true;
+                      }
+                      
+                      // Skip if too many recent failures
+                      return failRecord.count < this.MAX_STREAM_ATTEMPTS;
+                    });
+                    
+                    if (filteredStreams.length === 0) {
+                      logger.warn(`All ${availableStreams.length} available streams for screen ${screen} have failed recently`, 'StreamManager');
+                      continue;
+                    }
+                    
+                    // Start first stream immediately
+                    const firstStream = filteredStreams[0];
+                    logger.info(`Starting stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
+                    
+                    // Record when we enter STARTING state
+                    this.screenStartingTimestamps.set(screen, now);
+                    
+                    const startResult = await this.startStream({
+                      url: firstStream.url,
+                      screen,
+                      quality: this.config.player.defaultQuality,
+                      title: firstStream.title,
+                      viewerCount: firstStream.viewerCount,
+                      startTime: firstStream.startTime
+                    });
+                    
+                    if (startResult.success) {
+                      logger.info(`Successfully started stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
+                      
+                      // Clear any failure record for this stream
+                      this.failedStreamAttempts.delete(firstStream.url);
+                      
+                      // Set remaining streams in queue
+                      if (filteredStreams.length > 1) {
+                        this.queues.set(screen, filteredStreams.slice(1));
+                        logger.debug(`Set queue for screen ${screen} with ${filteredStreams.length - 1} streams`, 'StreamManager');
+                      }
+                      
+                      this.lastStreamRefresh.set(screen, now);
+                    } else {
+                      // Stream failed to start - record the failure
+                      const failRecord = this.failedStreamAttempts.get(firstStream.url) || { timestamp: now, count: 0 };
+                      failRecord.count++;
+                      failRecord.timestamp = now;
+                      this.failedStreamAttempts.set(firstStream.url, failRecord);
+                      
+                      // Log detailed error
+                      logger.error(`Failed to start fresh stream on screen ${screen}: ${firstStream.url}. Error: ${startResult.error} (Attempt ${failRecord.count})`, 'StreamManager');
+                      
+                      // Store the remaining streams in the queue to try later
+                      if (filteredStreams.length > 1) {
+                        logger.info(`Setting queue with remaining ${filteredStreams.length - 1} streams for later retry on screen ${screen}`, 'StreamManager');
+                        this.queues.set(screen, filteredStreams.slice(1));
+                        
+                        // Schedule an immediate refresh to try the next stream
+                        setTimeout(() => this.updateAllQueues(), 1000);
+                      }
+                    }
+                  } else {
+                    logger.info(`No available streams found for screen ${screen}`, 'StreamManager');
+                  }
                 }
               } catch (error) {
                 logger.error(
@@ -328,11 +538,15 @@ export class StreamManager extends EventEmitter {
                 );
               }
             } else {
-              logger.debug(`No active stream on screen ${screen}, but refresh interval not elapsed. Skipping refresh.`, 'StreamManager');
+              logger.debug(`No active stream on screen ${screen}, but refresh interval not elapsed (${Math.floor(timeSinceLastRefresh / 1000)}s of ${Math.floor(minimumRefreshInterval / 1000)}s). Will check again soon.`, 'StreamManager');
             }
-          } else {
-            logger.debug(`Screen ${screen} was manually closed, not starting new streams`, 'StreamManager');
+          } else if (currentState !== StreamState.STARTING) {
+            // If screen is in any other state than IDLE, STARTING or ERROR, log it
+            logger.debug(`Screen ${screen} has no active stream but is in state ${currentState}, not attempting to start new stream`, 'StreamManager');
           }
+        } else {
+          // There's an active stream
+          logger.debug(`Active stream already running on screen ${screen}`, 'StreamManager');
         }
       } catch (error) {
         logger.error(
@@ -497,8 +711,8 @@ export class StreamManager extends EventEmitter {
     return this.withLock(screen, 'handleEmptyQueue', async () => {
       const currentState = this.getScreenState(screen);
       
-      // Only process if we're in an idle state
-      if (currentState !== StreamState.IDLE) {
+      // Allow processing in IDLE or ERROR states to be more robust
+      if (currentState !== StreamState.IDLE && currentState !== StreamState.ERROR) {
         logger.info(`Ignoring empty queue handling for screen ${screen} in state ${currentState}`, 'StreamManager');
         return;
       }
@@ -507,6 +721,8 @@ export class StreamManager extends EventEmitter {
       await this.setScreenState(screen, StreamState.STARTING);
       
       try {
+        logger.info(`Handling empty queue for screen ${screen}, fetching fresh streams`, 'StreamManager');
+        
         // Force reset cache timestamp to get fresh data
         this.lastStreamFetch = 0;
         this.lastStreamRefresh.set(screen, 0);
@@ -518,32 +734,68 @@ export class StreamManager extends EventEmitter {
         const queue = this.queues.get(screen) || [];
         
         if (queue.length > 0) {
-          // Remove the stream from queue before starting it
-          const nextStream = queue[0];
-          queue.shift();
-          this.queues.set(screen, queue);
+          // Try each stream in the queue until one starts successfully or we run out of streams
+          let success = false;
           
-          logger.info(`Starting stream from refreshed queue on screen ${screen}: ${nextStream.url}`, 'StreamManager');
+          // Make a copy of the queue to iterate through
+          const queueCopy = [...queue];
+          this.queues.set(screen, []); // Clear the queue while we process
           
-          const result = await this.startStream({
-            url: nextStream.url,
-            screen,
-            quality: 'best',
-            windowMaximized: true
-          });
+          for (const nextStream of queueCopy) {
+            if (success) {
+              // Add remaining streams back to queue
+              this.queues.get(screen)!.push(nextStream);
+              continue;
+            }
+            
+            logger.info(`Attempting to start stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
+            
+            const result = await this.startStream({
+              url: nextStream.url,
+              screen,
+              quality: this.config.player.defaultQuality || 'best',
+              windowMaximized: true,
+              title: nextStream.title,
+              viewerCount: nextStream.viewerCount,
+              startTime: nextStream.startTime
+            });
+            
+            if (result.success) {
+              logger.info(`Successfully started stream on screen ${screen}`, 'StreamManager');
+              await this.setScreenState(screen, StreamState.PLAYING);
+              success = true;
+            } else {
+              logger.error(`Failed to start stream on screen ${screen}: ${result.error}`, 'StreamManager');
+              // Continue to next stream in queue
+            }
+          }
           
-          // Update state based on result
-          if (result.success) {
-            await this.setScreenState(screen, StreamState.PLAYING);
-          } else {
+          // If we couldn't start any stream and have empty queue now
+          if (!success) {
+            logger.warn(`Failed to start any stream from queue of ${queueCopy.length} for screen ${screen}`, 'StreamManager');
             await this.setScreenState(screen, StreamState.ERROR);
+            
+            // Schedule another attempt after a short delay
+            setTimeout(() => {
+              logger.info(`Scheduling another attempt to refresh streams for screen ${screen}`, 'StreamManager');
+              this.updateAllQueues();
+            }, 5000); // Try again in 5 seconds
           }
         } else {
           logger.info(`No streams available for screen ${screen} after queue update`, 'StreamManager');
           
           // Try adding a test stream when no streams are available
-          await this.addDefaultTestStream(screen);
-          await this.setScreenState(screen, StreamState.IDLE);
+          try {
+            await this.addDefaultTestStream(screen);
+            await this.setScreenState(screen, StreamState.IDLE);
+          } catch (testStreamError) {
+            logger.error(
+              `Failed to add test stream for screen ${screen}`,
+              'StreamManager',
+              testStreamError instanceof Error ? testStreamError : new Error(String(testStreamError))
+            );
+            await this.setScreenState(screen, StreamState.ERROR);
+          }
         }
       } catch (error) {
         logger.error(
@@ -551,7 +803,14 @@ export class StreamManager extends EventEmitter {
           'StreamManager',
           error instanceof Error ? error : new Error(String(error))
         );
+        
         await this.setScreenState(screen, StreamState.ERROR);
+        
+        // Schedule another attempt after a delay
+        setTimeout(() => {
+          logger.info(`Scheduling retry after error for screen ${screen}`, 'StreamManager');
+          this.updateAllQueues();
+        }, 10000); // Try again in 10 seconds
       }
     });
   }
@@ -1722,53 +1981,11 @@ export class StreamManager extends EventEmitter {
   }
 
   /**
-   * Updates the queue for a specific screen, optionally forcing a refresh
-   * @param screen Screen number
+   * Filter streams to remove those that have been watched already
+   * @param streams The list of stream sources to filter
+   * @param screen The screen number
+   * @returns Filtered list of streams with watched ones removed
    */
-  async updateQueue(screen: number): Promise<void> {
-    return safeAsync(async () => {
-      const screenConfig = this.getScreenConfig(screen);
-      if (!screenConfig || !screenConfig.enabled) {
-        logger.debug(`Screen ${screen} is disabled or has no config, skipping queue update`, 'StreamManager');
-        return;
-      }
-
-      // Get streams from all sources
-      const streams = await this.getAllStreamsForScreen(screen);
-      if (streams.length === 0) {
-        logger.info(`No streams found for screen ${screen}, queue will be empty`, 'StreamManager');
-      }
-      
-      // Log stream status distribution
-      const liveCount = streams.filter(s => s.sourceStatus === 'live').length;
-      const upcomingCount = streams.filter(s => s.sourceStatus === 'upcoming').length;
-      const otherCount = streams.length - liveCount - upcomingCount;
-      
-      logger.info(
-        `Stream status breakdown for screen ${screen}: ${liveCount} live, ${upcomingCount} upcoming, ${otherCount} other`,
-        'StreamManager'
-      );
-      
-      // Filter out watched streams based on configuration
-      const filteredStreams = this.filterUnwatchedStreams(streams, screen);
-
-      // Sort streams
-      const sortedStreams = this.sortStreams(filteredStreams, screenConfig.sorting);
-
-      // Update queue
-      this.queues.set(screen, sortedStreams);
-      queueService.setQueue(screen, sortedStreams);
-      
-      logger.info(
-        `Updated queue for screen ${screen}: ${sortedStreams.length} streams (${streams.length - sortedStreams.length} filtered)`,
-        'StreamManager'
-      );
-
-      // Emit queue update event
-      this.emit('queueUpdate', { screen, queue: sortedStreams });
-    }, `StreamManager:updateQueue:${screen}`, undefined);
-  }
-
   private filterUnwatchedStreams(streams: StreamSource[], screen: number): StreamSource[] {
     // Get screen config
     const screenConfig = this.getScreenConfig(screen);
@@ -1806,6 +2023,54 @@ export class StreamManager extends EventEmitter {
     }
 
     return unwatchedStreams;
+  }
+  
+  /**
+   * Updates the queue for a specific screen, optionally forcing a refresh
+   * @param screen Screen number
+   */
+  async updateQueue(screen: number): Promise<void> {
+    return safeAsync(async () => {
+      const screenConfig = this.getScreenConfig(screen);
+      if (!screenConfig || !screenConfig.enabled) {
+        logger.debug(`Screen ${screen} is disabled or has no config, skipping queue update`, 'StreamManager');
+        return;
+      }
+
+      // Get streams from all sources
+      const streams = await this.getAllStreamsForScreen(screen);
+      if (streams.length === 0) {
+        logger.info(`No streams found for screen ${screen}, queue will be empty`, 'StreamManager');
+      }
+      
+      // Log stream status distribution
+      const liveCount = streams.filter(s => s.sourceStatus === 'live').length;
+      const upcomingCount = streams.filter(s => s.sourceStatus === 'upcoming').length;
+      const otherCount = streams.length - liveCount - upcomingCount;
+      
+      logger.info(
+        `Stream status breakdown for screen ${screen}: ${liveCount} live, ${upcomingCount} upcoming, ${otherCount} other`,
+        'StreamManager'
+      );
+      
+      // Filter out watched streams based on configuration - fixed parameter type
+      const filteredStreams = this.filterUnwatchedStreams(streams, screen);
+
+      // Sort streams
+      const sortedStreams = this.sortStreams(filteredStreams, screenConfig.sorting);
+      
+      // Update queue
+      this.queues.set(screen, sortedStreams);
+      queueService.setQueue(screen, sortedStreams);
+
+      logger.info(
+        `Updated queue for screen ${screen}: ${sortedStreams.length} streams (${streams.length - sortedStreams.length} filtered)`,
+        'StreamManager'
+      );
+
+      // Emit queue update event
+      this.emit('queueUpdate', { screen, queue: sortedStreams });
+    }, `StreamManager:updateQueue:${screen}`, undefined);
   }
 
   private isStreamWatched(url: string): boolean {
