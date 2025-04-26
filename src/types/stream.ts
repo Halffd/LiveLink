@@ -216,6 +216,12 @@ export interface StreamOptions {
   viewerCount?: number;
   /** Start time of the stream */
   startTime?: string | number;
+  /** Whether this is a retry attempt */
+  isRetry?: boolean;
+  /** Whether this stream is live */
+  isLive?: boolean;
+  /** Whether this stream has been watched before */
+  isWatched?: boolean;
 }
 
 /**

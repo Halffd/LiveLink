@@ -10,13 +10,17 @@
     "strict": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "target": "ESNext",
+    "target": "ES2022",
     "outDir": "dist",
     "rootDir": "src",
     "paths": {
       "$lib/*": ["./src/lib/*"]
     },
-    "types": ["node"]
+    "types": ["node"],
+    "jsx": "preserve",
+    "allowSyntheticDefaultImports": true,
+    "downlevelIteration": true,
+    "lib": ["ES2022", "DOM"]
   },
   "include": [
     "src/server/**/*.ts",

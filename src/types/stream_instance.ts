@@ -40,6 +40,8 @@ export interface StreamError {
   url?: string;
   /** Whether to move to the next stream in queue (true) or retry same stream (false) */
   moveToNext?: boolean;
+  /** Whether the stream crashed and should be restarted (true) or ended normally (false) */
+  shouldRestart?: boolean;
 }
 
 export interface StreamEnd {
