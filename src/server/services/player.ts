@@ -1429,7 +1429,7 @@ export class PlayerService {
 			`--log-file=${logFile}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--volume=${(options.volume || 0).toString()}`,
-			`--title=${options.screen}: ${options.title || 'No Title'}`,
+			`--title="${options.screen}: ${options.title || 'No Title'}"`,
 			'--msg-level=all=debug'
 		);
 
