@@ -1456,4 +1456,23 @@ router.post('/api/streams/add-test-stream', async (ctx: Context) => {
   }
 });
 
+// Add a debug endpoint to get diagnostics information about streams
+router.get('/streams/diagnostics', async (ctx) => {
+	try {
+		const diagnostic = streamManager.getDiagnostics();
+		logger.info('Stream diagnostics accessed', 'API');
+		ctx.body = {
+			success: true,
+			diagnostics: diagnostic
+		};
+	} catch (error) {
+		logger.error('Failed to get stream diagnostics', 'API', error instanceof Error ? error : new Error(String(error)));
+		ctx.status = 500;
+		ctx.body = {
+			success: false,
+			error: 'Failed to get stream diagnostics'
+		};
+	}
+});
+
 export const apiRouter = router; 

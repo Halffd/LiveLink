@@ -191,6 +191,9 @@ export class StreamManager extends EventEmitter {
 	private screenStartingTimestamps: Map<number, number> = new Map();
 	private readonly MAX_STARTING_TIME = 30000; // 30 seconds max in starting state
 
+	// Add a set to track screens that are currently being processed
+	private processingScreens: Set<number> = new Set();
+
 	constructor(
 		config: Config,
 		holodexService: HolodexService,
@@ -1095,6 +1098,14 @@ export class StreamManager extends EventEmitter {
 			if (!data.url || data.url.trim() === '') {
 				logger.warn(`Stream error with missing URL on screen ${data.screen}, forcing moveToNext=true`, 'StreamManager');
 				data.moveToNext = true;
+				data.shouldRestart = false;
+			}
+			
+			// Check if this screen is already being processed
+			const isProcessing = this.processingScreens.has(data.screen);
+			if (isProcessing) {
+				logger.warn(`Screen ${data.screen} is already being processed, skipping duplicate error handling`, 'StreamManager');
+				return;
 			}
 			
 			// If the process tells us to move to next stream, call handleStreamEnd
@@ -2934,6 +2945,27 @@ export class StreamManager extends EventEmitter {
 				return true; // Now enabled
 			}
 		});
+	}
+
+	/**
+	 * Gets diagnostic information about active streams
+	 * Useful for debugging race conditions and stream multiplication issues
+	 */
+	public getDiagnostics(): string {
+		// Get active screens
+		const activeScreens = Array.from(this.streams.keys());
+		const activeStreamsInfo = activeScreens.map(screen => {
+			const stream = this.streams.get(screen);
+			const state = this.getScreenState(screen);
+			const isProcessing = this.processingScreens?.has(screen) || false;
+			return `Screen ${screen}: state=${state}, URL=${stream?.url || 'none'}, isProcessing=${isProcessing}, time=${new Date().toISOString()}`;
+		}).join('\n');
+		
+		// Log active player streams
+		const playerStreams = this.playerService.getActiveStreams();
+		const playerStreamsInfo = playerStreams.map(s => `Screen ${s.screen}: URL=${s.url}, status=${s.status}`).join('\n');
+
+		return `--- STREAM MANAGER DIAGNOSTICS ---\nActive Streams:\n${activeStreamsInfo}\n\nPlayer Active Streams:\n${playerStreamsInfo}`;
 	}
 }
 

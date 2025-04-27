@@ -410,7 +410,7 @@ export class PlayerService {
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
 
-		logger.debug(`Starting MPV with command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
+		logger.info(`Starting MPV with command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
 		logger.debug(`MPV args: ${args.join(' ')}`, 'PlayerService');
 		const mpvProcess = spawn(this.mpvPath, args, {
 			env,
@@ -541,6 +541,24 @@ export class PlayerService {
 
 		// Set up heartbeat monitoring
 		this.setupHeartbeat(screen);
+		
+		// Add lock for this specific screen to prevent race conditions
+		const initializeHandlerLock = (): boolean => {
+			if (hasEndedStream) {
+				logger.debug(`Process exit already handled for screen ${screen}, ignoring duplicate event`, 'PlayerService');
+				return false;
+			}
+			
+			const stream = this.streams.get(screen);
+			if (!stream || stream.status === 'stopping') {
+				logger.debug(`Stream on screen ${screen} already stopping, ignoring duplicate exit event`, 'PlayerService');
+				return false;
+			}
+			
+			// Mark as handled
+			hasEndedStream = true;
+			return true;
+		};
 
 		const cleanup = () => {
 			if (cleanupTimeout) {
@@ -559,25 +577,32 @@ export class PlayerService {
 		};
 
 		const handleStreamEnd = (error: string, code: number = 0) => {
-			if (!hasEndedStream) {
-				hasEndedStream = true;
-				const stream = this.streams.get(screen);
-				const url = stream?.url || '';
-
-				logger.info(`Stream ended on screen ${screen}${url ? ` (${url})` : ''}`, 'PlayerService');
-
-				// Call error callback with stream URL
-				this.errorCallback?.({
-					screen,
-					error,
-					code,
-					url,
-					moveToNext: true
-				});
-
-				// Schedule cleanup after a short delay to ensure all events are processed
-				cleanupTimeout = setTimeout(cleanup, 1000);
+			// Atomically check and set flag to prevent race conditions
+			if (!initializeHandlerLock()) {
+				return; // Already handled
 			}
+			
+			const stream = this.streams.get(screen);
+			const url = stream?.url || '';
+
+			logger.info(`Stream ended on screen ${screen}${url ? ` (${url})` : ''}`, 'PlayerService');
+
+			// Mark the stream as stopping
+			if (stream) {
+				stream.status = 'stopping';
+			}
+
+			// Call error callback with stream URL
+			this.errorCallback?.({
+				screen,
+				error,
+				code,
+				url,
+				moveToNext: true
+			});
+
+			// Schedule cleanup after a short delay to ensure all events are processed
+			cleanupTimeout = setTimeout(cleanup, 1000);
 		};
 
 		if (process.stdout) {
@@ -638,11 +663,21 @@ export class PlayerService {
 		}
 
 		process.on('error', (err: Error) => {
+			// Use lockout to prevent race conditions
+			if (!initializeHandlerLock()) {
+				return; // Already handled
+			}
+			
 			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
 			handleStreamEnd(err.message);
 		});
 
 		process.on('exit', (code: number | null) => {
+			// Use lockout to prevent race conditions
+			if (!initializeHandlerLock()) {
+				return; // Already handled
+			}
+			
 			// Get the URL before any cleanup happens
 			const stream = this.streams.get(screen);
 			const url = stream?.url || '';
@@ -836,8 +871,24 @@ export class PlayerService {
 	private handleProcessExit(screen: number, code: number | null): void {
 		// Get stream info before any cleanup happens
 		const stream = this.streams.get(screen);
+		
+		// Check if stream is already marked as stopping to avoid race conditions
+		if (!stream || stream.status === 'stopping') {
+			logger.debug(`Stream on screen ${screen} already in stopping state or doesn't exist, ignoring duplicate exit handling`, 'PlayerService');
+			return;
+		}
+		
 		const url = stream?.url || '';
 		const options = stream?.options;
+
+		// IMPORTANT: Set state flag immediately to prevent race conditions
+		// Flag this stream as being processed for exit to prevent duplicate handling
+		if (stream) {
+			stream.status = 'stopping';
+			// Store process and then remove reference to prevent duplicate exit handling
+			// @ts-ignore - Deliberately setting to null to prevent duplicate handling
+			stream.process = null;
+		}
 
 		// Log with URL for better tracking
 		logger.info(`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
@@ -1018,6 +1069,13 @@ export class PlayerService {
 		// Log with URL information for better tracking
 		const streamInstance = this.streams.get(screen);
 		const url = streamInstance?.url || '';
+		
+		// Check if stream is already in stopping state to prevent race conditions
+		if (streamInstance?.status === 'stopping') {
+			logger.debug(`Stream on screen ${screen} already in stopping state, skipping duplicate stop request`, 'PlayerService');
+			return true;
+		}
+		
 		logger.info(`Stopping stream on screen ${screen}${url ? ` (${url})` : ''}, manual=${isManualStop}, force=${force}`, 'PlayerService');
 
 		// Remove from manually closed screens
@@ -1039,6 +1097,9 @@ export class PlayerService {
 			this.cleanup_after_stop(screen);
 			return true;
 		}
+
+		// Mark the stream as stopping to prevent race conditions
+		player.status = 'stopping';
 
 		// Check if process exists
 		if (!player.process) {
@@ -1178,6 +1239,16 @@ export class PlayerService {
 	 */
 	private cleanup_after_stop(screen: number): void {
 		try {
+			// Check if stream exists and isn't already being cleaned up
+			const streamInstance = this.streams.get(screen);
+			if (!streamInstance) {
+				logger.debug(`No stream to clean up for screen ${screen}, already cleaned up`, 'PlayerService');
+				return;
+			}
+			
+			// Set a flag indicating this stream is being cleaned up
+			streamInstance.status = 'stopping';
+			
 			logger.info(`Cleaning up resources for screen ${screen}`, 'PlayerService');
 
 			// First, clear all monitoring timers
@@ -1371,7 +1442,7 @@ export class PlayerService {
 			baseArgs.push(options.url);
 		}
 
-		logger.debug(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
+		logger.info(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
 		return baseArgs;
 	}
 
