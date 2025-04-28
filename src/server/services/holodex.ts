@@ -72,8 +72,8 @@ export class HolodexService implements StreamService {
           const params = {
             channel_id: channelId,
             type: 'stream' as VideoType, // Use 'stream' type instead of 'live'
-            status: 'live,upcoming' as VideoStatus, // Include both live and upcoming streams
-            max_upcoming_hours: 48, // Allow upcoming streams up to 48 hours ahead
+            status: 'live' as VideoStatus, // Include both live and upcoming streams
+            max_upcoming_hours: 0, // Allow upcoming st reams up to 48 hours ahead
             sort: 'available_at' as keyof VideoRaw & string
           };
           

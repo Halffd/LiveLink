@@ -40,13 +40,13 @@ export interface StreamOptions {
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
 	private readonly MAX_RETRIES = 3; // Maximum number of retries
-	private readonly MAX_NETWORK_RETRIES = 5; // Maximum network-specific retries
+	private readonly MAX_NETWORK_RETRIES = 3; // Maximum network-specific retries
 	private readonly RETRY_INTERVAL = 100; // 100ms (reduced from 200ms)
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
 	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
 	private readonly STREAM_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour (reduced from 2 hours)
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 15000; // 15 seconds (reduced from 30 seconds)
+	private readonly STARTUP_TIMEOUT = 15000;
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
@@ -238,7 +238,7 @@ export class PlayerService {
 			const lockTimeout = setTimeout(() => {
 				logger.error(`Startup lock timeout for screen ${options.screen}`, 'PlayerService');
 				this.startupLocks.set(options.screen, false);
-			}, 30000); // 30 second timeout
+			}, 10000);
 
 			try {
 				// Stop any existing stream first
