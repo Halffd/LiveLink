@@ -202,7 +202,11 @@ export class PlayerService {
 			}
 			logger.info(`Checking if screen is disabled for screen ${options.screen}`, 'PlayerService');
 			// Check for maximum streams limit
-			const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
+			const activeStreams = Array.from(this.streams.values()).filter(s => {
+				logger.info(`Process: ${s.process?.pid} Running: ${this.isProcessRunning(s.process?.pid)}`, 'PlayerService');
+				return s.process && this.isProcessRunning(s.process.pid)
+			});
+			logger.info(`Active streams: ${activeStreams.length}`, 'PlayerService');
 			if (activeStreams.length >= this.config.player.maxStreams) {
 				logger.warn(`Maximum number of streams (${this.config.player.maxStreams}) reached, active: ${activeStreams.length}`, 'PlayerService');
 				return {
@@ -487,7 +491,6 @@ export class PlayerService {
 
 				const onExit = (code: number | null) => {
 					clearTimeout(startTimeout);
-					this.streams.delete(options.screen);
 					if (!hasStarted) {
 						let errorMessage = 'Stream failed to start';
 
@@ -1238,7 +1241,7 @@ export class PlayerService {
 	/**
 	 * Clean up resources after a stream is stopped
 	 */
-	private cleanup_after_stop(screen: number): void {
+	cleanup_after_stop(screen: number): void {
 		try {
 			// Check if stream exists and isn't already being cleaned up
 			const streamInstance = this.streams.get(screen);

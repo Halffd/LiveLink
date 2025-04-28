@@ -644,7 +644,7 @@ export class StreamManager extends EventEmitter {
 			
 			// Start the stream immediately
 			logger.info(`Moving to next stream in queue for screen ${screen}: ${nextStream.url}`, 'StreamManager');
-			
+			this.playerService.cleanup_after_stop(screen);
 			// Temporarily set to STARTING state
 			await this.setScreenState(screen, StreamState.STARTING);
 			
@@ -764,13 +764,12 @@ export class StreamManager extends EventEmitter {
 
 					// Make a copy of the queue to iterate through
 					const queueCopy = [...queue];
-					this.queues.set(screen, []); // Clear the queue while we process
-
+// don’t `set([], …)` here
 					for (const nextStream of queueCopy) {
+						// at the top of the loop:
 						if (success) {
 							// Add remaining streams back to queue
-							this.queues.get(screen)!.push(nextStream);
-							continue;
+							break;
 						}
 
 						logger.info(`Attempting to start stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
@@ -801,7 +800,7 @@ export class StreamManager extends EventEmitter {
 
 							if (result.success) {
 								logger.info(`Successfully started stream on screen ${screen}`, 'StreamManager');
-
+								this.queues.get(screen)!.shift();
 								// Update stream tracking
 								this.streams.set(screen, {
 									id: Date.now(),
@@ -903,7 +902,7 @@ export class StreamManager extends EventEmitter {
 		logger.info(`Starting stream on screen ${screen}: ${options.url}`, 'StreamManager');
 		// Ensure screen is defined
 		if (screen === undefined) {
-			logger.error('Screen number is required', 'StreamManager');``
+			logger.error('Screen number is required', 'StreamManager');
 			return {
 				screen: 0, // Use 0 as invalid screen
 				success: false,
