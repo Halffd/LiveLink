@@ -30,6 +30,7 @@ import { KeyboardService } from './services/keyboard_service.js';
 import './types/events.js';
 import * as dns from 'dns';
 import { safeAsync, parallelOps, withTimeout, withRetry } from './utils/async_helpers.js';
+import { ReentrantMutex, SimpleMutex } from './utils/mutex.js';
 
 // Improve the StreamState enum with proper state machine transitions
 enum StreamState {
@@ -89,35 +90,6 @@ class StreamStateMachine {
 	}
 }
 
-// Add a simple mutex implementation
-class SimpleMutex {
-	private locked = false;
-	private waitQueue: Array<() => void> = [];
-
-	async acquire(): Promise<() => void> {
-		if (!this.locked) {
-			this.locked = true;
-			return () => this.release();
-		}
-
-		return new Promise<() => void>(resolve => {
-			this.waitQueue.push(() => {
-				this.locked = true;
-				resolve(() => this.release());
-			});
-		});
-	}
-
-	private release(): void {
-		if (this.waitQueue.length > 0) {
-			const next = this.waitQueue.shift();
-			if (next) next();
-		} else {
-			this.locked = false;
-		}
-	}
-}
-
 /**
  * Manages multiple video streams across different screens
  */
@@ -133,7 +105,7 @@ export class StreamManager extends EventEmitter {
 
 	// Active streams and their states
 	private streams: Map<number, StreamInstance> = new Map();
-	private screenStates: Map<number, StreamState> = new Map();
+	private screenStates: Map<number, SimpleMutex> = new Map();
 	private screenMutexes: Map<number, SimpleMutex> = new Map();
 
 	// User preferences
@@ -376,6 +348,7 @@ export class StreamManager extends EventEmitter {
 										// Skip if too many recent failures
 										return failRecord.count < this.MAX_STREAM_ATTEMPTS;
 									});
+									logger.info(`Filtered ${filteredQueue.length} streams from queue for screen ${screen}`, 'StreamManager');
 
 									if (filteredQueue.length === 0) {
 										logger.warn(`All ${existingQueue.length} streams in queue for screen ${screen} have failed recently, fetching fresh streams`, 'StreamManager');
@@ -394,7 +367,8 @@ export class StreamManager extends EventEmitter {
 
 									// Record when we enter STARTING state
 									this.screenStartingTimestamps.set(screen, now);
-
+									logger.info(`Timestamp for screen ${screen} set to ${this.screenStartingTimestamps.get(screen)}`, 'StreamManager');
+									logger.info(`URL: ${firstStream.url} (${firstStream.title}) - viewers: ${firstStream.viewerCount} - start time: ${firstStream.startTime}`, 'StreamManager');
 									// Attempt to start the stream
 									const startResult = await this.startStream({
 										url: firstStream.url,
@@ -404,6 +378,7 @@ export class StreamManager extends EventEmitter {
 										viewerCount: firstStream.viewerCount,
 										startTime: firstStream.startTime
 									});
+									logger.info(`Stream start result for screen ${screen}: ${startResult.success ? 'success' : 'failure'}`, 'StreamManager');
 
 									if (startResult.success) {
 										logger.info(`Successfully started stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
@@ -414,10 +389,10 @@ export class StreamManager extends EventEmitter {
 										// Update queue to remove the started stream
 										if (originalQueue.length > 1) {
 											this.queues.set(screen, originalQueue.slice(1));
-											logger.debug(`Updated queue for screen ${screen}, ${originalQueue.length - 1} streams remaining`, 'StreamManager');
+											logger.info(`Updated queue for screen ${screen}, ${originalQueue.length - 1} streams remaining`, 'StreamManager');
 										} else {
 											this.queues.delete(screen);
-											logger.debug(`Queue empty after starting stream on screen ${screen}`, 'StreamManager');
+											logger.info(`Queue empty after starting stream on screen ${screen}`, 'StreamManager');
 										}
 
 										this.lastStreamRefresh.set(screen, now);
@@ -441,7 +416,7 @@ export class StreamManager extends EventEmitter {
 										} else {
 											// No more streams in queue, clear it
 											this.queues.delete(screen);
-											logger.debug(`Queue empty after failed start on screen ${screen}`, 'StreamManager');
+											logger.info(`Queue empty after failed start on screen ${screen}`, 'StreamManager');
 
 											// Try to get fresh streams after a short delay
 											logger.info(`Fetching fresh streams for screen ${screen} after failed start`, 'StreamManager');
@@ -600,20 +575,25 @@ export class StreamManager extends EventEmitter {
 
 	// Fix the linter errors by deleting elements from Map correctly
 	private async withLock<T>(screen: number, operation: string, callback: () => Promise<T>): Promise<T> {
-		// Get or create mutex for this screen
 		if (!this.screenMutexes.has(screen)) {
 			this.screenMutexes.set(screen, new SimpleMutex());
 		}
-
 		const mutex = this.screenMutexes.get(screen)!;
 		const release = await mutex.acquire();
 
 		try {
 			logger.debug(`Acquired lock for screen ${screen} during ${operation}`, 'StreamManager');
 			return await callback();
+		} catch (err) {
+			logger.error(`Error inside lock for screen ${screen} during ${operation}: ${err}`, 'StreamManager');
+			throw err;
 		} finally {
 			release();
 			logger.debug(`Released lock for screen ${screen} after ${operation}`, 'StreamManager');
+			if (!this.streams.has(screen) && !mutex.isLocked()) {
+				this.screenMutexes.delete(screen);
+				logger.debug(`Deleted mutex for screen ${screen}`, 'StreamManager');
+			}
 		}
 	}
 
@@ -920,9 +900,10 @@ export class StreamManager extends EventEmitter {
 	// Modify startStream to use state machine and locking
 	async startStream(options: StreamOptions & { url: string }): Promise<StreamResponse> {
 		const screen = options.screen;
-
+		logger.info(`Starting stream on screen ${screen}: ${options.url}`, 'StreamManager');
 		// Ensure screen is defined
 		if (screen === undefined) {
+			logger.error('Screen number is required', 'StreamManager');``
 			return {
 				screen: 0, // Use 0 as invalid screen
 				success: false,

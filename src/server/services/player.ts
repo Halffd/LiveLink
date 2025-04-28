@@ -200,7 +200,7 @@ export class PlayerService {
 					error: 'Screen is disabled'
 				};
 			}
-
+			logger.info(`Checking if screen is disabled for screen ${options.screen}`, 'PlayerService');
 			// Check for maximum streams limit
 			const activeStreams = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid));
 			if (activeStreams.length >= this.config.player.maxStreams) {
@@ -211,7 +211,7 @@ export class PlayerService {
 					error: `Maximum number of streams (${this.config.player.maxStreams}) reached`
 				};
 			}
-
+			logger.info(`Checking for maximum streams limit for screen ${options.screen}`, 'PlayerService');
 			// Check if we're already starting a stream on this screen
 			if (this.startupLocks.get(options.screen)) {
 				logger.warn(`Stream startup already in progress for screen ${options.screen}`, 'PlayerService');
@@ -221,7 +221,7 @@ export class PlayerService {
 					error: 'Stream startup already in progress'
 				};
 			}
-
+			logger.info(`Checking startup lock for screen ${options.screen}`, 'PlayerService');
 			// Clear any stuck startup locks (if they've been set for > 30 seconds)
 			for (const [screen, locked] of this.startupLocks.entries()) {
 				if (locked) {
@@ -232,13 +232,13 @@ export class PlayerService {
 
 			// Set startup lock
 			this.startupLocks.set(options.screen, true);
-			logger.debug(`Set startup lock for screen ${options.screen}`, 'PlayerService');
+			logger.info(`Set startup lock for screen ${options.screen}`, 'PlayerService');
 
 			// Create a timeout to clear the startup lock if something goes wrong
 			const lockTimeout = setTimeout(() => {
 				logger.error(`Startup lock timeout for screen ${options.screen}`, 'PlayerService');
 				this.startupLocks.set(options.screen, false);
-			}, 10000);
+			}, 45000);
 
 			try {
 				// Stop any existing stream first
@@ -487,6 +487,7 @@ export class PlayerService {
 
 				const onExit = (code: number | null) => {
 					clearTimeout(startTimeout);
+					this.streams.delete(options.screen);
 					if (!hasStarted) {
 						let errorMessage = 'Stream failed to start';
 
