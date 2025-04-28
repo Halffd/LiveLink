@@ -46,7 +46,7 @@ export class PlayerService {
 	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
 	private readonly STREAM_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour (reduced from 2 hours)
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 15000;
+	private readonly STARTUP_TIMEOUT = 75000;
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
@@ -445,7 +445,7 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
-		logger.debug(`Streamlink args: ${args.join(' ')}`, 'PlayerService');
+		logger.info(`Streamlink args: streamlink ${args.join(' ')}`, 'PlayerService');
 		try {
 			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
 				env,
@@ -1649,14 +1649,6 @@ export class PlayerService {
 				}
 			});
 
-			// Kill any remaining streamlink processes
-			try {
-				logger.info('Checking for any remaining streamlink processes...', 'PlayerService');
-				execSync('pkill -9 streamlink || true');
-			} catch {
-				// Ignore errors, this is just a precaution
-			}
-
 			// Reset all state
 			this.ipcPaths.clear();
 			this.streams.clear();
@@ -1672,13 +1664,6 @@ export class PlayerService {
 				'PlayerService',
 				error instanceof Error ? error : new Error(String(error))
 			);
-			// Even if there's an error, try to kill remaining processes
-			try {
-				execSync('pkill -9 streamlink || true');
-				execSync('pkill -9 mpv || true');
-			} catch {
-				// Ignore errors
-			}
 			throw error;
 		}
 	}

@@ -30,7 +30,7 @@ async function shutdown() {
   isShuttingDown = true;
 
   logger.info('Shutting down server...', 'Server');
-  
+
   try {
     // Force kill all MPV processes
     const activeStreams = streamManager.getActiveStreams();
@@ -42,7 +42,7 @@ async function shutdown() {
           try {
             // Try SIGINT first
             process.kill(childProcess.pid, 'SIGINT');
-            
+
             // Wait a bit and force kill if still running
             await new Promise(resolve => setTimeout(resolve, 2000));
             try {
@@ -70,44 +70,20 @@ async function shutdown() {
 
     // Kill any remaining mpv processes
     try {
-      await new Promise((resolve, reject) => {
-        exec('pkill -9 mpv', (error) => {
-          if (error && error.code !== 1) { // code 1 means no processes found
-            reject(error);
-          } else {
-            resolve(undefined);
-          }
-        });
-      });
-    } catch (error) {
-      logger.error('Error killing remaining mpv processes', 'Server', error as Error);
-    }
+      // Cleanup resources
+      await streamManager.cleanup();
 
-    // Kill any remaining streamlink processes
-    try {
-      await new Promise((resolve, reject) => {
-        exec('pkill -9 streamlink', (error) => {
-          if (error && error.code !== 1) { // code 1 means no processes found
-            reject(error);
-          } else {
-            resolve(undefined);
-          }
-        });
-      });
-    } catch (error) {
-      logger.error('Error killing remaining streamlink processes', 'Server', error as Error);
-    }
+      // Final delay to ensure all cleanup is complete
+      await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Cleanup resources
-    await streamManager.cleanup();
-    
-    // Final delay to ensure all cleanup is complete
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    process.exit(0);
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during shutdown', 'Server', error as Error);
+      process.exit(1);
+    }
   } catch (error) {
     logger.error('Error during shutdown', 'Server', error as Error);
-    process.exit(1);
+    process.exit(0);
   }
 }
 

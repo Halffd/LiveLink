@@ -254,7 +254,7 @@ export class StreamManager extends EventEmitter {
 		}
 
 		logger.info('Updating stream queues...', 'StreamManager');
-
+		this.queues.clear();
 		// Get all enabled screens
 		const enabledScreens = this.config.streams
 			.filter(stream => stream.enabled)
@@ -1570,18 +1570,13 @@ export class StreamManager extends EventEmitter {
 		});
 	}
 
-	// Modify enableScreen to use state machine
 	async enableScreen(screen: number): Promise<void> {
 		return this.withLock(screen, 'enableScreen', async () => {
 			logger.info(`Enabling screen ${screen}`, 'StreamManager');
 
-			// Update state to idle
 			await this.setScreenState(screen, StreamState.IDLE);
-
-			// Update player service
 			this.playerService.enableScreen(screen);
 
-			// Update screen config
 			const config = this.screenConfigs.get(screen);
 			if (config) {
 				config.enabled = true;
@@ -1589,55 +1584,51 @@ export class StreamManager extends EventEmitter {
 				this.emit('screenConfigUpdate', screen, config);
 			}
 
-			// Force reset cache timestamp to get fresh data
 			this.lastStreamFetch = 0;
 			this.lastStreamRefresh.set(screen, 0);
 
-			// Initialize queue for this screen if needed
 			if (!this.queues.has(screen)) {
-				try {
-					await this.updateQueue(screen);
-				} catch (error) {
-					logger.warn(`Failed to update queue for screen ${screen}, will try default stream instead`, 'StreamManager');
-				}
+				this.queues.set(screen, []);
+				this.updateQueue(screen).catch(err => {
+					logger.warn(`Failed to update queue for screen ${screen}: ${err}`, 'StreamManager');
+				});
 			}
 
-			// Check if we have streams in the queue
-			const queue = this.queues.get(screen) || [];
+			// **Instead of starting stream now, defer it:**
+			this.deferStartNextStream(screen);
 
-			try {
-				if (queue.length > 0) {
-					// Start the first stream in the queue
-					const nextStream = queue.shift();
-					if (nextStream) {
-						logger.info(`Starting queued stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
-						await this.startStream({
-							url: nextStream.url,
-							screen,
-							quality: config?.quality || 'best',
-							windowMaximized: config?.windowMaximized || true
-						});
-					}
-				} else {
-					// No streams in queue, start a default test stream
-					logger.info(`No streams in queue for screen ${screen}, starting default test stream`, 'StreamManager');
-					await this.addDefaultTestStream(screen);
-				}
-			} catch (error) {
-				logger.error(`Failed to start stream after enabling screen ${screen}`, 'StreamManager',
-					error instanceof Error ? error : new Error(String(error)));
-
-				// Fall back to default test stream on error
-				try {
-					await this.addDefaultTestStream(screen);
-				} catch (testError) {
-					logger.error(`Failed to start default test stream for screen ${screen}`, 'StreamManager',
-						testError instanceof Error ? testError : new Error(String(testError)));
-				}
-			}
-
-			logger.info(`Screen ${screen} enabled`, 'StreamManager');
+			logger.info(`Screen ${screen} enable scheduled`, 'StreamManager');
 		});
+	}
+	private async deferStartNextStream(screen: number) {
+		try {
+			const nextUrl = queueService.getNextStream(screen);
+
+			if (nextUrl) {
+				const streamOptions: StreamOptions = {
+					url: nextUrl.url,
+					title: nextUrl.title,
+					viewerCount: nextUrl.viewerCount,
+					startTime: nextUrl.startTime,
+					quality: this.config.player.defaultQuality,
+					screen: screen
+				};
+
+				await this.startStream(streamOptions);
+			} else {
+				logger.info(`Queue empty for screen ${screen}, starting default test stream`, 'StreamManager');
+				await this.addDefaultTestStream(screen);
+			}
+		} catch (error) {
+			logger.error(`Deferred stream start failed for screen ${screen}`, 'StreamManager',
+				error instanceof Error ? error : new Error(String(error)));
+			try {
+				await this.addDefaultTestStream(screen);
+			} catch (testError) {
+				logger.error(`Failed fallback default stream for screen ${screen}`, 'StreamManager',
+					testError instanceof Error ? testError : new Error(String(testError)));
+			}
+		}
 	}
 
 	/**

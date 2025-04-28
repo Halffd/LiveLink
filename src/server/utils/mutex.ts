@@ -38,24 +38,46 @@ export class SimpleMutex {
 	 * Acquire the lock, waiting if necessary.
 	 * @returns a release function.
 	 */
-	async acquire(): Promise<Release> {
+	async acquire(timeout = 15000): Promise<Release> {
 		this.logger.debug('Attempting acquire()', this.context);
+
+		// If not locked, acquire immediately
 		if (!this.locked) {
 			this.locked = true;
 			this.logger.debug('Lock acquired immediately', this.context);
 			return this.makeReleaser();
 		}
 
+		// Otherwise, queue with timeout
 		this.logger.debug('Lock busy, queuing caller', this.context);
-		return new Promise<Release>((resolve) => {
+
+		return new Promise<Release>((resolve, reject) => {
+			// Track if this request has been canceled by timeout
+			let isCanceled = false;
+
+			// Set timeout to prevent infinite waiting
+			const timeoutId = setTimeout(() => {
+				isCanceled = true;
+				// We can't safely remove from queue since it's just functions
+				// so we'll handle this when processing the queue
+				reject(new Error('Mutex acquire timeout after ' + timeout + 'ms'));
+			}, timeout);
+
+			// Add to wait queue - keep your original function approach
 			this.waitQueue.push(() => {
+				// Skip executing if this request timed out
+				if (isCanceled) {
+					// Just pass through to the next waiter
+					return;
+				}
+
+				clearTimeout(timeoutId);
 				this.locked = true;
 				this.logger.debug('Lock acquired from queue', this.context);
 				resolve(this.makeReleaser());
 			});
 		});
 	}
-
 	/**
 	 * Try to acquire without waiting.
 	 * @returns release function if acquired, else null.

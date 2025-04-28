@@ -554,30 +554,9 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
             }
           };
           
-          // Check if pkill is available
-          const hasPkill = safeExec('which pkill >/dev/null 2>&1 || exit 1', 'pkill check');
-          
-          // First try graceful termination
-          if (hasPkill) {
-            safeExec('pkill -f streamlink || true', 'streamlink termination');
-            safeExec('pkill -f mpv || true', 'mpv termination');
-          } else {
-            // Fallback to killall if pkill is not available
-            safeExec('killall streamlink 2>/dev/null || true', 'streamlink termination (killall)');
-            safeExec('killall mpv 2>/dev/null || true', 'mpv termination (killall)');
-          }
-          
           // Wait a moment
           await new Promise(resolve => setTimeout(resolve, 1000)); // Increased wait time
-          
-          // Then try more aggressive termination
-          if (hasPkill) {
-            safeExec('pkill -9 -f streamlink || true', 'streamlink force termination'); 
-            safeExec('pkill -9 -f mpv || true', 'mpv force termination');
-          } else {
-            safeExec('killall -9 streamlink 2>/dev/null || true', 'streamlink force termination (killall)');
-            safeExec('killall -9 mpv 2>/dev/null || true', 'mpv force termination (killall)');
-          }
+
           
           // Helper function to safely get process IDs
           const safeGetPids = (processName: string): string[] => {

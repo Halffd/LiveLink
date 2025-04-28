@@ -78,12 +78,18 @@ export class HolodexService implements StreamService {
           };
           
           logger.debug(`Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`, 'HolodexService');
-          
-          return this.client!.getLiveVideos(params).catch(error => {
-            logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
-            logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
-            return [];
-          });
+          const topicId = 'ember'
+          return this.client!.getLiveVideos(params)
+            .then(videos => {
+              // Filter after we successfully get the videos
+              return videos.filter(video => !video.topic.includes(topicId));
+            })
+            .catch(error => {
+              logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
+              logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+              // Return empty array on error
+              return [];
+            });
         });
         
         const results = await Promise.all(promises);
