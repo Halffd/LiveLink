@@ -42,6 +42,10 @@ enum StreamState {
 	ERROR = 'error',         // Error state
 	NETWORK_RECOVERY = 'network_recovery' // Recovering from network issues
 }
+async function timeoutPromise<T>(promise: Promise<T>, ms: number): Promise<T> {
+	const timeout = new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms));
+	return Promise.race([promise, timeout]);
+}
 
 // Add stream state machine to handle transitions
 class StreamStateMachine {
@@ -370,14 +374,14 @@ export class StreamManager extends EventEmitter {
 									logger.info(`Timestamp for screen ${screen} set to ${this.screenStartingTimestamps.get(screen)}`, 'StreamManager');
 									logger.info(`URL: ${firstStream.url} (${firstStream.title}) - viewers: ${firstStream.viewerCount} - start time: ${firstStream.startTime}`, 'StreamManager');
 									// Attempt to start the stream
-									const startResult = await this.startStream({
+									const startResult = await timeoutPromise(this.startStream({
 										url: firstStream.url,
 										screen,
 										quality: this.config.player.defaultQuality,
 										title: firstStream.title,
 										viewerCount: firstStream.viewerCount,
 										startTime: firstStream.startTime
-									});
+									}), 150000);
 									logger.info(`Stream start result for screen ${screen}: ${startResult.success ? 'success' : 'failure'}`, 'StreamManager');
 
 									if (startResult.success) {
@@ -463,14 +467,14 @@ export class StreamManager extends EventEmitter {
 										// Record when we enter STARTING state
 										this.screenStartingTimestamps.set(screen, now);
 
-										const startResult = await this.startStream({
+										const startResult = await timeoutPromise(this.startStream({
 											url: firstStream.url,
 											screen,
 											quality: this.config.player.defaultQuality,
 											title: firstStream.title,
 											viewerCount: firstStream.viewerCount,
 											startTime: firstStream.startTime
-										});
+										}), 150000);
 
 										if (startResult.success) {
 											logger.info(`Successfully started stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
@@ -1071,51 +1075,50 @@ export class StreamManager extends EventEmitter {
 	}
 
 	onStreamError(callback: (data: StreamError) => void) {
-		this.errorCallback = (data: StreamError) => {
+		this.errorCallback = async (data: StreamError) => {
 			logger.info(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
-			
-			// Make sure we always move to next stream if URL is missing to prevent loops
+
+			const screen = Number(data.screen);
+
+			// Always move to next if URL is missing
 			if (!data.url || data.url.trim() === '') {
-				logger.warn(`Stream error with missing URL on screen ${data.screen}, forcing moveToNext=true`, 'StreamManager');
+				logger.warn(`Stream error with missing URL on screen ${screen}, forcing moveToNext=true`, 'StreamManager');
 				data.moveToNext = true;
 				data.shouldRestart = false;
 			}
-			
-			// Check if this screen is already being processed
-			const isProcessing = this.processingScreens.has(data.screen);
-			if (isProcessing) {
-				logger.warn(`Screen ${data.screen} is already being processed, skipping duplicate error handling`, 'StreamManager');
+
+			if (this.processingScreens.has(screen)) {
+				logger.warn(`Screen ${screen} is already processing, ignoring error handler`, 'StreamManager');
 				return;
 			}
-			
-			// If the process tells us to move to next stream, call handleStreamEnd
-			if (data.moveToNext) {
-				logger.info(`Moving to next stream in queue after error on screen ${data.screen}`, 'StreamManager');
-				// Don't use withLock here as it's causing issues
-				this.handleStreamEnd(Number(data.screen)).catch(error => {
-					logger.error(
-						`Failed to handle stream end after error on screen ${data.screen}`,
-						'StreamManager',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				});
-			} else if (data.shouldRestart) {
-				// Handle restart logic
-				logger.info(`Attempting to restart stream on screen ${data.screen}`, 'StreamManager');
-				this.restartStreams(Number(data.screen)).catch(error => {
-					logger.error(
-						`Failed to restart stream on screen ${data.screen}`,
-						'StreamManager',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				});
+
+			this.processingScreens.add(screen);
+			try {
+				if (data.moveToNext) {
+					logger.info(`Moving to next stream in queue after error on screen ${screen}`, 'StreamManager');
+					await this.handleStreamEnd(screen);
+				} else if (data.shouldRestart) {
+					logger.info(`Attempting to restart stream on screen ${screen}`, 'StreamManager');
+					// Protect restart with a timeout
+					await timeoutPromise(this.restartStreams(screen), 15000); // 15s timeout
+				} else {
+					logger.info(`Defaulting to moving to next stream on screen ${screen}`, 'StreamManager');
+					await this.handleStreamEnd(screen);
+				}
+			} catch (error) {
+				logger.error(
+					`Error while handling stream error for screen ${screen}`,
+					'StreamManager',
+					error instanceof Error ? error : new Error(String(error))
+				);
+			} finally {
+				this.processingScreens.delete(screen);
 			}
-			
-			// Forward the data to the original callback
+
+			// Forward the event to the original callback
 			callback(data);
 		};
 	}
-
 	/**
 	 * Gets available organizations
 	 */
@@ -1465,7 +1468,7 @@ export class StreamManager extends EventEmitter {
 
 					// Start playing the first stream
 					logger.info(`Starting initial stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
-					await this.startStream({
+					await timeoutPromise(this.startStream({
 						url: firstStream.url,
 						screen,
 						quality: this.config.player.defaultQuality,
@@ -1474,7 +1477,7 @@ export class StreamManager extends EventEmitter {
 						title: firstStream.title,
 						viewerCount: firstStream.viewerCount,
 						startTime: firstStream.startTime
-					});
+					}), 150000);
 				} else {
 					logger.info(`No live streams available for screen ${screen}, will try again later`, 'StreamManager');
 				}
@@ -1641,17 +1644,56 @@ export class StreamManager extends EventEmitter {
 	/**
 	 * Restarts streams on specified screen or all screens
 	 */
-	public async restartStreams(screen?: number): Promise<void> {
-		if (screen) {
-			// Restart specific screen
-			await this.stopStream(screen, false);
-			await this.handleQueueEmpty(screen);
+	async restartStreams(screen?: number): Promise<void> {
+		const restart = async (screen: number) => {
+			logger.info(`Restarting stream on screen ${screen}`, 'StreamManager');
+
+			const currentStream = this.streams.get(screen);
+			if (!currentStream) {
+				logger.warn(`No active stream found on screen ${screen} to restart`, 'StreamManager');
+				await this.handleStreamEnd(screen); // Move to next
+				return;
+			}
+
+			const url = currentStream.url;
+			if (!url || url.trim() === '') {
+				logger.warn(`Cannot restart, missing URL on screen ${screen}`, 'StreamManager');
+				await this.handleStreamEnd(screen);
+				return;
+			}
+
+			try {
+				// Kill existing stream safely, with timeout
+				await timeoutPromise(this.stopStream(screen), 10000);
+			} catch (error) {
+				logger.error(`Failed to stop stream on screen ${screen}, continuing restart anyway`, 'StreamManager',
+					error instanceof Error ? error : new Error(String(error)));
+				// Don't bail here; maybe player is dead already
+			}
+
+			await this.setScreenState(screen, StreamState.STARTING);
+
+			const result = await timeoutPromise(this.startStream({
+				url: url,
+				screen: screen,
+				quality: this.config.player.defaultQuality || 'best',
+				windowMaximized: true
+			}), 15000);
+
+			if (result.success) {
+				logger.info(`Successfully restarted stream on screen ${screen}`, 'StreamManager');
+				await this.setScreenState(screen, StreamState.PLAYING);
+			} else {
+				logger.error(`Failed to restart stream on screen ${screen}: ${result.error}`, 'StreamManager');
+				await this.handleStreamEnd(screen); // Bail to next stream
+			}
+		};
+		if(screen){
+			await this.withLock(screen, 'restartStream', restart.bind(this, screen));
 		} else {
-			// Restart all screens
-			const activeScreens = Array.from(this.streams.keys());
-			for (const screenId of activeScreens) {
-				await this.stopStream(screenId, false);
-				await this.handleQueueEmpty(screenId);
+			for (const screen of this.screenConfigs.keys()) {
+				await this.withLock(screen, 'restartStream', restart.bind(this, screen));
+				await new Promise(resolve => setTimeout(resolve, 1000));
 			}
 		}
 	}
@@ -2292,12 +2334,12 @@ export class StreamManager extends EventEmitter {
 							await this.playerService.stopStream(screen, true);
 
 							// Restart the same stream
-							await this.startStream({
+							await timeoutPromise(this.startStream({
 								url: activeStream.url,
 								screen,
 								quality: activeStream.quality || 'best',
 								windowMaximized: true
-							});
+							}), 150000);
 						}
 						// For screens without streams, update the queue and start a stream
 						else {
@@ -2318,12 +2360,12 @@ export class StreamManager extends EventEmitter {
 
 								logger.info(`Starting first stream in queue after network recovery: ${nextStream.url}`, 'StreamManager');
 
-								await this.startStream({
+								await timeoutPromise(this.startStream({
 									url: nextStream.url,
 									screen,
 									quality: 'best',
 									windowMaximized: true
-								});
+								}), 150000);
 							} else {
 								logger.info(`No streams available after network recovery for screen ${screen}`, 'StreamManager');
 								await this.setScreenState(screen, StreamState.IDLE);
@@ -2774,12 +2816,12 @@ export class StreamManager extends EventEmitter {
 							// Try to restart the same stream
 							await this.setScreenState(data.screen, StreamState.STARTING);
 
-							const result = await this.startStream({
+							const result = await timeoutPromise(this.startStream({
 								url: url,
 								screen: data.screen,
 								quality: this.config.player.defaultQuality || 'best',
 								windowMaximized: true
-							});
+							}), 150000);
 
 							if (result.success) {
 								logger.info(`Successfully restarted crashed stream on screen ${data.screen}`, 'StreamManager');

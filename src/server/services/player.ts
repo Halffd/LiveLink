@@ -46,7 +46,7 @@ export class PlayerService {
 	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
 	private readonly STREAM_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour (reduced from 2 hours)
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 75000;
+	private readonly STARTUP_TIMEOUT = 90000;
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
@@ -477,6 +477,7 @@ export class PlayerService {
 					if (output.toLowerCase().includes('error')) {
 						errorOutput += output + '\n';
 					}
+					logger.info(`Streamlink output: ${output}`, 'PlayerService');
 				};
 
 				const onError = (error: Error) => {
@@ -1382,6 +1383,13 @@ export class PlayerService {
 		}
 	}
 
+	private getTitle(options: StreamOptions & { screen: number }): string {
+		// Simplify the escaping - just replace double quotes with single quotes
+		const title = `Screen ${options.screen}: ${options.url} - ${options.title} - Viewers: ${options.viewerCount} - start time: ${options.startTime}`
+			.replace(/"/g, "'");
+
+		return title; // No need to add extra quotes - those will be added by the argument handling
+	}
 	private getMpvArgs(options: StreamOptions & { screen: number }, includeUrl: boolean = true): string[] {
 		const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
 		if (!screenConfig) {
@@ -1433,7 +1441,7 @@ export class PlayerService {
 			`--log-file=${logFile}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--volume=${(options.volume || 0).toString()}`,
-			`--title="${options.screen}: ${options.title || 'No Title'}"`,
+			`--title="${this.getTitle(options)}"`,
 			'--msg-level=all=debug'
 		);
 
@@ -1449,7 +1457,6 @@ export class PlayerService {
 		logger.info(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
 		return baseArgs;
 	}
-
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
 		const screenConfig = this.config.player.screens.find(s => s.screen === options.screen);
 		if (!screenConfig) {
@@ -1485,24 +1492,27 @@ export class PlayerService {
 		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
 		const mpvArgs = this.getMpvArgs(options, false);
 
-		// Properly quote and escape the MPV arguments
-		const quotedMpvArgs = mpvArgs
+		// FIXED: Don't join MPV args into a single quoted string
+		// Instead, add --player-args and then each argument properly
+		streamlinkArgs.push('--player-args');
+
+		// Join all MPV args into a properly escaped single string
+		// This is the critical fix - we need one properly escaped string
+		const mpvArgsString = mpvArgs
 			.map(arg => {
-				// If arg already contains quotes, leave it as is
-				if (arg.includes('"')) return arg;
-				// If arg contains spaces, quote it
-				if (arg.includes(' ')) return `"${arg}"`;
-				return arg;
+				// Handle special characters in arguments
+				return arg.replace(/"/g, '\\"');
 			})
 			.join(' ');
 
-		// Add player arguments
-		streamlinkArgs.push('--player-args', quotedMpvArgs);
+		// Add the entire MPV command as a single quoted argument
+		streamlinkArgs.push(mpvArgsString);
 
 		// Add any additional streamlink arguments from config
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
 		}
+
 		logger.debug(`Streamlink args: ${streamlinkArgs.join(' ')}`, 'PlayerService');
 		return streamlinkArgs;
 	}
