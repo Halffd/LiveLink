@@ -73,8 +73,7 @@ export class HolodexService implements StreamService {
             channel_id: channelId,
             type: 'stream' as VideoType, // Use 'stream' type instead of 'live'
             status: 'live' as VideoStatus, // Include both live and upcoming streams
-            max_upcoming_hours: 0, // Allow upcoming st reams up to 48 hours ahead
-            sort: 'available_at' as keyof VideoRaw & string
+            sort: 'viewer_count' as keyof VideoRaw & string
           };
           
           logger.debug(`Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`, 'HolodexService');

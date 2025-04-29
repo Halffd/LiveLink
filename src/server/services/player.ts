@@ -39,12 +39,12 @@ export interface StreamOptions {
 
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
-	private readonly MAX_RETRIES = 3; // Maximum number of retries
-	private readonly MAX_NETWORK_RETRIES = 3; // Maximum network-specific retries
-	private readonly RETRY_INTERVAL = 100; // 100ms (reduced from 200ms)
+	private readonly MAX_RETRIES = 2; // Maximum number of retries
+	private readonly MAX_NETWORK_RETRIES = 2; // Maximum network-specific retries
+	private readonly RETRY_INTERVAL = 50; // 100ms (reduced from 200ms)
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
-	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
-	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
+	private readonly MAX_BACKOFF_TIME = 10000; 
+    private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
 	private readonly STARTUP_TIMEOUT = 90000;
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
