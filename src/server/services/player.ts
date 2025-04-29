@@ -828,14 +828,6 @@ export class PlayerService {
 
 		this.healthCheckIntervals.set(screen, healthCheck);
 
-		// Setup refresh timer
-		const refreshTimer = setTimeout(() => {
-			logger.info(`Refreshing stream on screen ${screen}`, 'PlayerService');
-			this.restartStream(screen, options).catch(error => {
-				logger.error(`Failed to refresh stream on screen ${screen}`, 'PlayerService', error);
-			});
-		}, this.STREAM_REFRESH_INTERVAL);
-
 		this.streamRefreshTimers.set(screen, refreshTimer);
 		this.streamStartTimes.set(screen, Date.now());
 	}
