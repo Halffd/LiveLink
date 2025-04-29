@@ -44,7 +44,6 @@ export class PlayerService {
 	private readonly RETRY_INTERVAL = 100; // 100ms (reduced from 200ms)
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
 	private readonly MAX_BACKOFF_TIME = 15000; // 15 seconds (reduced from 30 seconds)
-	private readonly STREAM_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour (reduced from 2 hours)
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
 	private readonly STARTUP_TIMEOUT = 90000;
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
@@ -54,7 +53,6 @@ export class PlayerService {
 	private networkRetries: Map<number, number> = new Map(); // Track network-specific retries separately
 	private lastNetworkError: Map<number, number> = new Map(); // Track when the last network error occurred
 	private streamStartTimes: Map<number, number> = new Map();
-	private streamRefreshTimers: Map<number, NodeJS.Timeout> = new Map();
 	private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
 	private healthCheckIntervals: Map<number, NodeJS.Timeout> = new Map();
 	private startupLocks: Map<number, boolean> = new Map();
@@ -828,7 +826,6 @@ export class PlayerService {
 
 		this.healthCheckIntervals.set(screen, healthCheck);
 
-		this.streamRefreshTimers.set(screen, refreshTimer);
 		this.streamStartTimes.set(screen, Date.now());
 	}
 
@@ -1001,16 +998,6 @@ export class PlayerService {
 			this.healthCheckIntervals.delete(screen);
 		} else {
 			logger.debug(`No health check interval found for screen ${screen}`, 'PlayerService');
-		}
-
-		// Clear refresh timer
-		const refreshTimer = this.streamRefreshTimers.get(screen);
-		if (refreshTimer) {
-			logger.debug(`Clearing refresh timer for screen ${screen}`, 'PlayerService');
-			clearTimeout(refreshTimer);
-			this.streamRefreshTimers.delete(screen);
-		} else {
-			logger.debug(`No refresh timer found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear inactive timer
