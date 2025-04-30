@@ -381,7 +381,7 @@ export class StreamManager extends EventEmitter {
 										title: firstStream.title,
 										viewerCount: firstStream.viewerCount,
 										startTime: firstStream.startTime
-									}), 150000);
+									}), 3000);
 									logger.info(`Stream start result for screen ${screen}: ${startResult.success ? 'success' : 'failure'}`, 'StreamManager');
 
 									if (startResult.success) {
@@ -474,7 +474,7 @@ export class StreamManager extends EventEmitter {
 											title: firstStream.title,
 											viewerCount: firstStream.viewerCount,
 											startTime: firstStream.startTime
-										}), 150000);
+										}), 3000);
 
 										if (startResult.success) {
 											logger.info(`Successfully started stream on screen ${screen}: ${firstStream.url}`, 'StreamManager');
@@ -1132,7 +1132,7 @@ export class StreamManager extends EventEmitter {
 	async getLiveStreams(retryCount = 0): Promise<StreamSource[]> {
 		// Check if we have a recent cache
 		const now = Date.now();
-		if (this.cachedStreams.length > 0 && now - this.lastStreamFetch < this.STREAM_CACHE_TTL) {
+		/*if (this.cachedStreams.length > 0 && now - this.lastStreamFetch < this.STREAM_CACHE_TTL) {
 			logger.debug(
 				`Using cached streams (${this.cachedStreams.length} streams, age: ${
 					now - this.lastStreamFetch
@@ -1140,7 +1140,7 @@ export class StreamManager extends EventEmitter {
 				'StreamManager'
 			);
 			return this.cachedStreams;
-		}
+		}*/
 
 		logger.info('Fetching fresh stream data...', 'StreamManager');
 
@@ -1477,7 +1477,7 @@ export class StreamManager extends EventEmitter {
 						title: firstStream.title,
 						viewerCount: firstStream.viewerCount,
 						startTime: firstStream.startTime
-					}), 150000);
+					}), 3000);
 				} else {
 					logger.info(`No live streams available for screen ${screen}, will try again later`, 'StreamManager');
 				}
@@ -2339,7 +2339,7 @@ export class StreamManager extends EventEmitter {
 								screen,
 								quality: activeStream.quality || 'best',
 								windowMaximized: true
-							}), 150000);
+							}), 3000);
 						}
 						// For screens without streams, update the queue and start a stream
 						else {
@@ -2365,7 +2365,7 @@ export class StreamManager extends EventEmitter {
 									screen,
 									quality: 'best',
 									windowMaximized: true
-								}), 150000);
+								}), 3000);
 							} else {
 								logger.info(`No streams available after network recovery for screen ${screen}`, 'StreamManager');
 								await this.setScreenState(screen, StreamState.IDLE);
@@ -2821,7 +2821,7 @@ export class StreamManager extends EventEmitter {
 								screen: data.screen,
 								quality: this.config.player.defaultQuality || 'best',
 								windowMaximized: true
-							}), 150000);
+							}), 3000);
 
 							if (result.success) {
 								logger.info(`Successfully restarted crashed stream on screen ${data.screen}`, 'StreamManager');

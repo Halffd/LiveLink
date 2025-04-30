@@ -246,9 +246,6 @@ export class PlayerService {
 				// Stop any existing stream first
 				await this.stopStream(options.screen);
 
-				// Initialize directories if needed
-				this.initializeDirectories();
-
 				// Initialize IPC path
 				const homedir = process.env.HOME || process.env.USERPROFILE;
 				const ipcPath = homedir
