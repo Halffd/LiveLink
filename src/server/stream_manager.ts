@@ -258,7 +258,7 @@ export class StreamManager extends EventEmitter {
 		}
 
 		logger.info('Updating stream queues...', 'StreamManager');
-		this.queues.clear();
+
 		// Get all enabled screens
 		const enabledScreens = this.config.streams
 			.filter(stream => stream.enabled)
@@ -580,7 +580,7 @@ export class StreamManager extends EventEmitter {
 	// Fix the linter errors by deleting elements from Map correctly
 	private async withLock<T>(screen: number, operation: string, callback: () => Promise<T>): Promise<T> {
 		if (!this.screenMutexes.has(screen)) {
-			this.screenMutexes.set(screen, new SimpleMutex());
+			this.screenMutexes.set(screen, new SimpleMutex(logger, `Screen${screen}Mutex`));
 		}
 		const mutex = this.screenMutexes.get(screen)!;
 		
@@ -590,9 +590,10 @@ export class StreamManager extends EventEmitter {
 		let release: (() => void) | null = null;
 		try {
 			logger.debug(`Attempting to acquire lock for screen ${screen} during ${operation} (${opId})`, 'StreamManager');
-			release = await mutex.acquire(15000, opId);
+			release = await mutex.acquire(15000, opId, operation);
 			logger.debug(`Acquired lock for screen ${screen} during ${operation} (${opId})`, 'StreamManager');
 			
+			// Add timeout protection for the operation itself
 			const result = await Promise.race([
 				callback(),
 				new Promise<T>((_, reject) => {
@@ -621,16 +622,26 @@ export class StreamManager extends EventEmitter {
 					this.processingScreens.delete(screen);
 					this.screenStartingTimestamps.delete(screen);
 					
-					// Force queue refresh
+					// Force queue refresh with retries
 					this.lastStreamFetch = 0;
 					this.lastStreamRefresh.set(screen, 0);
 					
-					// Schedule immediate queue update
-					setTimeout(() => {
-						this.updateAllQueues().catch(error => {
-							logger.error(`Failed to update queues after recovery: ${error}`, 'StreamManager');
-						});
-					}, 1000);
+					// Schedule queue update with retries
+					const retryQueueUpdate = async (retries = 3) => {
+						try {
+							await this.updateAllQueues();
+						} catch (error) {
+							if (retries > 0) {
+								logger.warn(`Queue update failed, retrying in 5s (${retries} retries left)`, 'StreamManager');
+								setTimeout(() => retryQueueUpdate(retries - 1), 5000);
+							} else {
+								logger.error(`Failed to update queues after ${3 - retries} retries`, 'StreamManager');
+							}
+						}
+					};
+					
+					// Start retry process
+					setTimeout(() => retryQueueUpdate(), 1000);
 				} catch (recoveryError) {
 					logger.error(`Recovery failed for screen ${screen}: ${recoveryError}`, 'StreamManager');
 				}

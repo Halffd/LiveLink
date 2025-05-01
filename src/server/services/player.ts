@@ -37,6 +37,13 @@ export interface StreamOptions {
 	windowMaximized?: boolean;
 }
 
+// Add interface for start result type
+interface StartResult {
+    screen: number;
+    success: boolean;
+    error?: string;
+}
+
 export class PlayerService {
 	private readonly BASE_LOG_DIR: string;
 	private readonly MAX_RETRIES = 2; // Maximum number of retries
@@ -722,10 +729,17 @@ export class PlayerService {
 					const retryTimer = setTimeout(async () => {
 						try {
 							logger.info(`Attempting to restart stream ${url} on screen ${screen} after network error`, 'PlayerService');
-							await this.startStream({
-								...stream.options,
-								isRetry: true
-							});
+							const startResult = await Promise.race([
+								this.startStream({
+									...stream.options,
+									isRetry: true
+								}),
+								new Promise<StartResult>((_, reject) => setTimeout(() => reject(new Error('Start timeout')), 10000))
+							]);
+
+							if (!startResult || !startResult.success) {
+								throw new Error(startResult?.error || 'Unknown error');
+							}
 						} catch (error) {
 							logger.error(`Failed to restart stream after network error on screen ${screen}`, 'PlayerService',
 								error instanceof Error ? error : new Error(String(error)));
@@ -945,10 +959,10 @@ export class PlayerService {
 								...options,
 								isRetry: true
 							}),
-							new Promise((_, reject) => setTimeout(() => reject(new Error('Start timeout')), 10000))
+							new Promise<StartResult>((_, reject) => setTimeout(() => reject(new Error('Start timeout')), 10000))
 						]);
 
-						if (!startResult || !('success' in startResult) || !startResult.success) {
+						if (!startResult || !startResult.success) {
 							throw new Error(startResult?.error || 'Unknown error');
 						}
 					} catch (error) {
