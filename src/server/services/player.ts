@@ -386,7 +386,7 @@ export class PlayerService {
 			// Create a consistent directory for IPC socket files
 			const userHomeDir = process.env.HOME || '/tmp';
 			const ipcDir = path.join(userHomeDir, '.livelink');
-
+			
 			// Ensure directory exists
 			try {
 				if (!fs.existsSync(ipcDir)) {
@@ -395,11 +395,11 @@ export class PlayerService {
 			} catch (error) {
 				logger.error(`Failed to create IPC directory ${ipcDir}`, 'PlayerService', error as Error);
 			}
-
+			
 			// Use the user's home directory for more reliable socket location
 			const ipcPath = path.join(ipcDir, `mpv-ipc-${options.screen}`);
 			this.ipcPaths.set(options.screen, ipcPath);
-
+			
 			// Remove existing socket file if it exists
 			try {
 				if (fs.existsSync(ipcPath)) {
@@ -416,8 +416,7 @@ export class PlayerService {
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
 
-		logger.info(`Starting MPV with command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
-		logger.debug(`MPV args: ${args.join(' ')}`, 'PlayerService');
+		logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
 		const mpvProcess = spawn(this.mpvPath, args, {
 			env,
 			stdio: ['ignore', 'pipe', 'pipe']
@@ -438,7 +437,7 @@ export class PlayerService {
 
 		// Wait a moment to let MPV create the socket
 		await new Promise(resolve => setTimeout(resolve, 1000)); // Increased from 500ms
-
+		
 		return mpvProcess;
 	}
 
