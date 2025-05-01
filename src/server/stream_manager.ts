@@ -181,7 +181,7 @@ export class StreamManager extends EventEmitter {
 
 	// Add new properties at the top of the class
 	private watchedStreams: Map<string, number> = new Map(); // URL -> timestamp
-	private readonly MAX_WATCHED_STREAMS = 3;
+	private readonly MAX_WATCHED_STREAMS = 20; // Increased from 3 to 20
 	private readonly WATCHED_STREAM_RESET_TIME = 24 * 60 * 60 * 1000; // 24 hours in ms
 
 	constructor(
@@ -702,27 +702,36 @@ export class StreamManager extends EventEmitter {
 				// Mark the stream as watched
 				this.markStreamAsWatched(currentStream.url);
 				logger.info(`Marked ended stream as watched: ${currentStream.url}`, 'StreamManager');
+				
+				// Note that markStreamAsWatched already removes the stream from all queues
+				// So we don't need to explicitly remove it here
 			}
 
 			// Get the queue
 			const queue = this.queues.get(screen) || [];
 			
-			// Remove current stream from queue if it's there
-			if (currentStream) {
-				const currentIndex = queue.findIndex(s => s.url === currentStream.url);
-				if (currentIndex !== -1) {
-					queue.splice(currentIndex, 1);
-					this.queues.set(screen, queue);
-				} else {
-					// Log but don't throw an error if we can't find the stream in the queue
-					logger.warn(`Could not find failed stream ${currentStream.url} in queue for screen ${screen}`, 'StreamManager');
-				}
-			}
-
 			// Get next stream from queue
 			const nextStream = queue[0];
 			if (!nextStream) {
+				logger.info(`No next stream in queue for screen ${screen}, handling empty queue`, 'StreamManager');
 				await this.handleEmptyQueue(screen);
+				return;
+			}
+
+			// Skip stream if it's watched (should not happen with our filters, but just in case)
+			if (this.isStreamWatched(nextStream.url)) {
+				logger.warn(
+					`Next stream in queue for screen ${screen} is already watched: ${nextStream.url}. Skipping to the next one.`,
+					'StreamManager'
+				);
+				
+				// Remove the watched stream from queue
+				queue.shift();
+				this.queues.set(screen, queue);
+				queueService.setQueue(screen, queue);
+				
+				// Try the next stream
+				await this.handleStreamEnd(screen);
 				return;
 			}
 
@@ -758,18 +767,19 @@ export class StreamManager extends EventEmitter {
 					// Remove the started stream from queue
 					queue.shift();
 					this.queues.set(screen, queue);
+					queueService.setQueue(screen, queue);
 					
 					// Update our stream tracking
 					this.streams.set(screen, {
 						id: Date.now(),
-						screen,
-						url: nextStream.url,
-						quality: nextStream.quality || screenConfig.quality || 'best',
-						volume: nextStream.volume || screenConfig.volume,
-						title: nextStream.title,
-						platform: nextStream.platform || 'youtube',
-						process: null,
-						status: 'playing'
+							screen,
+							url: nextStream.url,
+							quality: nextStream.quality || screenConfig.quality || 'best',
+							volume: nextStream.volume || screenConfig.volume,
+							title: nextStream.title,
+							platform: nextStream.platform || 'youtube',
+							process: null,
+							status: 'playing'
 					});
 					
 					await this.setScreenState(screen, StreamState.PLAYING);
@@ -777,9 +787,14 @@ export class StreamManager extends EventEmitter {
 					logger.error(`Failed to start next stream on screen ${screen}: ${startResult.error}`, 'StreamManager');
 					await this.setScreenState(screen, StreamState.ERROR);
 					
-					// If starting the stream fails, try to update the queue immediately
-					logger.debug(`Calling handleEmptyQueue after failure for screen ${screen}`, 'StreamManager');
-					await this.handleEmptyQueue(screen);
+					// Remove the failed stream from queue
+					queue.shift();
+					this.queues.set(screen, queue);
+					queueService.setQueue(screen, queue);
+					
+					// If starting the stream fails, try the next stream in queue
+					logger.debug(`Trying next stream after failure for screen ${screen}`, 'StreamManager');
+					await this.handleStreamEnd(screen);
 				}
 			} catch (error) {
 				logger.error(
@@ -788,7 +803,14 @@ export class StreamManager extends EventEmitter {
 					error instanceof Error ? error : new Error(String(error))
 				);
 				await this.setScreenState(screen, StreamState.ERROR);
-				await this.handleEmptyQueue(screen);
+				
+				// Remove the failed stream from queue
+				queue.shift();
+				this.queues.set(screen, queue);
+				queueService.setQueue(screen, queue);
+				
+				// Try next stream
+				await this.handleStreamEnd(screen);
 			}
 		});
 	}
@@ -916,18 +938,11 @@ export class StreamManager extends EventEmitter {
 		logger.info(`All streams watched for screen ${screen}, refetching immediately...`);
 
 		// Clear watched history to allow playing again
-		queueService.clearWatchedStreams();
+		this.clearWatchedStreams();
 		logger.info(`Cleared watched streams history for screen ${screen}`, 'StreamManager');
 
-		// Skip the waiting period and refresh immediately
-		logger.info(`Fetching new streams after all watched for screen ${screen}`, 'StreamManager');
-
-		// Force reset cache timestamp to get fresh data
-		this.lastStreamFetch = 0;
-		this.lastStreamRefresh.set(screen, 0);
-
-		// Update queue to get fresh streams
-		await this.updateQueue(screen);
+		// Force refresh all queues instead of just this screen's queue
+		await this.forceQueueRefresh();
 
 		// Process the queue immediately
 		await this.handleEmptyQueue(screen);
@@ -1858,16 +1873,74 @@ export class StreamManager extends EventEmitter {
 
 		// Add new entry
 		this.watchedStreams.set(url, Date.now());
+		
+		// Sync with queueService
+		queueService.markStreamAsWatched(url);
+		
 		logger.info(`Marked stream as watched: ${url}`, 'StreamManager');
+		
+		// Update all queues to remove this stream
+		for (const [screen, queue] of this.queues.entries()) {
+			const index = queue.findIndex(stream => stream.url === url);
+			if (index !== -1) {
+				// Remove from queue
+				queue.splice(index, 1);
+				this.queues.set(screen, queue);
+				
+				// Update queueService
+				queueService.setQueue(screen, queue);
+				
+				logger.info(`Removed watched stream ${url} from queue for screen ${screen}`, 'StreamManager');
+				this.emit('queueUpdate', { screen, queue });
+			}
+		}
 	}
 
 	public getWatchedStreams(): string[] {
-		return Array.from(this.watchedStreams.keys());
+		// Clean up expired entries first
+		const now = Date.now();
+		for (const [url, timestamp] of this.watchedStreams.entries()) {
+			if (now - timestamp > this.WATCHED_STREAM_RESET_TIME) {
+				this.watchedStreams.delete(url);
+				queueService.clearWatchedStreams(); // Clear in queueService too since we can't remove individual entries
+				logger.debug(`Removed expired watched entry for ${url} during getWatchedStreams`, 'StreamManager');
+			}
+		}
+		
+		// Return combined watched streams from both sources to ensure consistency
+		const localWatched = Array.from(this.watchedStreams.keys());
+		const queueServiceWatched = queueService.getWatchedStreams();
+		
+		// Combine and deduplicate
+		const allWatched = [...new Set([...localWatched, ...queueServiceWatched])];
+		
+		// If there's a discrepancy, sync them
+		if (localWatched.length !== queueServiceWatched.length) {
+			logger.debug(`Syncing watched streams between StreamManager (${localWatched.length}) and QueueService (${queueServiceWatched.length})`, 'StreamManager');
+			
+			// Update queueService to match our state
+			queueService.clearWatchedStreams();
+			for (const url of localWatched) {
+				queueService.markStreamAsWatched(url);
+			}
+		}
+		
+		return allWatched;
 	}
 
 	public clearWatchedStreams(): void {
 		this.watchedStreams.clear();
+		queueService.clearWatchedStreams();
 		logger.info('Cleared watched streams history', 'StreamManager');
+		
+		// Force update all queues to ensure they reflect the cleared watched status
+		this.forceQueueRefresh().catch(error => {
+			logger.error(
+				'Error refreshing queues after clearing watched streams',
+				'StreamManager',
+				error instanceof Error ? error : new Error(String(error))
+			);
+		});
 	}
 
 	async cleanup() {
@@ -2301,23 +2374,49 @@ export class StreamManager extends EventEmitter {
 						}
 
 						// Get streams from all sources
-						const streams = await this.getAllStreamsForScreen(screen);
-						if (streams.length === 0) {
+						logger.info(`Fetching streams for screen ${screen}`, 'StreamManager');
+						const allStreams = await this.getAllStreamsForScreen(screen);
+						if (allStreams.length === 0) {
 							logger.info(`No streams found for screen ${screen}, queue will be empty`, 'StreamManager');
 						}
 
 						// Log stream status distribution
-						const liveCount = streams.filter(s => s.sourceStatus === 'live').length;
-						const upcomingCount = streams.filter(s => s.sourceStatus === 'upcoming').length;
-						const otherCount = streams.length - liveCount - upcomingCount;
+						const liveCount = allStreams.filter(s => s.sourceStatus === 'live').length;
+						const upcomingCount = allStreams.filter(s => s.sourceStatus === 'upcoming').length;
+						const otherCount = allStreams.length - liveCount - upcomingCount;
 
 						logger.info(
-							`Stream status breakdown for screen ${screen}: ${liveCount} live, ${upcomingCount} upcoming, ${otherCount} other`,
+							`Stream status breakdown for screen ${screen}: ${liveCount} live, ${upcomingCount} upcoming, ${otherCount} other (total: ${allStreams.length})`,
 							'StreamManager'
 						);
 
-						// Filter out watched streams based on configuration
-						const filteredStreams = this.filterUnwatchedStreams(streams, screen);
+						// Get current stream to exclude from queue
+						const currentStream = this.streams.get(screen);
+						const currentStreamUrl = currentStream?.url;
+						
+						// Filter out watched streams and the current stream
+						logger.info(`Filtering watched and current streams for screen ${screen}`, 'StreamManager');
+						const filteredStreams = allStreams.filter(stream => {
+							// Skip current stream
+							if (currentStreamUrl && stream.url === currentStreamUrl) {
+								logger.debug(`Excluding current stream from queue: ${stream.url}`, 'StreamManager');
+								return false;
+							}
+							
+							// Check if watched
+							const isWatched = this.isStreamWatched(stream.url);
+							if (isWatched) {
+								logger.debug(`Excluding watched stream from queue: ${stream.url}`, 'StreamManager');
+							}
+							return !isWatched;
+						});
+
+						// Log filtering results
+						const watchedCount = allStreams.length - filteredStreams.length;
+						logger.info(
+							`Filtered out ${watchedCount} watched/current streams for screen ${screen}, ${filteredStreams.length} streams remaining`,
+							'StreamManager'
+						);
 
 						// Sort streams
 						const sortedStreams = this.sortStreams(filteredStreams, screenConfig.sorting);
@@ -2327,7 +2426,7 @@ export class StreamManager extends EventEmitter {
 						queueService.setQueue(screen, sortedStreams);
 
 						logger.info(
-							`Updated queue for screen ${screen}: ${sortedStreams.length} streams (${streams.length - sortedStreams.length} filtered)`,
+							`Updated queue for screen ${screen}: ${sortedStreams.length} streams`,
 							'StreamManager'
 						);
 
@@ -2347,8 +2446,8 @@ export class StreamManager extends EventEmitter {
 	}
 
 	private isStreamWatched(url: string): boolean {
-		// Use queueService to check watched status
-		return queueService.getWatchedStreams().includes(url);
+		// Use local watchedStreams to be consistent with markStreamAsWatched
+		return this.watchedStreams.has(url);
 	}
 
 	/**
@@ -2690,7 +2789,10 @@ export class StreamManager extends EventEmitter {
 			logger.debug(`Throttling Holodex fetch for screen ${screen}, last fetch was ${timeSinceLastFetch}ms ago`, 'StreamManager');
 			// Return cached streams if available
 			if (this.cachedStreams.length > 0) {
-				return this.cachedStreams.filter(stream => stream.screen === screen);
+				return this.cachedStreams.filter(stream => 
+					stream.screen === screen && 
+					!this.isStreamWatched(stream.url)
+				);
 			}
 			// Wait for debounce period
 			await new Promise(resolve => setTimeout(resolve, this.DEBOUNCE_DELAY - timeSinceLastFetch));
@@ -2726,6 +2828,12 @@ export class StreamManager extends EventEmitter {
 
 				// Filter out finished streams (keep live and upcoming)
 				sourceStreams = sourceStreams.filter(stream => {
+					// Filter out watched streams at the source level
+					if (this.isStreamWatched(stream.url)) {
+						logger.debug(`Filtering out watched stream at source: ${stream.url}`, 'StreamManager');
+						return false;
+					}
+
 					// For YouTube/Holodex, sourceStatus could be 'live', 'upcoming', or 'ended'
 					if (stream.sourceStatus === 'ended') {
 						logger.debug(`Filtering out ended stream: ${stream.url}`, 'StreamManager');
@@ -2762,6 +2870,9 @@ export class StreamManager extends EventEmitter {
 			}
 		}
 
+		// Cache the streams for rate limiting
+		this.cachedStreams = [...this.cachedStreams.filter(s => s.screen !== screen), ...streams];
+		
 		return streams;
 	}
 
