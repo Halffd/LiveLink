@@ -28,17 +28,33 @@ export class SimpleMutex {
 	private waitQueue: Array<() => void> = [];
 	private logger: Logger;
 	private context: string;
-	private lockAcquiredTime: number | null = null;
-	private lockOwner: string | null = null;
-	private maxLockTime = 30000; // 30 seconds max lock time
-	private healthCheckInterval: NodeJS.Timeout | null = null;
+	private acquireTime: number = 0;
+	private readonly MAX_LOCK_TIME = 30000; // 30 seconds max lock time
+	private lockCheckInterval: NodeJS.Timeout | null = null;
+	private owner: string | null = null;
 
 	constructor(logger: Logger = defaultLogger, context = 'SimpleMutex') {
 		this.logger = logger;
 		this.context = context;
 
-		// Start health check to prevent eternal locks
-		this.healthCheckInterval = setInterval(() => this.checkLockHealth(), 10000);
+		// Start periodic check for stuck locks
+		this.lockCheckInterval = setInterval(() => {
+			this.checkStuckLock();
+		}, 5000); // Check every 5 seconds
+	}
+
+	private checkStuckLock() {
+		if (this.locked && Date.now() - this.acquireTime > this.MAX_LOCK_TIME) {
+			this.logger.warn(`Lock held by ${this.owner} for ${Date.now() - this.acquireTime}ms - force releasing`);
+			this.forceRelease();
+		}
+	}
+
+	private forceRelease() {
+		this.logger.warn(`FORCE RELEASING lock held by ${this.owner} for ${Date.now() - this.acquireTime}ms`);
+		this.locked = false;
+		this.owner = null;
+		this.acquireTime = 0;
 	}
 
 	/**
@@ -47,54 +63,27 @@ export class SimpleMutex {
 	 * @param owner - Identifier for debugging who holds the lock
 	 * @returns a release function.
 	 */
-	async acquire(timeout = 15000, owner = 'unknown'): Promise<Release> {
-		this.logger.debug(`Attempting acquire() by ${owner}`, this.context);
+	async acquire(timeout: number = 15000, owner: string = 'unknown'): Promise<Release> {
+		const startTime = Date.now();
 
-		// If not locked, acquire immediately
-		if (!this.locked) {
-			this.locked = true;
-			this.lockAcquiredTime = Date.now();
-			this.lockOwner = owner;
-			this.logger.debug(`Lock acquired immediately by ${owner}`, this.context);
-			return this.makeReleaser(owner);
+		while (this.locked) {
+			if (Date.now() - startTime > timeout) {
+				throw new Error(`Mutex acquire timeout after ${timeout}ms - lock held by ${this.owner}`);
+			}
+			await new Promise(resolve => setTimeout(resolve, 100));
 		}
 
-		// Otherwise, queue with timeout
-		this.logger.debug(`Lock busy (held by ${this.lockOwner}), queuing caller ${owner}`, this.context);
+		this.locked = true;
+		this.owner = owner;
+		this.acquireTime = Date.now();
 
-		return new Promise<Release>((resolve, reject) => {
-			// Track if this request has been canceled by timeout
-			let isCanceled = false;
-
-			// Set timeout to prevent infinite waiting
-			const timeoutId = setTimeout(() => {
-				isCanceled = true;
-
-				// If lock has been held too long, force release it
-				if (this.lockAcquiredTime && (Date.now() - this.lockAcquiredTime > this.maxLockTime)) {
-					this.logger.warn(`Lock timeout - FORCE RELEASING lock held by ${this.lockOwner} for ${Date.now() - this.lockAcquiredTime}ms`, this.context);
-					this.forceRelease();
-				}
-
-				reject(new Error(`Mutex acquire timeout after ${timeout}ms - lock held by ${this.lockOwner}`));
-			}, timeout);
-
-			// Add to wait queue
-			this.waitQueue.push(() => {
-				// Skip executing if this request timed out
-				if (isCanceled) {
-					// Just pass through to the next waiter
-					return;
-				}
-
-				clearTimeout(timeoutId);
-				this.locked = true;
-				this.lockAcquiredTime = Date.now();
-				this.lockOwner = owner;
-				this.logger.debug(`Lock acquired from queue by ${owner}`, this.context);
-				resolve(this.makeReleaser(owner));
-			});
-		});
+		return () => {
+			if (this.owner === owner) {
+				this.locked = false;
+				this.owner = null;
+				this.acquireTime = 0;
+			}
+		};
 	}
 
 	/**
@@ -106,12 +95,12 @@ export class SimpleMutex {
 		this.logger.debug(`Attempting tryAcquire() by ${owner}`, this.context);
 		if (!this.locked) {
 			this.locked = true;
-			this.lockAcquiredTime = Date.now();
-			this.lockOwner = owner;
+			this.owner = owner;
+			this.acquireTime = Date.now();
 			this.logger.debug(`Lock acquired via tryAcquire() by ${owner}`, this.context);
 			return this.makeReleaser(owner);
 		}
-		this.logger.debug(`tryAcquire() by ${owner} failed, lock busy (held by ${this.lockOwner})`, this.context);
+		this.logger.debug(`tryAcquire() by ${owner} failed, lock busy (held by ${this.owner})`, this.context);
 		return null;
 	}
 
@@ -133,40 +122,15 @@ export class SimpleMutex {
 	 * Get the duration the current lock has been held, in ms
 	 */
 	getLockDuration(): number {
-		if (!this.lockAcquiredTime) return 0;
-		return Date.now() - this.lockAcquiredTime;
+		if (!this.locked) return 0;
+		return Date.now() - this.acquireTime;
 	}
 
 	/**
-	 * Force release the lock in emergency situations
+	 * Get the owner of the lock
 	 */
-	forceRelease(): void {
-		this.logger.warn(`FORCE RELEASING lock held by ${this.lockOwner} for ${this.getLockDuration()}ms`, this.context);
-		this.locked = false;
-		this.lockAcquiredTime = null;
-		this.lockOwner = null;
-
-		// If there are waiters, let the next one proceed
-		if (this.waitQueue.length > 0) {
-			const next = this.waitQueue.shift()!;
-			setImmediate(() => {
-				try {
-					next();
-				} catch (err) {
-					this.logger.error(`Error in queued releaser after force: ${err}`, this.context);
-				}
-			});
-		}
-	}
-
-	/**
-	 * Periodically check lock health
-	 */
-	private checkLockHealth(): void {
-		if (this.locked && this.lockAcquiredTime && (Date.now() - this.lockAcquiredTime > this.maxLockTime)) {
-			this.logger.warn(`Health check - Lock held by ${this.lockOwner} for ${Date.now() - this.lockAcquiredTime}ms exceeds max time, force releasing`, this.context);
-			this.forceRelease();
-		}
+	getOwner(): string | null {
+		return this.owner;
 	}
 
 	private makeReleaser(owner: string): Release {
@@ -191,8 +155,8 @@ export class SimpleMutex {
 				});
 			} else {
 				this.locked = false;
-				this.lockAcquiredTime = null;
-				this.lockOwner = null;
+				this.owner = null;
+				this.acquireTime = 0;
 				this.logger.debug(`Lock fully released by ${owner}`, this.context);
 			}
 		};
@@ -202,12 +166,13 @@ export class SimpleMutex {
 	 * Clean up resources
 	 */
 	dispose(): void {
-		if (this.healthCheckInterval) {
-			clearInterval(this.healthCheckInterval);
-			this.healthCheckInterval = null;
+		if (this.lockCheckInterval) {
+			clearInterval(this.lockCheckInterval);
+			this.lockCheckInterval = null;
 		}
 	}
 }
+
 /**
  * A reentrant mutex implementation.
  * The same async context can acquire multiple times without deadlock.

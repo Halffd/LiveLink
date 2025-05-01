@@ -583,20 +583,70 @@ export class StreamManager extends EventEmitter {
 			this.screenMutexes.set(screen, new SimpleMutex());
 		}
 		const mutex = this.screenMutexes.get(screen)!;
-		const release = await mutex.acquire();
-
+		
+		// Generate a unique operation ID for tracking
+		const opId = `${operation}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+		
+		let release: (() => void) | null = null;
 		try {
-			logger.debug(`Acquired lock for screen ${screen} during ${operation}`, 'StreamManager');
-			return await callback();
+			logger.debug(`Attempting to acquire lock for screen ${screen} during ${operation} (${opId})`, 'StreamManager');
+			release = await mutex.acquire(15000, opId);
+			logger.debug(`Acquired lock for screen ${screen} during ${operation} (${opId})`, 'StreamManager');
+			
+			const result = await Promise.race([
+				callback(),
+				new Promise<T>((_, reject) => {
+					setTimeout(() => {
+						reject(new Error(`Operation ${operation} timed out after 30s`));
+					}, 30000);
+				})
+			]);
+			
+			return result;
 		} catch (err) {
-			logger.error(`Error inside lock for screen ${screen} during ${operation}: ${err}`, 'StreamManager');
+			logger.error(`Error inside lock for screen ${screen} during ${operation} (${opId}): ${err}`, 'StreamManager');
+			
+			// If this was a timeout, try to recover
+			if (err instanceof Error && err.message.includes('timeout')) {
+				logger.warn(`Attempting recovery for screen ${screen} after timeout in ${operation}`, 'StreamManager');
+				try {
+					// Force stop any active stream
+					await this.playerService.stopStream(screen, true);
+					
+					// Reset screen state
+					await this.setScreenState(screen, StreamState.IDLE);
+					
+					// Clear any tracking data
+					this.streams.delete(screen);
+					this.processingScreens.delete(screen);
+					this.screenStartingTimestamps.delete(screen);
+					
+					// Force queue refresh
+					this.lastStreamFetch = 0;
+					this.lastStreamRefresh.set(screen, 0);
+					
+					// Schedule immediate queue update
+					setTimeout(() => {
+						this.updateAllQueues().catch(error => {
+							logger.error(`Failed to update queues after recovery: ${error}`, 'StreamManager');
+						});
+					}, 1000);
+				} catch (recoveryError) {
+					logger.error(`Recovery failed for screen ${screen}: ${recoveryError}`, 'StreamManager');
+				}
+			}
+			
 			throw err;
 		} finally {
-			release();
-			logger.debug(`Released lock for screen ${screen} after ${operation}`, 'StreamManager');
+			if (release) {
+				release();
+				logger.debug(`Released lock for screen ${screen} after ${operation} (${opId})`, 'StreamManager');
+			}
+			
+			// Clean up mutex if no active streams and not locked
 			if (!this.streams.has(screen) && !mutex.isLocked()) {
 				this.screenMutexes.delete(screen);
-				logger.debug(`Deleted mutex for screen ${screen}`, 'StreamManager');
+				logger.debug(`Deleted mutex for screen ${screen} after ${operation} (${opId})`, 'StreamManager');
 			}
 		}
 	}
@@ -768,7 +818,7 @@ export class StreamManager extends EventEmitter {
 
 					// Make a copy of the queue to iterate through
 					const queueCopy = [...queue];
-// don’t `set([], …)` here
+// don't `set([], …)` here
 					for (const nextStream of queueCopy) {
 						// at the top of the loop:
 						if (success) {

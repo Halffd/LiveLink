@@ -876,9 +876,6 @@ export class PlayerService {
 		// Flag this stream as being processed for exit to prevent duplicate handling
 		if (stream) {
 			stream.status = 'stopping';
-			// Store process and then remove reference to prevent duplicate exit handling
-			// @ts-ignore - Deliberately setting to null to prevent duplicate handling
-			stream.process = null;
 		}
 
 		// Log with URL for better tracking
@@ -898,6 +895,23 @@ export class PlayerService {
 			const now = Date.now();
 			const lastError = this.lastNetworkError.get(screen) || 0;
 			const timeSinceLastError = now - lastError;
+
+			// Check for persistent issues
+			if (this.isPersistentIssue(screen)) {
+				logger.warn(`Persistent network issues detected for screen ${screen}, skipping retry`, 'PlayerService');
+				this.cleanup_after_stop(screen);
+				this.clearMonitoring(screen);
+				
+				// Emit error to trigger external recovery
+				this.errorCallback?.({
+					screen,
+					error: 'Persistent network issues detected',
+					code: code || 0,
+					url,
+					moveToNext: true // Signal to move to next stream
+				});
+				return;
+			}
 
 			// Reset network retry count if it's been a while since the last error
 			if (timeSinceLastError > 2 * 60 * 1000) { // Reduced from 5 minutes to 2 minutes
@@ -922,14 +936,21 @@ export class PlayerService {
 				this.cleanup_after_stop(screen);
 				this.clearMonitoring(screen);
 
-				// Set up retry timer
+				// Set up retry timer with timeout protection
 				const retryTimer = setTimeout(async () => {
 					try {
 						logger.info(`Attempting to restart stream ${url} on screen ${screen} after network error`, 'PlayerService');
-						await this.startStream({
-							...options,
-							isRetry: true
-						});
+						const startResult = await Promise.race([
+							this.startStream({
+								...options,
+								isRetry: true
+							}),
+							new Promise((_, reject) => setTimeout(() => reject(new Error('Start timeout')), 10000))
+						]);
+
+						if (!startResult || !('success' in startResult) || !startResult.success) {
+							throw new Error(startResult?.error || 'Unknown error');
+						}
 					} catch (error) {
 						logger.error(`Failed to restart stream after network error on screen ${screen}`, 'PlayerService',
 							error instanceof Error ? error : new Error(String(error)));
@@ -1031,10 +1052,14 @@ export class PlayerService {
 	 */
 	private isNetworkErrorCode(code: number | null): boolean {
 		// Common network-related exit codes
-		// 2: Streamlink network error
-		// 1: General error (could be network)
-		// 9: Killed (could happen during network fluctuations)
-		return code === 2 || code === 1 || code === 9;
+		const networkErrorCodes = new Set([2, 1, 9]);
+		
+		// Check if it's a known network error code
+		if (code !== null && networkErrorCodes.has(code)) {
+			return true;
+		}
+		
+		return false;
 	}
 
 	/**
@@ -2006,5 +2031,20 @@ export class PlayerService {
 				}
 			});
 		});
+	}
+
+	// Add method to check if stream is having persistent issues
+	private isPersistentIssue(screen: number): boolean {
+		const retryCount = this.networkRetries.get(screen) || 0;
+		const now = Date.now();
+		const lastError = this.lastNetworkError.get(screen) || 0;
+		const timeSinceLastError = now - lastError;
+
+		// If we've had multiple retries in a short time period
+		if (retryCount >= 2 && timeSinceLastError < 60000) { // 1 minute
+			return true;
+		}
+
+		return false;
 	}
 }
