@@ -60,3 +60,6 @@ scripts/mpv
 *.mpg
 *.mpeg
 *.log
+
+.idea
+.vscode

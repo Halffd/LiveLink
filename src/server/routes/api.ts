@@ -947,8 +947,7 @@ router.post('/api/streams/refresh', async (ctx: Context) => {
     
     // Reset the last refresh timestamps for all screens
     const enabledScreens = streamManager.getEnabledScreens();
-    streamManager.resetRefreshTimestamps(enabledScreens);
-    
+
     // Update streams queue for all enabled screens
     await streamManager.updateAllQueues();
     
@@ -972,9 +971,6 @@ router.post('/api/streams/refresh/:screen', async (ctx: Context) => {
     }
     
     logger.info(`Force refreshing streams for screen ${screen}`, 'API');
-    
-    // Reset the refresh timestamp for this screen
-    streamManager.resetRefreshTimestamps([screen]);
     
     // Force refresh queue for screen
     logger.info(`Force refreshing queue for screen ${screen}`, 'API');
