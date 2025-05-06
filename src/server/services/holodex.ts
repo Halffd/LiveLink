@@ -63,32 +63,40 @@ export class HolodexService implements StreamService {
         
         logger.info(`Fetching streams for ${channels.length} favorite Holodex channels`, 'HolodexService');
         logger.debug(`Holodex favorite channels: ${channels.join(', ')}`, 'HolodexService');
-        
+
         // Fetch all channels in parallel but preserve order
         const promises = channels.map(async (channelId) => {
-					// Use more inclusive parameters for channel searches
-					const params = {
-						channel_id: channelId,
-						type: 'stream' as VideoType, // Use 'stream' type instead of 'live'
-						status: 'live' as VideoStatus, // Include both live and upcoming streams
-						sort: 'viewer_count' as keyof VideoRaw & string
-					};
+          if (!channelId) return [];
 
-					logger.debug(
-						`Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`,
-						'HolodexService'
-					);
-					const topicId = 'ember';
-					try {
-						const videos = await this.client!.getLiveVideos(params);
-						return videos.filter((video) => !video.topic.includes(topicId));
-					} catch (error) {
-						logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
-						logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
-						return [];
-					}
-				});
-        
+          // Use more inclusive parameters for channel searches
+          const params = {
+            channel_id: channelId,
+            status: 'live' as VideoStatus,
+            sort: 'viewer_count' as keyof VideoRaw & string,
+            include: ''
+          };
+
+          logger.debug(
+            `Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`,
+            'HolodexService'
+          );
+
+          const topicId = 'ember';
+          try {
+            const videos = await this.client!.getLiveVideos(params);
+            // Check if videos is an array before filtering
+            if (Array.isArray(videos)) {
+              return videos.filter((video) => video.topic && !video.topic.includes(topicId));
+            } else {
+              logger.warn(`Unexpected response format for channel ${channelId}`, 'HolodexService');
+              return [];
+            }
+          } catch (error) {
+            logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
+            logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+            return [];
+          }
+        });
         const results = await Promise.all(promises);
         
         // Log individual channel results
@@ -236,7 +244,7 @@ export class HolodexService implements StreamService {
 
       const videoArrays = await Promise.all(promises);
       const videos = videoArrays.flat();
-
+      logger.info("Favorites Holodex videos: " + videos.map(v => v.videoId).join(", "));
       return videos.map(video => ({
         url: `https://youtube.com/watch?v=${video.videoId}`,
         title: video.title,
@@ -251,6 +259,7 @@ export class HolodexService implements StreamService {
         'HolodexService',
         error instanceof Error ? error : new Error(String(error))
       );
+      console.error(error);
       return [];
     }
   }

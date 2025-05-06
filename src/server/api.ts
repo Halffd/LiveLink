@@ -21,14 +21,13 @@ await db.initialize();
 logger.info('Database initialized', 'Server');
 
 // Auto-start streams
-/* logger.info('Auto-starting streams...', 'Server');
+ logger.info('Auto-starting streams...', 'Server');
 try {
   await streamManager.autoStartStreams();
   logger.info('Auto-start complete', 'Server');
 } catch (error) {
   logger.error('Error during auto-start', 'Server', error as Error);
 }
-*/
 // Middleware
 logger.debug('Setting up middleware...', 'Server');
 app.use(cors());
