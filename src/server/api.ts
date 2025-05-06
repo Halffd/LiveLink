@@ -16,9 +16,9 @@ const __dirname = path.dirname(__filename);
 const app = new Koa();
 
 // Initialize database
-logger.info('Initializing database...', 'Server');
-await db.initialize();
-logger.info('Database initialized', 'Server');
+//logger.info('Initializing database...', 'Server');
+//await db.initialize();
+//logger.info('Database initialized', 'Server');
 
 // Auto-start streams
  logger.info('Auto-starting streams...', 'Server');

@@ -693,6 +693,7 @@ export class PlayerService {
 			// External kill (code null) or missing URL should not be retried to prevent infinite loops
 			const isMissingUrl = !url || url.trim() === '';
 			const isExternalKill = code === null;
+			let forceNext = false;
 
 			// Only retry network errors if we have a valid URL and it's not an external kill
 			if (this.isNetworkErrorCode(code) && !isMissingUrl && !isExternalKill && stream?.options) {
@@ -761,6 +762,7 @@ export class PlayerService {
 					logger.warn(`Maximum network retries (${this.MAX_NETWORK_RETRIES}) reached for screen ${screen}, giving up`, 'PlayerService');
 					// Reset retry count for future attempts
 					this.networkRetries.set(screen, 0);
+					forceNext = true;
 				}
 			} else if (isExternalKill) {
 				logger.warn(`Process on screen ${screen} was killed externally (code: ${code}), skipping retry`, 'PlayerService');
@@ -773,12 +775,16 @@ export class PlayerService {
 			this.clearMonitoring(screen);
 
 			// Calculate whether to move to next or restart
-			const normalExit = code === 0;
+			let normalExit = code === 0;
 			const missingUrl = !url || url.trim() === '';
 			const externalKill = code === null;
-			const moveToNext = normalExit || missingUrl || externalKill; 
-			const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
-
+			let moveToNext = normalExit || missingUrl || externalKill;
+			let shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
+			if (forceNext){
+				shouldRestart = false;
+				moveToNext = true;
+				normalExit = true;
+			}
 			// Emit stream error with URL if we have it
 			this.errorCallback?.({
 				screen,
