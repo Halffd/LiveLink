@@ -635,9 +635,7 @@ export class StreamManager extends EventEmitter {
 		}
 		return this.stateMachines.get(screen)!.getState();
 	}
-
-	// Fix the linter errors by deleting elements from Map correctly
-	private async withLock<T>(
+private async withLock<T>(
 		screen: number,
 		operation: string,
 		callback: () => Promise<T>
@@ -2872,8 +2870,6 @@ export class StreamManager extends EventEmitter {
 
 			logger.info(`Stream error on screen ${data.screen}: ${data.error}`, 'StreamManager');
 
-			// Use withLock to ensure exclusive access during error handling
-			await this.withLock(data.screen, 'handleError', async () => {
 				try {
 					if (data.shouldRestart) {
 						// If stream crashed with non-zero exit code, try to restart the same stream
@@ -2937,7 +2933,6 @@ export class StreamManager extends EventEmitter {
 					);
 				}
 			});
-		});
 
 		// Set up queue update notifications
 		queueService.on('queue:updated', (screen, queue) => {

@@ -1,5 +1,5 @@
 /**
- * Release function returned by acquire()/tryAcquire().
+ * Release function returned by acquire().
  */
 export type Release = () => void;
 
@@ -26,215 +26,132 @@ const defaultLogger: Logger = {
 export class SimpleMutex {
 	private locked = false;
 	private owner: string | null = null;
-	private acquireTime: number = 0;
-	private lastOperation: string = '';
-	private readonly MAX_LOCK_TIME = 30000; // 30 seconds max lock time
-	private lockCheckInterval: NodeJS.Timeout | null = null;
+	private acquireTime = 0;
+	private lastOperation = '';
+	private readonly MAX_LOCK_TIME = 30000; // ms
+	private lockCheckInterval: NodeJS.Timeout;
 	private logger: Logger;
 	private context: string;
-	private waking = false; // Flag to prevent concurrent wake operations
-	private nextWaiterId = 0; // Counter for unique waiter IDs
 
-	// Queue of pending waiters
-	private waitQueue: Array<{
-		resolve: (release: Release) => void;
-		reject: (error: Error) => void;
-		owner: string;
-		waiterId: number; // Unique ID for each waiter
-		timeout: NodeJS.Timeout;
-	}> = [];
+	// Pending waiters
+	private waitQueue: Array<{ owner: string; resolve: (release: Release) => void; reject: (err: Error) => void; timeout: NodeJS.Timeout; }> = [];
 
 	constructor(logger: Logger = defaultLogger, context = 'SimpleMutex') {
 		this.logger = logger;
 		this.context = context;
-
-		// Start periodic check for stuck locks
-		this.lockCheckInterval = setInterval(() => {
-			this.checkStuckLock();
-		}, 5000);
+		this.lockCheckInterval = setInterval(() => this.checkStuckLock(), this.MAX_LOCK_TIME / 3);
 	}
 
+	/**
+	 * Periodically checks for locks held too long and force-releases them.
+	 */
 	private checkStuckLock() {
 		if (!this.locked) return;
-
-		const duration = this.getLockDuration();
+		const duration = Date.now() - this.acquireTime;
 		if (duration > this.MAX_LOCK_TIME) {
 			this.logger.warn(
-				`[MUTEX] Lock held for ${duration}ms by ${this.owner} during ${this.lastOperation}. ` +
-				'Possible causes: deadlock, infinite loop, or crashed operation. ' +
-				'Check recent errors in logs and consider increasing timeout if needed.',
+				`[MUTEX] Lock held by ${this.owner} for ${duration}ms during ${this.lastOperation} - forcing release`,
 				this.context
 			);
 			this.forceRelease();
 		}
 	}
 
-	private forceRelease() {
-		const duration = this.getLockDuration();
-		this.logger.warn(
-			`[MUTEX] Force releasing lock held by ${this.owner} for ${duration}ms during ${this.lastOperation}`,
-			this.context
-		);
-
+	/**
+	 * Forcefully releases the current lock and wakes the next waiter.
+	 */
+	private forceRelease(): void {
 		this.locked = false;
 		this.owner = null;
 		this.acquireTime = 0;
 		this.lastOperation = '';
-
-		// Wake up next waiter if any
-		this.wakeNextWaiter();
-	}
-
-	private async wakeNextWaiter() {
-		if (this.waking || this.locked || this.waitQueue.length === 0) return;
-		
-		this.waking = true;
-		try {
-			const next = this.waitQueue.shift();
-			if (!next) return;
-
-			// Clear their timeout since we're processing them now
-			clearTimeout(next.timeout);
-
-			this.locked = true;
-			this.owner = next.owner;
-			this.acquireTime = Date.now();
-
-			const release = this.makeReleaser(next.owner);
-			next.resolve(release);
-		} catch (error) {
-			this.logger.error(`Error waking next waiter: ${error}`, this.context);
-			// Try next waiter
-			setImmediate(() => this.wakeNextWaiter());
-		} finally {
-			this.waking = false;
-		}
+		this.logger.warn(`[MUTEX] Force releasing stale lock`, this.context);
+		this.wakeNext();
 	}
 
 	/**
-	 * Acquire the lock with FIFO queuing.
-	 * @param timeout - Time to wait for lock
-	 * @param owner - Identifier for debugging who holds the lock
-	 * @param operation - Description of the operation being performed
-	 * @returns a release function.
+	 * Acquire the lock, waiting up to `timeout` ms. Returns a release callback.
 	 */
-	async acquire(timeout: number = 15000, owner: string = 'unknown', operation: string = 'unknown'): Promise<Release> {
-		// If not locked, acquire immediately
+	acquire(timeout = 15000, owner = 'unknown', operation = 'unknown'): Promise<Release> {
+		this.lastOperation = operation;
+
+		// Immediate acquire
 		if (!this.locked) {
 			this.locked = true;
 			this.owner = owner;
 			this.acquireTime = Date.now();
-			this.lastOperation = operation;
-			this.logger.debug(`Lock acquired immediately by ${owner} for ${operation}`, this.context);
-			return this.makeReleaser(owner);
+			this.logger.debug(`Lock acquired by ${owner} for ${operation}`, this.context);
+			return Promise.resolve(this.makeReleaser(owner));
 		}
 
-		// Otherwise queue with timeout
-		this.logger.debug(
-			`Lock busy (held by ${this.owner} for ${this.lastOperation}), queuing ${owner} for ${operation}`,
-			this.context
-		);
-
-		return new Promise<Release>((resolve, reject) => {
-			const waiterId = ++this.nextWaiterId;
-
-			// Create timeout for this waiter
-			const timeoutId = setTimeout(() => {
-				// Remove self from queue by waiterId instead of owner
-				const index = this.waitQueue.findIndex(w => w.waiterId === waiterId);
-				if (index !== -1) {
-					this.waitQueue.splice(index, 1);
-				}
-
-				// If lock has been held too long, force release it
-				if (this.getLockDuration() > this.MAX_LOCK_TIME) {
+		// Otherwise queue
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				// remove self
+				this.waitQueue = this.waitQueue.filter(w => w.resolve !== resolve);
+				// force release stale if needed
+				if (this.locked && Date.now() - this.acquireTime > this.MAX_LOCK_TIME) {
 					this.logger.warn(
-						`Lock timeout - forcing release of lock held by ${this.owner} for ${this.lastOperation}`,
+						`[MUTEX] Stale lock - forcing release in acquire timeout by ${owner}`,
 						this.context
 					);
 					this.forceRelease();
 				}
-
-				reject(new Error(
-					`Mutex acquire timeout after ${timeout}ms - lock held by ${this.owner} for ${this.lastOperation}`
-				));
+				reject(new Error(`Mutex acquire timeout after ${timeout}ms - lock held by ${this.owner}`));
 			}, timeout);
 
-			// Add to wait queue with unique ID
-			this.waitQueue.push({
-				resolve,
-				reject,
-				owner,
-				waiterId,
-				timeout: timeoutId
-			});
+			this.waitQueue.push({ owner, resolve, reject, timeout: timer });
 		});
 	}
 
+	/**
+	 * Create a release function bound to `owner`.
+	 */
 	private makeReleaser(owner: string): Release {
 		let released = false;
 		return () => {
-			if (released) {
-				this.logger.error(`Release called multiple times by ${owner}`, this.context);
-				throw new Error('Mutex release called twice');
-			}
-
-			if (this.owner !== owner) {
-				this.logger.error(
-					`Non-owner release attempt by ${owner}, current owner is ${this.owner}`,
-					this.context
-				);
-				throw new Error('Mutex released by non-owner');
-			}
-
+			if (released) return;
 			released = true;
+			if (this.owner !== owner) {
+				this.logger.warn(`Release by non-owner ${owner}, ignoring`, this.context);
+				return;
+			}
 			this.locked = false;
 			this.owner = null;
 			this.acquireTime = 0;
 			this.lastOperation = '';
-
 			this.logger.debug(`Lock released by ${owner}`, this.context);
-
-			// Wake up next waiter if any
-			this.wakeNextWaiter();
+			this.wakeNext();
 		};
 	}
 
-	isLocked(): boolean {
-		return this.locked;
-	}
-
-	getOwner(): string | null {
-		return this.owner;
-	}
-
-	getLockDuration(): number {
-		if (!this.locked) return 0;
-		return Date.now() - this.acquireTime;
-	}
-
-	getQueueLength(): number {
-		return this.waitQueue.length;
-	}
-
-	getLastOperation(): string {
-		return this.lastOperation;
+	/**
+	 * Wake the next waiter if any.
+	 */
+	private wakeNext() {
+		if (this.locked || this.waitQueue.length === 0) return;
+		const { owner, resolve, timeout } = this.waitQueue.shift()!;
+		clearTimeout(timeout);
+		this.locked = true;
+		this.owner = owner;
+		this.acquireTime = Date.now();
+		resolve(this.makeReleaser(owner));
 	}
 
 	/**
-	 * Clean up resources
+	 * Check if locked.
 	 */
-	dispose(): void {
-		if (this.lockCheckInterval) {
-			clearInterval(this.lockCheckInterval);
-			this.lockCheckInterval = null;
-		}
+	isLocked(): boolean { return this.locked; }
 
-		// Clear any pending waiters
-		for (const waiter of this.waitQueue) {
-			clearTimeout(waiter.timeout);
-			waiter.reject(new Error('Mutex disposed'));
-		}
+	/**
+	 * Cleanup intervals and pending waiters.
+	 */
+	dispose() {
+		clearInterval(this.lockCheckInterval);
+		this.waitQueue.forEach(({ timeout, reject }) => {
+			clearTimeout(timeout);
+			reject(new Error('Mutex disposed'));
+		});
 		this.waitQueue = [];
 	}
 }
