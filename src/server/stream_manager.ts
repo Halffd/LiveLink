@@ -155,8 +155,8 @@ export class StreamManager extends EventEmitter {
 
 	// Add new properties at the top of the class
 	private watchedStreams: Map<string, number> = new Map(); // URL -> timestamp
-	private readonly MAX_WATCHED_STREAMS = 100; // Increased from 3 to 20
-	private readonly WATCHED_STREAM_RESET_TIME = 24 * 60 * 60 * 1000; // 24 hours in ms
+	private readonly MAX_WATCHED_STREAMS = 8;
+	private readonly WATCHED_STREAM_RESET_TIME = 10 * 60 * 60 * 1000;
 
 	constructor(
 		config: Config,
@@ -2385,30 +2385,81 @@ private async withLock<T>(
 
 			// Filter out watched streams and the current stream
 			logger.info(`Filtering watched and current streams for screen ${screen}`, 'StreamManager');
-			const filteredStreams = allStreams.filter((stream) => {
-				// Skip current stream
-				if (currentStreamUrl && stream.url === currentStreamUrl) {
-					logger.debug(`Excluding current stream from queue: ${stream.url}`, 'StreamManager');
-					return false;
-				}
+			const streamConfig = this.config.streams.find((s) => s.screen === screen);
+			const activeStreams = this.getActiveStreams();
+			// Filter and sort streams for this screen
+			const sortedStreams = allStreams
+				.filter((stream) => {
+					// Only include streams that are actually live
+					if (!stream.sourceStatus || stream.sourceStatus !== 'live') {
+						return false;
+					}
 
-				// Check if watched
-				const isWatched = this.isStreamWatched(stream.url);
-				if (isWatched) {
-					logger.debug(`Excluding watched stream from queue: ${stream.url}`, 'StreamManager');
-				}
-				return !isWatched;
-			});
+					// Check if stream is already playing on another screen
+					const isPlaying = activeStreams.some((s) => s.url === stream.url);
+
+					// Never allow duplicate streams across screens
+					if (isPlaying) {
+						return false;
+					}
+					const isWatched = this.isStreamWatched(stream.url);
+					if (isWatched) {
+						logger.debug(`Excluding watched stream from queue: ${stream.url}`, 'StreamManager');
+						return false;
+					}
+
+					// Check if this stream matches the screen's configured sources
+					return screenConfig.sources?.some((source) => {
+						if (!source.enabled) return false;
+
+						switch (source.type) {
+							case 'holodex':
+								if (stream.platform !== 'youtube') return false;
+								if (
+									source.subtype === 'favorites' &&
+									stream.channelId &&
+									this.isChannelInFavorites('holodex', stream.channelId)
+								)
+									return true;
+								if (
+									source.subtype === 'organization' &&
+									source.name &&
+									stream.organization === source.name
+								)
+									return true;
+								break;
+							case 'twitch':
+								if (stream.platform !== 'twitch') return false;
+								if (
+									source.subtype === 'favorites' &&
+									stream.channelId &&
+									this.isChannelInFavorites('twitch', stream.channelId)
+								)
+									return true;
+								if (!source.subtype && source.tags?.includes('vtuber')) return true;
+								break;
+						}
+						return false;
+					});
+				})
+				.sort((a, b) => {
+					// Sort by priority first
+					const aPriority = a.priority ?? 999;
+					const bPriority = b.priority ?? 999;
+					if (aPriority !== bPriority) return aPriority - bPriority;
+
+					return 0; //(b.viewerCount || 0) - (a.viewerCount || 0);
+				});
 
 			// Log filtering results
-			const watchedCount = allStreams.length - filteredStreams.length;
+			const watchedCount = allStreams.length - sortedStreams.length;
 			logger.info(
-				`Filtered out ${watchedCount} watched/current streams for screen ${screen}, ${filteredStreams.length} streams remaining`,
+				`Filtered out ${watchedCount} watched/current streams for screen ${screen}, ${sortedStreams.length} streams remaining`,
 				'StreamManager'
 			);
 
 			// Sort streams
-			const sortedStreams = this.sortStreams(filteredStreams, screenConfig.sorting);
+		//	const sortedStreams = this.sortStreams(filteredStreams, screenConfig.sorting);
 
 			// Update queue
 			this.queues.set(screen, sortedStreams);
