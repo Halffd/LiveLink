@@ -803,7 +803,6 @@ export class PlayerService {
 					// Clean up but don't emit error yet
 					this.cleanup_after_stop(screen);
 					this.clearMonitoring(screen);
-
 					// Set up retry timer
 					const retryTimer = setTimeout(async () => {
 						try {
@@ -830,6 +829,9 @@ export class PlayerService {
 								'PlayerService',
 								error instanceof Error ? error : new Error(String(error))
 							);
+							hasEndedStream = true;
+							forceNext = true;
+							cleanup(); // call immediately if restart fails
 
 							// Now emit the error since retry failed
 							this.errorCallback?.({
@@ -1068,7 +1070,10 @@ export class PlayerService {
 
 				// Increment retry count
 				this.networkRetries.set(screen, networkRetryCount + 1);
-
+				logger.info(
+					`Incremented retry count for screen ${screen} to ${this.networkRetries.get(screen)}`,
+					'PlayerService'
+				);
 				// Clean up but don't emit error yet
 				this.cleanup_after_stop(screen);
 				this.clearMonitoring(screen);

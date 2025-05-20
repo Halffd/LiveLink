@@ -70,10 +70,10 @@ export class HolodexService implements StreamService {
 
           // Use more inclusive parameters for channel searches
           const params = {
-            channel_id: channelId,
-            status: 'live' as VideoStatus,
-            sort: 'viewer_count' as keyof VideoRaw & string,
-            include: ''
+            channel_id: channelId
+            //status: 'live' as VideoStatus,
+            //sort: 'viewer_count' as keyof VideoRaw & string,
+            //include: ''
           };
 
           logger.debug(
