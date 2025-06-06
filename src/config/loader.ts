@@ -6,6 +6,7 @@ import { logger } from '../server/services/logger.js';
 function loadJsonFile<T>(filename: string): T {
   const configDir = process.env.LIVELINK_CONFIG || path.join(process.cwd(), 'config');
   const filePath = path.join(configDir, path.basename(filename));
+  logger.info(`Loading config file: ${filePath}`, 'ConfigLoader');
   const fileContents = fs.readFileSync(filePath, 'utf-8');
   return JSON.parse(fileContents) as T;
 }
@@ -37,7 +38,8 @@ export function loadAllConfigs(): Config {
     const mpv = loadJsonFile<Config['mpv']>('mpv.json');
     const streamlink = loadJsonFile<Config['streamlink']>('streamlink.json');
     const filters = loadJsonFile<{ filters: string[] }>('filters.json');
-
+    logger.info('Config loaded', 'ConfigLoader');
+    logger.debug(JSON.stringify({ favorites, streams, player, mpv, streamlink, filters }), 'ConfigLoader');
     // Merge into a single config object
     const config: Config = {
       streams: streams.streams || [],
@@ -62,6 +64,7 @@ export function loadAllConfigs(): Config {
 
     return config;
   } catch (error) {
+    console.dir(error);
     // If any config file is missing, use default config
     logger.warn('Failed to load config files, using default config', 'ConfigLoader');
     logger.debug(
