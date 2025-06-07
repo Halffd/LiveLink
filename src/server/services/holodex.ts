@@ -75,7 +75,8 @@ export class HolodexService implements StreamService {
       }
 
       // Map to StreamSource format
-      return liveVideos.map(video => ({
+      return liveVideos.sort((a, b) => (b.liveViewers || 0) - (a.liveViewers || 0))
+      .map(video => ({
         url: `https://youtube.com/watch?v=${video.videoId}`,
         title: video.title,
         platform: 'youtube' as const,
@@ -170,7 +171,7 @@ export class HolodexService implements StreamService {
                 ? new Date(publishedDate).getTime()
                 : Date.now()
         };
-      });
+      })
     } catch (error) {
       logger.error(
         'Error fetching channel streams from Holodex',

@@ -518,7 +518,7 @@ export class PlayerService {
 		}
 
 		// Wait a moment to let MPV create the socket
-		await new Promise((resolve) => setTimeout(resolve, 1000)); // Increased from 500ms
+		await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 500ms
 
 		return mpvProcess;
 	}

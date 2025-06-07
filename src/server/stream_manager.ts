@@ -22,6 +22,7 @@ import { KeyboardService } from './services/keyboard_service.js';
 import './types/events.js';
 import { parallelOps, safeAsync } from './utils/async_helpers.js';
 import { SimpleMutex } from './utils/mutex.js';
+import { isYouTubeStreamLive } from './utils/youtube_utils.js';
 
 // Improve the StreamState enum with proper state machine transitions
 enum StreamState {
@@ -1320,11 +1321,17 @@ private async withLock<T>(
 				results.push(...screenStreams.flat());
 
 				// Filter out any streams with 'ended' status
-				const filteredResults = results.filter((stream) => {
+				const onFilterResults = await Promise.all(results.map(async (stream) => {
 					// For ended streams, filter them out
 					if (stream.sourceStatus === 'ended') {
 						logger.debug(`Filtering out ended stream: ${stream.url}`, 'StreamManager');
-						return false;
+						return undefined;
+					}
+					if(stream.platform === 'youtube') {	
+						if(!await isYouTubeStreamLive(stream.url)) {
+							logger.debug(`Filtering out live stream: ${stream.url}`, 'StreamManager');
+							return undefined;
+						}
 					}
 
 					// For upcoming streams, check if they're in the past
@@ -1332,12 +1339,12 @@ private async withLock<T>(
 						// If the start time is in the past by more than 30 minutes, filter it out
 						if (stream.startTime < now - 30 * 60 * 1000) {
 							logger.debug(`Filtering out past upcoming stream: ${stream.url}`, 'StreamManager');
-							return false;
+							return undefined;
 						}
 					}
-
-					return true;
-				});
+					return stream;
+				}));
+				const filteredResults = onFilterResults.filter((stream) => stream !== undefined);
 
 				logger.info(`Fetched ${filteredResults.length} streams from all sources`, 'StreamManager');
 
@@ -2585,209 +2592,168 @@ private async withLock<T>(
 		queueService.networkEmitter.on('offline', () => {
 			logger.warn('Network connection lost, pausing stream updates', 'StreamManager');
 			this.isOffline = true;
-
-			// Force all screens to IDLE state when network is lost to prevent stuck states
-			const enabledScreens = this.getEnabledScreens();
-			enabledScreens.forEach(async (screen) => {
-				try {
-					const currentState = this.getScreenState(screen);
-					if (currentState === StreamState.PLAYING) {
-						logger.warn(
-							`Network lost while screen ${screen} was PLAYING, forcing to IDLE state`,
-							'StreamManager'
-						);
-						await this.setScreenState(screen, StreamState.IDLE);
-					}
-				} catch (error) {
-					logger.error(
-						`Error handling network offline for screen ${screen}`,
-						'StreamManager',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				}
-			});
+			// Don't force screens to IDLE - let them maintain their current state
+			// The streams might still be buffering and could recover
 		});
-
+	
 		// Listen for network online event
 		queueService.networkEmitter.on('online', async () => {
-			if (!this.isOffline) return; // Already online
-
+			if (!this.isOffline) return;
+	
 			logger.info('Network connection restored, resuming stream updates', 'StreamManager');
 			this.isOffline = false;
-
+	
 			try {
-				// Force refresh all queues first to get fresh stream data
+				// Refresh queues to get latest stream data
 				await this.forceQueueRefresh();
-
-				// Get enabled screens
+	
 				const enabledScreens = this.getEnabledScreens();
 				if (enabledScreens.length === 0) {
 					logger.info('No enabled screens found after network recovery', 'StreamManager');
 					return;
 				}
-
-				logger.info(
-					`Processing ${enabledScreens.length} screens after network recovery`,
-					'StreamManager'
-				);
-
-				// Handle each screen individually with a small delay between screens
-				for (const [index, screen] of enabledScreens.entries()) {
+	
+				logger.info(`Processing ${enabledScreens.length} screens after network recovery`, 'StreamManager');
+	
+				// Process screens with proper error isolation
+				const recoveryPromises = enabledScreens.map(async (screen, index) => {
 					try {
-						// Small delay between screen recoveries to avoid overwhelming the system
+						// Stagger recovery to avoid system overload
 						if (index > 0) {
 							await new Promise(resolve => setTimeout(resolve, 1000));
 						}
-
-						// Get current stream for this screen
-						const activeStream = this.streams.get(screen);
+	
 						const currentState = this.getScreenState(screen);
-
-						logger.info(
-							`Processing screen ${screen} (state: ${currentState}) after network recovery`,
-							'StreamManager'
-						);
-
-						// Set to network recovery state
-						await this.setScreenState(screen, StreamState.NETWORK_RECOVERY);
-
-						// Always stop any existing stream first to ensure clean state
-						if (activeStream || currentState === StreamState.PLAYING) {
-							try {
-								await this.playerService.stopStream(screen, true);
-							} catch (stopError) {
-								logger.error(
-									`Error stopping stream on screen ${screen} during recovery`,
-									'StreamManager',
-									stopError instanceof Error ? stopError.message : String(stopError)
-								);
-							}
+						const activeStream = this.streams.get(screen);
+	
+						logger.info(`Processing screen ${screen} (state: ${currentState})`, 'StreamManager');
+	
+						// Only intervene if the screen is in a problematic state
+						if (currentState === StreamState.IDLE && !activeStream) {
+							// Screen is idle, try to start a new stream
+							await this.handleIdleScreenRecovery(screen.toString());
+						} else if (currentState === StreamState.PLAYING && activeStream) {
+							// Check if stream is actually working, restart if needed
+							await this.handlePlayingScreenRecovery(screen.toString(), activeStream);
+						} else if (currentState === StreamState.ERROR) {
+							// Reset error state and try to recover
+							await this.handleErrorScreenRecovery(screen.toString());
 						}
-
-						// Clear any stale stream references
-						this.streams.delete(screen);
-
-						// Update queue with fresh streams
-						await this.updateQueue(screen);
-
-						// Get the next stream from the queue
-						const queue = this.queues.get(screen) || [];
-						if (queue.length > 0) {
-							const nextStream = queue[0];
-							queue.shift();
-							this.queues.set(screen, queue);
-
-							logger.info(
-								`Starting stream after network recovery: ${nextStream.url}`,
-								'StreamManager'
-							);
-
-							try {
-								const result = await timeoutPromise(
-									this.startStream({
-										url: nextStream.url,
-										screen,
-										quality: 'best',
-										windowMaximized: true,
-										title: nextStream.title,
-										viewerCount: nextStream.viewerCount,
-										startTime: nextStream.startTime
-									}),
-									10000 // 10 second timeout for stream start
-								);
-
-								if (!result.success) {
-									throw new Error(result.error || 'Unknown error starting stream');
-								}
-
-								logger.info(
-									`Successfully started stream on screen ${screen} after network recovery`,
-									'StreamManager'
-								);
-							} catch (startError) {
-								logger.error(
-									`Failed to start stream on screen ${screen} after network recovery`,
-									'StreamManager',
-									startError instanceof Error ? startError : new Error(String(startError))
-								);
-								await this.setScreenState(screen, StreamState.IDLE);
-							}
-						} else {
-							logger.warn(
-								`No streams available in queue after network recovery for screen ${screen}`,
-								'StreamManager'
-							);
-							await this.setScreenState(screen, StreamState.IDLE);
-						}
+						// For other states, let them be - they might recover naturally
+	
 					} catch (error) {
 						logger.error(
-							`Error processing screen ${screen} during network recovery`,
+							`Failed to recover screen ${screen}`,
 							'StreamManager',
 							error instanceof Error ? error : new Error(String(error))
 						);
-						await this.setScreenState(screen, StreamState.IDLE);
+						// Don't force to IDLE - let the screen maintain its state
 					}
-				}
-
+				});
+	
+				// Wait for all recoveries to complete (or fail)
+				await Promise.allSettled(recoveryPromises);
 				logger.info('Network recovery process completed', 'StreamManager');
+	
 			} catch (error) {
 				logger.error(
 					'Failed to handle network recovery',
 					'StreamManager',
 					error instanceof Error ? error : new Error(String(error))
 				);
-
-				// Ensure all screens are in a valid state even if recovery fails
-				const enabledScreens = this.getEnabledScreens();
-				enabledScreens.forEach(async (screen) => {
-					try {
-						const currentState = this.getScreenState(screen);
-						if (currentState === StreamState.NETWORK_RECOVERY) {
-							await this.setScreenState(screen, StreamState.IDLE);
-						}
-					} catch (e) {
-						// Ignore errors during cleanup
-					}
-				});
 			}
 		});
 	}
-
-	/**
-	 * Force refresh all streams and optionally restart them
-	 * @param restart Whether to restart all streams after refreshing (default false)
-	 */
+	
+	private async handleIdleScreenRecovery(screen: string): Promise<void> {
+		await this.updateQueue(Number(screen));
+		const queue = this.queues.get(Number(screen)) || [];
+		
+		if (queue.length > 0) {
+			const nextStream = queue.shift()!;
+			this.queues.set(Number(screen), queue);
+	
+			logger.info(`Starting stream after network recovery: ${nextStream.url}`, 'StreamManager');
+			
+			try {
+				const result = await timeoutPromise(
+					this.startStream({
+						url: nextStream.url,
+						screen: Number(screen),
+						quality: 'best',
+						windowMaximized: true,
+						title: nextStream.title,
+						viewerCount: nextStream.viewerCount,
+						startTime: nextStream.startTime
+					}),
+					15000 // More reasonable timeout
+				);
+	
+				if (!result.success) {
+					throw new Error(result.error || 'Stream start failed');
+				}
+			} catch (error) {
+				logger.error(`Failed to start stream on screen ${screen}`, 'StreamManager', error);
+				// Don't set to IDLE - let the retry mechanism handle it
+			}
+		}
+	}
+	
+	private async handlePlayingScreenRecovery(screen: string, activeStream: any): Promise<void> {
+		// Check if stream is actually responsive
+		// This is where you'd implement stream health checking
+		// For now, just log that we're monitoring it
+		logger.info(`Monitoring active stream on screen ${screen} for health`, 'StreamManager');
+		
+		// You could add stream health checking here:
+		// - Check if player is responding
+		// - Check if stream is actually playing
+		// - Restart only if stream is confirmed dead
+	}
+	
+	private async handleErrorScreenRecovery(screen: string): Promise<void> {
+		logger.info(`Attempting to recover screen ${screen} from error state`, 'StreamManager');
+		
+		// Clear error state and try to start fresh
+		await this.setScreenState(Number(screen), StreamState.IDLE);
+		
+		// Then handle as idle screen
+		await this.handleIdleScreenRecovery(screen);
+	}
+	
 	public async forceRefreshAll(restart: boolean = false): Promise<void> {
 		logger.info(
-			`Force refreshing all streams${restart ? ' and restarting them' : ' without restarting'}`,
+			`Force refreshing all streams${restart ? ' and restarting them' : ''}`,
 			'StreamManager'
 		);
-
+	
 		try {
-			// Force refresh all queues first
 			await this.forceQueueRefresh();
-
+	
 			if (restart) {
-				// Only restart streams if explicitly requested
-				logger.info('Restart parameter was set to true - restarting all streams', 'StreamManager');
-				await this.restartStreams();
-				logger.info('All streams have been restarted successfully', 'StreamManager');
-			} else {
-				logger.info(
-					'Streams will continue playing with current content - no restart requested',
-					'StreamManager'
-				);
+				const enabledScreens = this.getEnabledScreens();
+				const restartPromises = enabledScreens.map(async (screen) => {
+					try {
+						const currentState = this.getScreenState(screen);
+						if (currentState === StreamState.PLAYING) {
+							// Gracefully restart only playing streams
+							await this.playerService.stopStream(Number(screen), true);
+							this.streams.delete(Number(screen));
+							await this.handleIdleScreenRecovery(screen.toString());
+						}
+					} catch (error) {
+						logger.error(`Failed to restart screen ${screen}`, 'StreamManager', error);
+					}
+				});
+	
+				await Promise.allSettled(restartPromises);
+				logger.info('Stream restart process completed', 'StreamManager');
 			}
 		} catch (error) {
-			logger.error(
-				'Failed to force refresh all streams',
-				'StreamManager',
-				error instanceof Error ? error : new Error(String(error))
-			);
+			logger.error('Failed to force refresh all streams', 'StreamManager', error);
 			throw error;
 		}
 	}
-
 	private async getAllStreamsForScreen(screen: number): Promise<StreamSource[]> {
 		const screenConfig = this.config.streams.find((s) => s.screen === screen);
 		if (!screenConfig || !screenConfig.sources?.length) {
