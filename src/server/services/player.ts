@@ -185,6 +185,37 @@ export class PlayerService {
 		}
 	}
 
+	/**
+	 * Check if an executable exists at the given path
+	 * @param execPath Path to the executable to check
+	 * @returns Promise that resolves to true if the executable exists and is executable
+	 */
+	private async checkExecutableExists(execPath: string): Promise<boolean> {
+		try {
+			// Try with 'which' first
+			const { exec } = await import('child_process');
+			return new Promise<boolean>((resolve) => {
+				exec(`which ${execPath}`, (error) => {
+					if (error) {
+						// Try with 'command -v' as a fallback
+						exec(`command -v ${execPath}`, (err2) => {
+							resolve(!err2);
+						});
+					} else {
+						resolve(true);
+					}
+				});
+			});
+		} catch (error) {
+			logger.error(
+				'Error checking executable existence',
+				'PlayerService',
+				error instanceof Error ? error : new Error(String(error))
+			);
+			return false;
+		}
+	}
+
 	private registerSignalHandlers(): void {
 		['SIGINT', 'SIGTERM', 'SIGQUIT'].forEach((signal) => {
 			process.once(signal, () => {
@@ -1969,6 +2000,93 @@ export class PlayerService {
 		this.killProcessByScreenNumber(screen);
 	}
 
+	/**
+	 * Last resort attempt to kill MPV for a specific screen using multiple methods
+	 * to ensure the process is terminated and all resources are cleaned up
+	 */
+	private killProcessByScreenNumber(screen: number): void {
+		const logPrefix = `[Screen ${screen}]`;
+		const ipcPath = this.ipcPaths.get(screen);
+		const commands: string[] = [];
+
+		try {
+			logger.info(`${logPrefix} Starting forceful cleanup of MPV processes`, 'PlayerService');
+
+			// 1. First try to kill by IPC socket path if we have it
+			if (ipcPath) {
+				// Kill using the IPC socket path (most reliable)
+				commands.push(
+					`lsof -t "${ipcPath}" | xargs -r kill -9 2>/dev/null || true`,
+					`fuser -k "${ipcPath}" 2>/dev/null || true`
+				);
+			}
+
+			// 2. Kill by matching the specific IPC socket in command line
+			commands.push(
+				`pkill -f "mpv.*--input-ipc-server=.*/mpv-ipc-${screen}(\\s|$)" || true`,
+				`pkill -f "mpv.*--input-ipc-server=mpv-ipc-${screen}(\\s|$)" || true`
+			);
+
+			// 3. Kill by matching screen-specific IPC file
+			commands.push(
+				`pkill -f "mpv.*/mpv-ipc-${screen}$" || true`,
+				`pkill -f "mpv.*mpv-ipc-${screen}$" || true`
+			);
+
+			// Execute all kill commands in sequence
+			const executeKillCommands = async () => {
+				for (const cmd of commands) {
+					try {
+						logger.debug(`${logPrefix} Executing: ${cmd}`, 'PlayerService');
+						await new Promise<void>((resolve) => {
+							exec(cmd, (error) => {
+								if (error && error.code !== 1) { // code 1 means no process found
+									logger.debug(
+									`${logPrefix} Command failed: ${error.message}`,
+									'PlayerService'
+								);
+								}
+								resolve();
+							});
+						});
+					} catch (error) {
+						logger.debug(
+							`${logPrefix} Error executing kill command: ${error instanceof Error ? error.message : String(error)}`,
+							'PlayerService'
+						);
+					}
+				}
+
+				// Clean up IPC socket file if it still exists
+				if (ipcPath && fs.existsSync(ipcPath)) {
+					try {
+						fs.unlinkSync(ipcPath);
+						logger.debug(`${logPrefix} Removed IPC socket file`, 'PlayerService');
+					} catch (error) {
+						logger.debug(
+							`${logPrefix} Failed to remove IPC socket: ${error instanceof Error ? error.message : String(error)}`,
+							'PlayerService'
+						);
+					}
+				}
+			};
+
+			// Execute cleanup and don't wait for it to complete
+			executeKillCommands().catch(error => {
+				logger.error(
+					`${logPrefix} Error during process cleanup: ${error instanceof Error ? error.message : String(error)}`,
+					'PlayerService'
+				);
+			});
+
+		} catch (error) {
+			logger.error(
+				`${logPrefix} Error in killProcessByScreenNumber: ${error instanceof Error ? error.message : String(error)}`,
+				'PlayerService'
+			);
+		}
+	}
+
 	public enableScreen(screen: number): void {
 		logger.info(`Enabling screen ${screen} in player service`, 'PlayerService');
 		this.disabledScreens.delete(screen);
@@ -2263,49 +2381,6 @@ export class PlayerService {
 			code: 1000, // Custom code for heartbeat failure
 			url: stream.url,
 			moveToNext: true // Signal to move to next stream
-		});
-	}
-
-	/**
-	 * Last resort attempt to kill MPV for a specific screen using pkill
-	 */
-	private killProcessByScreenNumber(screen: number): void {
-		try {
-			logger.debug(`Trying to force kill MPV for screen ${screen} using pkill`, 'PlayerService');
-
-			// Try to kill MPV instance for this specific screen
-			// using the mpv IPC identifier in command line arguments
-			exec(`pkill -f "mpv.*mpv-ipc-${screen}$" || true`, (error) => {
-				if (error) {
-					// Just log error, don't throw - this is a best-effort cleanup
-					logger.debug(
-						`Pkill command failed for screen ${screen}: ${error.message}`,
-						'PlayerService'
-					);
-				}
-			});
-		} catch (error) {
-			// Just log the error, this is just a last-resort cleanup attempt
-			logger.debug(
-				`Failed to execute pkill for screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
-				'PlayerService'
-			);
-		}
-	}
-
-	// Helper method to check if an executable exists
-	private async checkExecutableExists(execPath: string): Promise<boolean> {
-		return new Promise<boolean>((resolve) => {
-			exec(`which ${execPath}`, (error) => {
-				if (error) {
-					// Try with 'command -v' as a fallback
-					exec(`command -v ${execPath}`, (err2) => {
-						resolve(!err2);
-					});
-				} else {
-					resolve(true);
-				}
-			});
 		});
 	}
 

@@ -921,9 +921,19 @@ private async withLock<T>(
 				const streams = await this.getLiveStreams();
 				logger.info(`Fetched ${streams.length} streams from sources`, 'StreamManager');
 
-				// Filter streams for this screen and remove watched ones
+				// Filter streams for this screen, remove watched ones, and filter out upcoming streams
+				// Only allow streams that are truly live, or (legacy) have a startTime not in the future
+				const now = Date.now();
 				const availableStreams = this.filterUnwatchedStreams(
-					streams.filter((s) => !s.screen || s.screen === screen),
+					streams.filter(s =>
+						(!s.screen || s.screen === screen) &&
+						(
+							// Prefer explicit live status
+							(s.sourceStatus === 'live') ||
+							// For legacy/unknown status, fallback to startTime check
+							(!s.sourceStatus && (!s.startTime || s.startTime <= now))
+						)
+					),
 					screen
 				);
 
@@ -967,8 +977,19 @@ private async withLock<T>(
 						return;
 					}
 
+					// Sort streams by viewer count (highest first) and prioritize live streams
+					const sortedStreams = [...filteredStreams].sort((a, b) => {
+						// Prioritize streams that are currently live
+						const aIsLive = a.sourceStatus === 'live';
+						const bIsLive = b.sourceStatus === 'live';
+						if (aIsLive && !bIsLive) return -1;
+						if (!aIsLive && bIsLive) return 1;
+						// Then sort by viewer count
+						return (b.viewerCount || 0) - (a.viewerCount || 0);
+					});
+
 					// Update the queue with all streams except the first one
-					const [firstStream, ...queueStreams] = filteredStreams;
+					const [firstStream, ...queueStreams] = sortedStreams;
 
 					// Set up the queue first
 					if (queueStreams.length > 0) {
@@ -1007,7 +1028,7 @@ private async withLock<T>(
 					}
 				} else {
 					logger.info(
-						`No new streams available for screen ${screen}, will retry later`,
+						`No live streams available for screen ${screen}, will retry later`,
 						'StreamManager'
 					);
 					await this.setScreenState(screen, StreamState.IDLE);
@@ -1042,6 +1063,7 @@ private async withLock<T>(
 	// Modify startStream to use state machine and locking
 	async startStream(options: StreamOptions & { url: string }): Promise<StreamResponse> {
 		const screen = options.screen;
+// ... (rest of the code remains the same)
 		logger.info(`Starting stream on screen ${screen}: ${options.url}`, 'StreamManager');
 		// Ensure screen is defined
 		if (screen === undefined) {

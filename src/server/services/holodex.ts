@@ -1,10 +1,4 @@
-import { 
-  HolodexApiClient,
-  type VideoStatus,
-  type Video,
-  type VideoType,
-} from 'holodex.js';
-import type { VideoRaw } from 'holodex.js';
+import { HolodexApiClient, VideoStatus, VideoType, type Video } from 'holodex.js';
 import type { StreamSource } from '../../types/stream.js';
 import { logger } from './logger.js';
 import type { StreamService } from '../../types/stream.js';
@@ -36,7 +30,7 @@ export class HolodexService implements StreamService {
     }
   }
 
-  async getLiveStreams(options: GetLiveStreamsOptions): Promise<StreamSource[]> {
+  async getLiveStreams(options: GetLiveStreamsOptions = {}): Promise<StreamSource[]> {
     try {
       if (!this.client) {
         logger.warn('Holodex service not initialized - returning empty streams', 'HolodexService');
@@ -50,182 +44,160 @@ export class HolodexService implements StreamService {
       };
 
       const organization = options?.organization;
-      const channels = options?.channels;
+      const channels = options?.channels || [];
 
-      let videos: Video[];
-      const channelOrderMap = new Map<string, number>();
+      // If we have specific channels to check
+      if (channels.length > 0) {
+        return this.getStreamsByChannels(channels);
+      }
       
-      if (channels && channels.length > 0) {
-        // Create a map of channel IDs to their original position in the favorites array
-        channels.forEach((channelId, index) => {
-          channelOrderMap.set(channelId, index);
-        });
-        
-        logger.info(`Fetching streams for ${channels.length} favorite Holodex channels`, 'HolodexService');
-        logger.debug(`Holodex favorite channels: ${channels.join(', ')}`, 'HolodexService');
-
-        // Fetch all channels in parallel but preserve order
-        const promises = channels.map(async (channelId) => {
-          if (!channelId) return [];
-
-          // Use more inclusive parameters for channel searches
-          const params = {
-            channel_id: channelId
-            //status: 'live' as VideoStatus,
-            //sort: 'viewer_count' as keyof VideoRaw & string,
-            //include: ''
-          };
-
-          logger.debug(
-            `Fetching streams for channel ${channelId} with params: ${JSON.stringify(params)}`,
-            'HolodexService'
-          );
-
-          const topicId = 'ember';
-          try {
-            const videos = await this.client!.getLiveVideos(params);
-            // Check if videos is an array before filtering
-            if (Array.isArray(videos)) {
-              return videos.filter((video) => video.topic && !video.topic.includes(topicId));
-            } else {
-              logger.warn(`Unexpected response format for channel ${channelId}`, 'HolodexService');
-              return [];
-            }
-          } catch (error) {
-            logger.error(`Failed to fetch streams for channel ${channelId}`, 'HolodexService');
-            logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
-            return [];
-          }
-        });
-        const results = await Promise.all(promises);
-        
-        // Log individual channel results
-        channels.forEach((channelId, index) => {
-          logger.debug(`Channel ${channelId} returned ${results[index].length} videos`, 'HolodexService');
-        });
-        
-        // Flatten results but maintain channel order
-        videos = [];
-        channels.forEach((channelId, index) => {
-          let channelVideos = results[index];
-          // Don't filter by channel ID since we're requesting by channel ID already
-          // This fixes issues with collabs where the primary channel ID might not match
-          
-          if (channelVideos && channelVideos.length > 0) {
-            // Sort videos for each channel: live first, then by start time
-            channelVideos = channelVideos.filter(video => video.status === 'live')
-              .sort((a, b) => {
-              if (a.status === 'live' && b.status !== 'live') return -1;
-              if (a.status !== 'live' && b.status === 'live') return 1;
-              
-              // For upcoming streams, sort by available_at
-              const aTime = a.availableAt ? new Date(a.availableAt).getTime() : 0;
-              const bTime = b.availableAt ? new Date(b.availableAt).getTime() : 0;
-              return aTime - bTime;
-            });
-            
-            logger.debug(`Adding ${channelVideos.length} videos from channel ${channelId}`, 'HolodexService');
-            videos.push(...channelVideos);
-          }
-        });
-        
-        logger.info(`Found ${videos.length} live/upcoming streams from favorite channels`, 'HolodexService');
-      } else {
-        // Fetch streams by organization or all
-        if (organization) {
-          params.org = organization;
-        }
-
-        logger.debug(`Fetching ${params.limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
-        videos = await this.client.getLiveVideos(params);
-        videos = videos.filter(v => v.status === 'live');
+      // Otherwise, fetch by organization or all streams
+      if (organization) {
+        params.org = organization;
+        logger.debug(`Fetching streams for organization: ${organization}`, 'HolodexService');
       }
 
-      logger.info(`Found ${videos.length} live streams`, 'HolodexService');
-      if (videos.length > 0) {
-        logger.debug(`Stream details: ${JSON.stringify(videos.slice(0, 3).map(v => ({
+      logger.debug(`Fetching ${params.limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
+      const videos = await this.client.getLiveVideos(params);
+      
+      // Only include live streams
+      const liveVideos = videos.filter((video: Video) => video.status === 'live' as VideoStatus);
+      
+      logger.info(`Found ${liveVideos.length} live streams`, 'HolodexService');
+      if (liveVideos.length > 0) {
+        const sampleStreams = liveVideos.slice(0, 3).map(v => ({
           title: v.title,
           channel: v.channel?.name,
           viewers: v.liveViewers,
-          id: v.videoId,
-          status: v.status
-        })))}`, 'HolodexService');
+          id: v.videoId
+        }));
+        logger.debug(`Sample streams: ${JSON.stringify(sampleStreams)}`, 'HolodexService');
       }
-      videos = videos.filter(video => video.status === 'live');
 
-      // Filter out channels that should be excluded
-      const filteredVideos = videos.filter(video => {
-        if (this.isChannelFiltered(video)) {
-          logger.info(`Filtering out video from channel ${video.channel?.name}`, 'HolodexService');
-          return false;
+      // Map to StreamSource format
+      return liveVideos.map(video => ({
+        url: `https://youtube.com/watch?v=${video.videoId}`,
+        title: video.title,
+        platform: 'youtube' as const,
+        viewerCount: video.liveViewers || 0,
+        channelId: video.channel?.channelId || '',
+        channelName: video.channel?.name || 'Unknown Channel',
+        organization: video.channel?.organization,
+        sourceStatus: 'live' as const,
+        startTime: video.actualStart 
+          ? new Date(video.actualStart).getTime() 
+          : video.availableAt 
+            ? new Date(video.availableAt).getTime() 
+            : Date.now()
+      }));
+    } catch (error) {
+      logger.error(
+        'Error fetching live streams from Holodex',
+        'HolodexService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return [];
+    }
+  }
+
+  private async getStreamsByChannels(channelIds: string[]): Promise<StreamSource[]> {
+    if (!this.client) return [];
+    
+    try {
+      // Process channels in parallel
+      const results = await Promise.all(
+        channelIds
+          .filter(Boolean)
+          .map(channelId => this.fetchChannelVideos(channelId))
+      );
+      
+      // Process results and log channel stats
+      const channelStats = new Map<string, number>();
+      const liveVideos: Video[] = [];
+      
+      results.forEach((videos, index) => {
+        const channelId = channelIds[index];
+        if (!videos || !Array.isArray(videos)) {
+          logger.warn(`Unexpected response format for channel ${channelId}`, 'HolodexService');
+          channelStats.set(channelId, 0);
+          return;
         }
-        return true;
+        logger.info(`Channel ${channelId} returned ${videos.length} videos`, 'HolodexService');
+        logger.info(`Channel ${channelId} videos: ${videos.map(v => v.status).join(', ')}`, 'HolodexService');
+        // Filter out non-live and ember-topic videos
+        const filteredVideos = videos.filter((video: Video) => 
+          video.status === 'live' as VideoStatus && 
+          (!video.topic || !video.topic.includes('ember'))
+        );
+        
+        channelStats.set(channelId, filteredVideos.length);
+        liveVideos.push(...filteredVideos);
       });
-      if (videos.length !== filteredVideos.length) {
-        logger.info(`Some videos were filtered out due to channel exclusions`, 'HolodexService');
-      }
-      // Convert to StreamSource format with channel order preserved
-      let streamSources = filteredVideos.map(video => {
-        const channelId = video.channel?.channelId;
-        const channelOrder = channelId && channels?.includes(channelId) ? channelOrderMap.get(channelId) : undefined;
+
+      // Log channel stats
+      channelStats.forEach((count, channelId) => {
+        logger.debug(`Channel ${channelId} returned ${count} live videos`, 'HolodexService');
+      });
+      
+      logger.info(`Found ${liveVideos.length} live streams from ${channelStats.size} channels`, 'HolodexService');
+
+      // Map to StreamSource with explicit sourceStatus and proper type handling
+      return liveVideos.map(video => {
+        // Safely get the video ID, handling both Video and legacy formats
+        const videoId = (video as Video).videoId || '';
+        
+        // Safely get the published date, handling different possible properties
+        const publishedDate = 'publishedAt' in video && video.publishedAt ? 
+                            video.publishedAt :
+                            'published_at' in video && typeof (video as { published_at?: unknown }).published_at === 'string' ? 
+                            (video as { published_at: string }).published_at :
+                            undefined;
         
         return {
-          url: `https://youtube.com/watch?v=${video.videoId}`,
-          title: video.title,
+          url: `https://youtube.com/watch?v=${videoId}`,
+          title: video.title || 'Untitled Stream',
           platform: 'youtube' as const,
-          viewerCount: video.liveViewers,
-          thumbnail: video.channel?.avatarUrl,
-          startTime: video.actualStart ? new Date(video.actualStart).getTime() : 
-                    video.availableAt ? new Date(video.availableAt).getTime() : undefined,
-          sourceStatus: video.status === 'live' ? 'live' as const : 
-                       video.status === 'upcoming' ? 'upcoming' as const : 'ended' as const,
-          channelId: channelId,
+          viewerCount: video.liveViewers || 0,
+          channelId: video.channel?.channelId || '',
+          channelName: video.channel?.name || 'Unknown Channel',
           organization: video.channel?.organization,
-          // Set priority based on channel order for favorites
-          priority: channelOrder !== undefined ? channelOrder : undefined,
-          // Tag streams from favorites for easier identification
-          subtype: channels?.includes(channelId) ? 'favorites' : undefined
+          sourceStatus: 'live' as const,
+          startTime: video.actualStart 
+            ? new Date(video.actualStart).getTime() 
+            : video.availableAt 
+              ? new Date(video.availableAt).getTime()
+              : publishedDate
+                ? new Date(publishedDate).getTime()
+                : Date.now()
         };
       });
-
-      // Sort streams based on context
-      if (channels && channels.length > 0) {
-        // For favorites, sort by:
-        // 1. Channel order in favorites
-        // 2. Live status (live before upcoming)
-        // 3. Viewer count for same channel
-        streamSources.sort((a, b) => {
-          // First by channel order (favorites order)
-          const aOrder = a.priority ?? 999;
-          const bOrder = b.priority ?? 999;
-          if (aOrder !== bOrder) return aOrder - bOrder;
-          
-          // Then by live status
-          if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
-          if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
-          
-          // Finally by viewer count
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
-        });
-      } else {
-        // For non-favorite streams, sort by:
-        // 1. Live status
-        // 2. Viewer count
-        streamSources.sort((a, b) => {
-          // First by live status
-          if (a.sourceStatus === 'live' && b.sourceStatus !== 'live') return -1;
-          if (a.sourceStatus !== 'live' && b.sourceStatus === 'live') return 1;
-          
-          // Then by viewer count
-          return (b.viewerCount || 0) - (a.viewerCount || 0);
-        });
-      }
-      streamSources = streamSources.filter(video => video.sourceStatus === 'live');
-
-      return streamSources;
     } catch (error) {
-      logger.error('Failed to fetch Holodex live streams', 'HolodexService');
-      logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+      logger.error(
+        'Error fetching channel streams from Holodex',
+        'HolodexService',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      return [];
+    }
+  }
+
+  private async fetchChannelVideos(channelId: string): Promise<Video[]> {
+    if (!this.client) return [];
+    
+    try {
+      const videos = await this.client.getLiveVideos({
+        channel_id: channelId,
+        status: VideoStatus.Live,
+        type: VideoType.Stream
+      });
+      
+      return Array.isArray(videos) ? videos.filter(v => v.status === VideoStatus.Live) : [];
+    } catch (error) {
+      logger.error(
+        `Failed to fetch videos for channel ${channelId}`,
+        'HolodexService',
+        error instanceof Error ? error : new Error(String(error))
+      );
       return [];
     }
   }

@@ -11,20 +11,11 @@ export class YouTubeService implements StreamService {
 
   async getLiveStreams(options?: { channels?: string[]; limit?: number }): Promise<StreamSource[]> {
     try {
-      const channels = options?.channels || this.favoriteChannels;
-      const limit = options?.limit || 25;
-
-      // For each channel, create a basic entry that will be updated with live status
-      const streams: StreamSource[] = channels.map(channel => ({
-        url: `https://youtube.com/${channel}`,
-        title: `${channel}'s channel`,
-        platform: 'youtube',
-        viewerCount: 0,
-        channelId: channel
-      }));
-
-      logger.debug(`Found ${streams.length} YouTube channels`, 'YouTubeService');
-      return streams.slice(0, limit);
+      // In a real implementation, here you would call the YouTube API to fetch only currently live streams.
+      // For now, we will simulate by returning an empty list to avoid false positives.
+      // TODO: Integrate with YouTube Data API v3 for live stream detection.
+      logger.debug('YouTubeService.getLiveStreams called, but no live stream detection is implemented.', 'YouTubeService');
+      return [];
     } catch (error) {
       logger.error(
         'Failed to fetch YouTube streams',
