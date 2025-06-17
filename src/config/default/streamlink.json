@@ -1,4 +1,4 @@
-{
+[O]{
   "path": "streamlink",
   "mpv": {
     "border": "no"
@@ -11,10 +11,10 @@
     "twitch-disable-hosting": true,
     "twitch-disable-ads": true,
     "twitch-low-latency": true,
-    "retry-max": "3",
-    "retry-streams": "3",
-    "ringbuffer-size": "32M",
+    "retry-max": "5",
+    "retry-streams": "5",
+    "ringbuffer-size": "128M",
     "player-continuous-http": true,
-    "stream-segment-attempts": "3"
+    "stream-segment-attempts": "5"
   }
 } 

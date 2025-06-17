@@ -1180,7 +1180,8 @@ export class PlayerService {
 		const externalKill = code === null;
 		const moveToNext = normalExit || missingUrl || externalKill;
 		const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
-
+		logger.info(`Stream on screen ${screen} ended with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
+		logger.info(`Move to next: ${moveToNext}, should restart: ${shouldRestart} is shutting down: ${this.isShuttingDown} normal exit: ${normalExit} missing url: ${missingUrl} external kill: ${externalKill} code: ${code}`, 'PlayerService');
 		// Emit stream error with URL if we have it
 		this.errorCallback?.({
 			screen,
