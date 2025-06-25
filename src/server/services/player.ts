@@ -8,10 +8,11 @@ import type {
 	StreamEnd
 } from '../../types/stream_instance.js';
 import { logger } from './logger.js';
-import { exec, execSync } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as net from 'net';
+import { exec, execSync } from 'child_process';
+import { format } from 'date-fns';
 
 interface LocalStreamInstance {
 	id: number;
@@ -50,6 +51,11 @@ interface StartResult {
 }
 
 export class PlayerService {
+	private readonly logsDir = path.join(process.cwd(), 'logs');
+	private getLogFilePath(prefix: string): string {
+		const timestamp = format(new Date(), 'yyyyMMdd-HHmmss');
+		return path.join(this.logsDir, `${prefix}-${timestamp}.log`);
+	}
 	private readonly BASE_LOG_DIR: string;
 	private readonly MAX_RETRIES = 2; // Maximum number of retries
 	private readonly MAX_NETWORK_RETRIES = 2; // Maximum network-specific retries
@@ -97,6 +103,10 @@ export class PlayerService {
 			options: {},
 			http_header: {}
 		};
+		// Ensure logs directory exists
+		if (!fs.existsSync(this.logsDir)) {
+			fs.mkdirSync(this.logsDir, { recursive: true });
+		}
 		this.streams = new Map();
 		this.ipcPaths = new Map();
 		this.disabledScreens = new Set();
@@ -493,6 +503,10 @@ export class PlayerService {
 		const env = this.getProcessEnv();
 
 		logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
+		const mpvLogFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
+		const mpvLogStream = fs.createWriteStream(mpvLogFile, { flags: 'a' });
+		logger.info(`MPV logs will be written to: ${mpvLogFile}`, 'PlayerService');
+
 		const mpvProcess = spawn(this.mpvPath, args, {
 			env,
 			stdio: ['ignore', 'pipe', 'pipe']
@@ -501,8 +515,11 @@ export class PlayerService {
 		// Set up logging for the process
 		if (mpvProcess.stdout) {
 			mpvProcess.stdout.on('data', (data: Buffer) => {
+				const logData = data.toString().trim();
+				const logMessage = `[${new Date().toISOString()}] ${logData}\n`;
+				mpvLogStream.write(logMessage);
 				logger.debug(
-					`MPV stdout (screen ${options.screen}): ${data.toString().trim()}`,
+					`MPV stdout (screen ${options.screen}): ${logData}`,
 					'PlayerService'
 				);
 			});
@@ -510,12 +527,19 @@ export class PlayerService {
 
 		if (mpvProcess.stderr) {
 			mpvProcess.stderr.on('data', (data: Buffer) => {
+				const logData = data.toString().trim();
+				const logMessage = `[${new Date().toISOString()}] [ERROR] ${logData}\n`;
+				mpvLogStream.write(logMessage);
 				logger.debug(
-					`MPV stderr (screen ${options.screen}): ${data.toString().trim()}`,
+					`MPV stderr (screen ${options.screen}): ${logData}`,
 					'PlayerService'
 				);
 			});
 		}
+
+		mpvProcess.on('close', () => {
+			mpvLogStream.end();
+		});
 
 		// Wait a moment to let MPV create the socket
 		await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 500ms
@@ -530,9 +554,37 @@ export class PlayerService {
 		const env = this.getProcessEnv();
 		logger.info(`Streamlink args: streamlink ${args.join(' ')}`, 'PlayerService');
 		try {
+			const streamlinkLogFile = this.getLogFilePath(`streamlink-screen-${options.screen}`);
+			const streamlinkLogStream = fs.createWriteStream(streamlinkLogFile, { flags: 'a' });
+			logger.info(`Streamlink logs will be written to: ${streamlinkLogFile}`, 'PlayerService');
+
 			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
 				env,
 				stdio: ['ignore', 'pipe', 'pipe']
+			});
+
+			// Log all streamlink output to file
+			const logStreamData = (data: Buffer, type: 'stdout' | 'stderr') => {
+				const logData = data.toString().trim();
+				const prefix = type === 'stderr' ? '[ERROR] ' : '';
+				const logMessage = `[${new Date().toISOString()}] ${prefix}${logData}\n`;
+				streamlinkLogStream.write(logMessage);
+				logger.debug(
+					`Streamlink ${type} (screen ${options.screen}): ${logData}`,
+					'PlayerService'
+				);
+			};
+
+			if (process.stdout) {
+				process.stdout.on('data', (data: Buffer) => logStreamData(data, 'stdout'));
+			}
+
+			if (process.stderr) {
+				process.stderr.on('data', (data: Buffer) => logStreamData(data, 'stderr'));
+			}
+
+			process.on('close', () => {
+				streamlinkLogStream.end();
 			});
 
 			return new Promise((resolve, reject) => {
