@@ -61,7 +61,7 @@ export class HolodexService implements StreamService {
       const videos = await this.client.getLiveVideos(params);
       
       // Only include live streams
-      const liveVideos = videos.filter((video: Video) => video.status === 'live' as VideoStatus);
+      const liveVideos = videos.filter((video: Video) => video.status === 'live' as VideoStatus && !this.isChannelFiltered(video));
       
       logger.info(`Found ${liveVideos.length} live streams`, 'HolodexService');
       if (liveVideos.length > 0) {
