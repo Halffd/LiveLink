@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { createLogger, format, transports } from 'winston';
 import path from 'path';
+import fs from 'fs';
 
 const { combine, timestamp, printf } = format;
 
@@ -24,6 +25,10 @@ const args = process.argv.slice(2);
 const isDebug = args.includes('-d') || args.includes('--debug');
 const isVerbose = args.includes('-v') || args.includes('--verbose');
 const envDebug = process.env.DEBUG === '1' || process.env.VERBOSE === '1';
+const logDir = path.join(process.cwd(), 'logs');
+
+// Log rotation settings
+const MAX_LOG_LINES = 5000;
 
 // Create a custom format for consistent logging
 const customFormat = printf(({ level, message, timestamp, context, error, trace }) => {
@@ -57,10 +62,20 @@ const customFormat = printf(({ level, message, timestamp, context, error, trace 
 export class Logger {
   private logger;
   private currentLevel: LogLevel;
+  private errorLogPath: string;
+  private combinedLogPath: string;
 
   constructor() {
     // Set initial log level based on arguments and environment
     this.currentLevel = (isDebug || isVerbose || envDebug) ? LogLevel.DEBUG : LogLevel.INFO;
+    
+    this.errorLogPath = path.join(logDir, 'error.log');
+    this.combinedLogPath = path.join(logDir, 'combined.log');
+
+    // Ensure log directory exists
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
 
     this.logger = createLogger({
       level: this.currentLevel,
@@ -74,12 +89,12 @@ export class Logger {
           level: this.currentLevel
         }),
         new transports.File({ 
-          filename: path.join('logs', 'error.log'), 
+          filename: this.errorLogPath,
           level: 'error',
           format: format.uncolorize() // Remove colors for file output
         }),
         new transports.File({ 
-          filename: path.join('logs', 'combined.log'),
+          filename: this.combinedLogPath,
           format: format.uncolorize() // Remove colors for file output
         })
       ]
@@ -92,6 +107,26 @@ export class Logger {
       if (isVerbose) reason.push('--verbose flag');
       if (envDebug) reason.push('DEBUG/VERBOSE environment variable');
       this.debug('Debug logging enabled via: %s', reason.join(', '));
+    }
+  }
+
+  private rotateLogFile(filePath: string): void {
+    try {
+      if (!fs.existsSync(filePath)) return;
+      
+      const content = fs.readFileSync(filePath, 'utf8');
+      const lines = content.split('\n');
+      
+      if (lines.length > MAX_LOG_LINES) {
+        // Keep only the last MAX_LOG_LINES lines
+        const trimmedContent = lines.slice(-MAX_LOG_LINES).join('\n');
+        fs.writeFileSync(filePath, trimmedContent);
+        
+        // Log the rotation (but avoid infinite recursion)
+        console.log(`[LOG ROTATION] Trimmed ${filePath} to ${MAX_LOG_LINES} lines`);
+      }
+    } catch (error) {
+      console.error('Failed to rotate log file:', error);
     }
   }
 
@@ -152,6 +187,14 @@ export class Logger {
       timestamp: new Date().toISOString(),
       trace: this.getStackTrace()
     });
+
+    // Rotate logs after writing (do this occasionally to avoid performance hit)
+    if (Math.random() < 0.01) { // 1% chance to check/rotate
+      this.rotateLogFile(this.combinedLogPath);
+      if (logData.level === LogLevel.ERROR) {
+        this.rotateLogFile(this.errorLogPath);
+      }
+    }
   }
 
   error(message: string, context?: string, error?: Error | unknown) {
@@ -186,6 +229,13 @@ export class Logger {
       context 
     });
   }
+
+  // Manual rotation method
+  rotateLogs(): void {
+    this.rotateLogFile(this.combinedLogPath);
+    this.rotateLogFile(this.errorLogPath);
+    this.info('Manual log rotation completed', 'Logger');
+  }
 }
 
-export const logger = new Logger(); 
+export const logger = new Logger();
