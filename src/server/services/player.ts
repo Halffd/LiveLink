@@ -51,7 +51,7 @@ interface StartResult {
 }
 
 export class PlayerService {
-	private readonly logsDir = path.join(process.cwd(), 'logs');
+	private readonly logsDir = path.join(new URL('.', import.meta.url).pathname, '../../../logs');
 	private getLogFilePath(prefix: string): string {
 		const timestamp = format(new Date(), 'yyyyMMdd-HHmmss');
 		return path.join(this.logsDir, `${prefix}-${timestamp}.log`);
@@ -113,7 +113,7 @@ export class PlayerService {
 		this.retryTimers = new Map();
 
 		// Set up paths
-		this.BASE_LOG_DIR = path.join(process.cwd(), 'logs');
+		this.BASE_LOG_DIR = path.join(new URL('.', import.meta.url).pathname, '../../../logs');
 		this.SCRIPTS_PATH = path.join(process.cwd(), 'scripts/mpv');
 		this.mpvPath = 'mpv';
 
@@ -2349,7 +2349,7 @@ export class PlayerService {
 				socket.write(command + '\n');
 			});
 
-			socket.on('data', (data) => {
+			socket.on('data', () => {
 				// We got a response, stream is alive
 				hasResponded = true;
 				clearTimeout(timeout);

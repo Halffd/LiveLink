@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Activate the virtual environment
+source /home/all/repos/LiveLink/.venv/bin/activate
+
+# Run streamlink with all arguments
+streamlink "$@"

@@ -25,7 +25,7 @@ const args = process.argv.slice(2);
 const isDebug = args.includes('-d') || args.includes('--debug');
 const isVerbose = args.includes('-v') || args.includes('--verbose');
 const envDebug = process.env.DEBUG === '1' || process.env.VERBOSE === '1';
-const logDir = path.join(process.cwd(), 'logs');
+const logDir = path.join(new URL('.', import.meta.url).pathname, '../../logs');
 
 // Log rotation settings
 const MAX_LOG_LINES = 5000;
