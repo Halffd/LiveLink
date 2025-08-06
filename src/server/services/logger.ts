@@ -2,8 +2,8 @@ import chalk from 'chalk';
 import { createLogger, format, transports } from 'winston';
 import path from 'path';
 import fs from 'fs';
-
-const { combine, timestamp, printf } = format;
+import { fileURLToPath } from 'url';
+const { combine, timestamp, printf, errors } = format;
 
 export enum LogLevel {
   ERROR = 'error',
@@ -25,39 +25,52 @@ const args = process.argv.slice(2);
 const isDebug = args.includes('-d') || args.includes('--debug');
 const isVerbose = args.includes('-v') || args.includes('--verbose');
 const envDebug = process.env.DEBUG === '1' || process.env.VERBOSE === '1';
-const logDir = path.join(new URL('.', import.meta.url).pathname, '../../logs');
 
-// Log rotation settings
-const MAX_LOG_LINES = 5000;
+// Get absolute project root path
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.join(__dirname, '../../..');
+const logDir = path.join(projectRoot, 'logs');
 
-// Create a custom format for consistent logging
-const customFormat = printf(({ level, message, timestamp, context, error, trace }) => {
-  const colorize = {
+// Ensure log directory exists
+if (!fs.existsSync(logDir)) {
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+    console.log(chalk.green(`Created log directory: ${logDir}`));
+  } catch (err) {
+    console.error(chalk.red(`Failed to create log directory: ${err}`));
+    process.exit(1);
+  }
+}
+
+// Custom log format
+const customFormat = printf(({ level, message, timestamp, context, error }) => {
+  const colors = {
     [LogLevel.ERROR]: chalk.red,
     [LogLevel.WARN]: chalk.yellow,
-    [LogLevel.INFO]: chalk.blue,
+    [LogLevel.INFO]: chalk.green,
     [LogLevel.DEBUG]: chalk.gray
   };
 
-  const colorFn = colorize[level as LogLevel] || chalk.white;
-  const contextStr = context ? `[${context}] ` : '';
-  const timestampStr = isVerbose 
-    ? String(timestamp) 
-    : (String(timestamp).split('T')[1] || '').split('.')[0];
-  const baseMessage = `${timestampStr} [${level.toUpperCase()}] ${contextStr}${message}`;
+  const color = colors[level as LogLevel] || chalk.white;
+  const contextStr = context ? chalk.cyan(`[${context}] `) : '';
+  const timestampStr = new Date(timestamp as string).toISOString();
   
-  let fullMessage = colorFn(baseMessage);
+  let output = `${timestampStr} ${color(level.toUpperCase().padEnd(5))} ${contextStr}${message}`;
   
   if (error instanceof Error) {
-    fullMessage += '\n' + chalk.red(error.stack);
+    output += `\n${chalk.red(error.stack)}`;
   }
 
-  if (isVerbose && trace) {
-    fullMessage += '\n' + chalk.gray(trace);
-  }
-  
-  return fullMessage;
+  return output;
 });
+
+// File format (no colors)
+const fileFormat = combine(
+  timestamp(),
+  errors({ stack: true }),
+  format.json()
+);
 
 export class Logger {
   private logger;
@@ -66,74 +79,60 @@ export class Logger {
   private combinedLogPath: string;
 
   constructor() {
-    // Set initial log level based on arguments and environment
     this.currentLevel = (isDebug || isVerbose || envDebug) ? LogLevel.DEBUG : LogLevel.INFO;
     
     this.errorLogPath = path.join(logDir, 'error.log');
     this.combinedLogPath = path.join(logDir, 'combined.log');
 
-    // Ensure log directory exists
-    if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
-    }
-
+    // Initialize logger
     this.logger = createLogger({
       level: this.currentLevel,
       format: combine(
         timestamp(),
-        format.errors({ stack: true }),
+        errors({ stack: true }),
         customFormat
       ),
       transports: [
-        new transports.Console({
-          level: this.currentLevel
-        }),
-        new transports.File({ 
+        new transports.Console(),
+        new transports.File({
           filename: this.errorLogPath,
           level: 'error',
-          format: format.uncolorize() // Remove colors for file output
+          format: fileFormat
         }),
-        new transports.File({ 
+        new transports.File({
           filename: this.combinedLogPath,
-          format: format.uncolorize() // Remove colors for file output
+          format: fileFormat
+        })
+      ],
+      exceptionHandlers: [
+        new transports.File({
+          filename: path.join(logDir, 'exceptions.log'),
+          format: fileFormat
         })
       ]
     });
 
-    // Log initial debug state
-    if (this.currentLevel === LogLevel.DEBUG) {
-      const reason = [];
-      if (isDebug) reason.push('--debug flag');
-      if (isVerbose) reason.push('--verbose flag');
-      if (envDebug) reason.push('DEBUG/VERBOSE environment variable');
-      this.debug('Debug logging enabled via: %s', reason.join(', '));
-    }
+    // Verify file creation
+    this.verifyFileAccess();
+    this.info('Logger initialized', 'Logger');
   }
 
-  private rotateLogFile(filePath: string): void {
+  private verifyFileAccess() {
     try {
-      if (!fs.existsSync(filePath)) return;
-      
-      const content = fs.readFileSync(filePath, 'utf8');
-      const lines = content.split('\n');
-      
-      if (lines.length > MAX_LOG_LINES) {
-        // Keep only the last MAX_LOG_LINES lines
-        const trimmedContent = lines.slice(-MAX_LOG_LINES).join('\n');
-        fs.writeFileSync(filePath, trimmedContent);
-        
-        // Log the rotation (but avoid infinite recursion)
-        console.log(`[LOG ROTATION] Trimmed ${filePath} to ${MAX_LOG_LINES} lines`);
-      }
-    } catch (error) {
-      console.error('Failed to rotate log file:', error);
+      [this.errorLogPath, this.combinedLogPath].forEach(file => {
+        fs.accessSync(file, fs.constants.W_OK);
+        this.debug(`Log file accessible: ${file}`, 'Logger');
+      });
+    } catch (err) {
+      this.error(`Failed to access log files: ${err}`, 'Logger');
+      throw err;
     }
   }
 
   setLevel(level: LogLevel | string) {
     this.currentLevel = level.toLowerCase() as LogLevel;
     this.logger.level = this.currentLevel;
-    this.debug('Log level set to %s', this.currentLevel);
+    this.debug(`Log level set to ${this.currentLevel}`, 'Logger');
   }
 
   shouldLog(level: LogLevel): boolean {
@@ -146,11 +145,11 @@ export class Logger {
     return levels[level] <= levels[this.currentLevel];
   }
 
-  private formatMessage(message: string, ...args: (string | number)[]): string {
+  private formatMessage(message: string, ...args: unknown[]): string {
     if (args.length === 0) return message;
     
     try {
-      return message.replace(/%[sdj%]/g, (match: string): string => {
+      return message.replace(/%[sdj%]/g, (match) => {
         if (match === '%%') return '%';
         if (args.length === 0) return match;
         const arg = args.shift();
@@ -166,47 +165,28 @@ export class Logger {
     }
   }
 
-  private getStackTrace(): string | undefined {
-    if (!isVerbose) return undefined;
-    const stack = new Error().stack;
-    if (!stack) return undefined;
-    
-    // Get the calling function's location
-    const lines = stack.split('\n').slice(3); // Skip Error, getStackTrace, and log calls
-    return lines.join('\n');
-  }
-
   log(logData: LogMessage) {
     if (!this.shouldLog(logData.level)) return;
 
     this.logger.log({
       level: logData.level,
-      message: logData.message,
+      message: this.formatMessage(logData.message),
       context: logData.context,
       error: logData.error,
-      timestamp: new Date().toISOString(),
-      trace: this.getStackTrace()
+      timestamp: new Date().toISOString()
     });
-
-    // Rotate logs after writing (do this occasionally to avoid performance hit)
-    if (Math.random() < 0.01) { // 1% chance to check/rotate
-      this.rotateLogFile(this.combinedLogPath);
-      if (logData.level === LogLevel.ERROR) {
-        this.rotateLogFile(this.errorLogPath);
-      }
-    }
   }
 
   error(message: string, context?: string, error?: Error | unknown) {
     this.log({ 
       level: LogLevel.ERROR, 
-      message: this.formatMessage(message), 
+      message, 
       context, 
       error 
     });
   }
 
-  warn(message: string, context?: string, ...args: (string | number)[]) {
+  warn(message: string, context?: string, ...args: unknown[]) {
     this.log({ 
       level: LogLevel.WARN, 
       message: this.formatMessage(message, ...args), 
@@ -214,7 +194,7 @@ export class Logger {
     });
   }
 
-  info(message: string, context?: string, ...args: (string | number)[]) {
+  info(message: string, context?: string, ...args: unknown[]) {
     this.log({ 
       level: LogLevel.INFO, 
       message: this.formatMessage(message, ...args), 
@@ -222,7 +202,7 @@ export class Logger {
     });
   }
 
-  debug(message: string, context?: string, ...args: (string | number)[]) {
+  debug(message: string, context?: string, ...args: unknown[]) {
     this.log({ 
       level: LogLevel.DEBUG, 
       message: this.formatMessage(message, ...args), 
@@ -230,12 +210,17 @@ export class Logger {
     });
   }
 
-  // Manual rotation method
-  rotateLogs(): void {
-    this.rotateLogFile(this.combinedLogPath);
-    this.rotateLogFile(this.errorLogPath);
-    this.info('Manual log rotation completed', 'Logger');
+  rotateLogs() {
+    const now = new Date().toISOString();
+    [this.errorLogPath, this.combinedLogPath].forEach(file => {
+      if (fs.existsSync(file)) {
+        const rotatedFile = `${file}.${now}`;
+        fs.renameSync(file, rotatedFile);
+        this.info(`Rotated log file: ${file} → ${rotatedFile}`, 'Logger');
+      }
+    });
   }
 }
 
+// Singleton logger instance
 export const logger = new Logger();
