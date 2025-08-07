@@ -674,10 +674,10 @@ export class PlayerService {
 	private setupProcessHandlers(process: ChildProcess, screen: number): void {
 		let hasEndedStream = false;
 		let cleanupTimeout: NodeJS.Timeout | null = null;
-
+	
 		// Set up heartbeat monitoring
 		this.setupHeartbeat(screen);
-
+	
 		// Add lock for this specific screen to prevent race conditions
 		const initializeHandlerLock = (): boolean => {
 			if (hasEndedStream) {
@@ -687,7 +687,7 @@ export class PlayerService {
 				);
 				return false;
 			}
-
+	
 			const stream = this.streams.get(screen);
 			if (!stream || stream.status === 'stopping') {
 				logger.debug(
@@ -696,23 +696,23 @@ export class PlayerService {
 				);
 				return false;
 			}
-
+	
 			// Mark as handled
 			hasEndedStream = true;
 			return true;
 		};
-
+	
 		const cleanup = () => {
 			if (cleanupTimeout) {
 				clearTimeout(cleanupTimeout);
 				cleanupTimeout = null;
 			}
-
+	
 			// Clear monitoring and remove stream from map
 			this.clearMonitoring(screen);
 			this.streams.delete(screen);
 			this.streamRetries.delete(screen);
-
+	
 			// Log the number of active streams after cleanup
 			const activeStreams = Array.from(this.streams.values()).filter(
 				(s) => s.process && this.isProcessRunning(s.process.pid)
@@ -722,23 +722,23 @@ export class PlayerService {
 				'PlayerService'
 			);
 		};
-
+	
 		const handleStreamEnd = (error: string, code: number = 0) => {
 			// Atomically check and set flag to prevent race conditions
 			if (!initializeHandlerLock()) {
 				return; // Already handled
 			}
-
+	
 			const stream = this.streams.get(screen);
 			const url = stream?.url || '';
-
+	
 			logger.info(`Stream ended on screen ${screen}${url ? ` (${url})` : ''}`, 'PlayerService');
-
+	
 			// Mark the stream as stopping
 			if (stream) {
 				stream.status = 'stopping';
 			}
-
+	
 			// Call error callback with stream URL
 			this.errorCallback?.({
 				screen,
@@ -747,15 +747,100 @@ export class PlayerService {
 				url,
 				moveToNext: true
 			});
-
+	
 			// Schedule cleanup after a short delay to ensure all events are processed
 			cleanupTimeout = setTimeout(cleanup, 1000);
 		};
-
+	
+		// Add Twitch-specific retry logic for ad-break failures
+		const handleTwitchAdBreakFailure = (screen: number, stream: LocalStreamInstance, code: number): boolean => {
+			if (!stream?.url?.includes('twitch.tv')) return false;
+			
+			// Check if this looks like a Twitch ad-break failure
+			if (code !== 0) return false;
+			
+			const retryCount = this.streamRetries.get(screen) || 0;
+			const maxTwitchRetries = 3;
+			
+			if (retryCount >= maxTwitchRetries) {
+				logger.warn(
+					`Max Twitch retries (${maxTwitchRetries}) reached for screen ${screen}, giving up`,
+					'PlayerService'
+				);
+				this.streamRetries.delete(screen);
+				return false;
+			}
+			
+			logger.info(
+				`Detected Twitch ad-break failure on screen ${screen}, retrying (${retryCount + 1}/${maxTwitchRetries})`,
+				'PlayerService'
+			);
+			
+			this.streamRetries.set(screen, retryCount + 1);
+			
+			// Clean up current stream
+			this.cleanup_after_stop(screen);
+			this.clearMonitoring(screen);
+			
+			// Retry after 2 seconds to let ad break finish
+			setTimeout(async () => {
+				try {
+					logger.info(
+						`Restarting Twitch stream after ad-break failure on screen ${screen}`,
+						'PlayerService'
+					);
+					
+					const startResult = await Promise.race([
+						this.startStream({
+							...stream.options,
+							isRetry: true
+						}),
+						new Promise<StartResult>((_, reject) =>
+							setTimeout(() => reject(new Error('Start timeout')), 10000)
+						)
+					]);
+	
+					if (!startResult || !startResult.success) {
+						throw new Error(startResult?.error || 'Unknown error');
+					}
+					
+					// Reset retry count on successful restart
+					this.streamRetries.delete(screen);
+					
+				} catch (error) {
+					logger.error(
+						`Failed to restart Twitch stream after ad-break failure on screen ${screen}`,
+						'PlayerService',
+						error instanceof Error ? error : new Error(String(error))
+					);
+					
+					// Emit error if retry failed
+					this.errorCallback?.({
+						screen,
+						error: `Failed to restart after Twitch ad-break: ${error instanceof Error ? error.message : String(error)}`,
+						code: 0,
+						url: stream.url,
+						moveToNext: true
+					});
+					
+					cleanup();
+				}
+			}, 2000);
+			
+			return true; // Handled the retry
+		};
+	
 		if (process.stdout) {
 			process.stdout.on('data', (data: Buffer) => {
 				const output = data.toString('utf8').trim();
 				if (output && /[\x20-\x7E]/.test(output)) {
+					// Detect Twitch ad-break issues
+					if (output.includes('Detected advertisement break') || 
+						output.includes('Filtering out segments and pausing stream output') ||
+						output.includes('stream discontinuity')) {
+						logger.info(`[Screen ${screen}] Twitch ad-break detected: ${output}`, 'PlayerService');
+					}
+					
 					// Log YouTube-specific state information
 					if (output.includes('[youtube]')) {
 						if (output.includes('Post-Live Manifestless mode')) {
@@ -771,14 +856,14 @@ export class PlayerService {
 							);
 						}
 					}
-
+	
 					logger.debug(`[Screen ${screen}] ${output}`, 'PlayerService');
 					this.outputCallback?.({
 						screen,
 						data: output,
 						type: 'stdout'
 					});
-
+	
 					// Check for different types of stream endings
 					if (
 						output.includes('Exiting... (Quit)') ||
@@ -792,7 +877,7 @@ export class PlayerService {
 				}
 			});
 		}
-
+	
 		if (process.stderr) {
 			process.stderr.on('data', (data: Buffer) => {
 				const output = data.toString('utf8').trim();
@@ -816,57 +901,61 @@ export class PlayerService {
 				}
 			});
 		}
-
+	
 		process.on('error', (err: Error) => {
 			// Use lockout to prevent race conditions
 			if (!initializeHandlerLock()) {
 				return; // Already handled
 			}
-
+	
 			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
 			handleStreamEnd(err.message);
 		});
-
+	
 		process.on('exit', (code: number | null) => {
 			// Use lockout to prevent race conditions
 			if (!initializeHandlerLock()) {
 				return; // Already handled
 			}
-
+	
 			// Get the URL before any cleanup happens
 			const stream = this.streams.get(screen);
 			const url = stream?.url || '';
-
+	
 			logger.info(
 				`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`,
 				'PlayerService'
 			);
-
+	
+			// Handle Twitch ad-break failures first
+			if (code === 0 && stream && handleTwitchAdBreakFailure(screen, stream, code)) {
+				return; // Handled by Twitch retry logic
+			}
+	
 			// External kill (code null) or missing URL should not be retried to prevent infinite loops
 			const isMissingUrl = !url || url.trim() === '';
 			const isExternalKill = code === null;
 			let forceNext = false;
-
+	
 			// Only retry network errors if we have a valid URL and it's not an external kill
 			if (this.isNetworkErrorCode(code) && !isMissingUrl && !isExternalKill && stream?.options) {
 				const networkRetryCount = this.networkRetries.get(screen) || 0;
 				const now = Date.now();
 				const lastError = this.lastNetworkError.get(screen) || 0;
 				const timeSinceLastError = now - lastError;
-
+	
 				// Reset network retry count if it's been a while since the last error
 				if (timeSinceLastError > 2 * 60 * 1000) {
-					// Reduced from 5 minutes to 2 minutes
 					logger.info(
 						`Resetting network retry count for screen ${screen} as it's been ${Math.round(timeSinceLastError / 1000)}s since last error`,
 						'PlayerService'
 					);
 					this.networkRetries.set(screen, 0);
 				}
-
+	
 				// Update last error time
 				this.lastNetworkError.set(screen, now);
-
+	
 				// Check if we should retry
 				if (networkRetryCount < this.MAX_NETWORK_RETRIES) {
 					// Calculate backoff time with exponential backoff
@@ -874,15 +963,15 @@ export class PlayerService {
 						this.NETWORK_RETRY_INTERVAL * Math.pow(1.5, networkRetryCount),
 						this.MAX_BACKOFF_TIME
 					);
-
+	
 					logger.info(
 						`Network error detected for ${url} on screen ${screen}, retry ${networkRetryCount + 1}/${this.MAX_NETWORK_RETRIES} in ${Math.round(backoffTime / 1000)}s`,
 						'PlayerService'
 					);
-
+	
 					// Increment retry count
 					this.networkRetries.set(screen, networkRetryCount + 1);
-
+	
 					// Clean up but don't emit error yet
 					this.cleanup_after_stop(screen);
 					this.clearMonitoring(screen);
@@ -902,7 +991,7 @@ export class PlayerService {
 									setTimeout(() => reject(new Error('Start timeout')), 10000)
 								)
 							]);
-
+	
 							if (!startResult || !startResult.success) {
 								throw new Error(startResult?.error || 'Unknown error');
 							}
@@ -915,7 +1004,7 @@ export class PlayerService {
 							hasEndedStream = true;
 							forceNext = true;
 							cleanup(); // call immediately if restart fails
-
+	
 							// Now emit the error since retry failed
 							this.errorCallback?.({
 								screen,
@@ -926,7 +1015,7 @@ export class PlayerService {
 							});
 						}
 					}, backoffTime);
-
+	
 					// Store the timer
 					this.retryTimers.set(screen, retryTimer);
 					return; // Don't emit error yet, we're handling it with retry
@@ -950,11 +1039,11 @@ export class PlayerService {
 					'PlayerService'
 				);
 			}
-
+	
 			// For non-network errors or if max retries reached, clean up and emit error
 			this.cleanup_after_stop(screen);
 			this.clearMonitoring(screen);
-
+	
 			// Calculate whether to move to next or restart
 			let normalExit = code === 0;
 			const missingUrl = !url || url.trim() === '';
@@ -975,13 +1064,12 @@ export class PlayerService {
 				moveToNext,
 				shouldRestart
 			});
-
+	
 			hasEndedStream = true;
-
+	
 			cleanup();
 		});
 	}
-
 	private setupStreamMonitoring(
 		screen: number,
 		process: ChildProcess,

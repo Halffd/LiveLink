@@ -74,7 +74,7 @@ class StreamStateMachine {
 			[StreamState.NETWORK_RECOVERY]: [StreamState.IDLE, StreamState.STARTING, StreamState.ERROR]
 		};
 
-		if (!validTransitions[this.currentState].includes(newState)) {
+		if (!validTransitions[this.currentState].includes(newState) && this.currentState !== newState) {
 			logger.warn(
 				`Invalid state transition for screen ${this.screen}: ${this.currentState} -> ${newState}`,
 				'StreamManager'
@@ -149,10 +149,12 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed
 	private processingScreens: Set<number> = new Set();
-	// Add timeout constants
 	private readonly DEFAULT_LOCK_TIMEOUT = 15000; // 15 seconds
 	private readonly ERROR_HANDLER_TIMEOUT = 60000; // 60 seconds for error handling
 	private readonly OPERATION_TIMEOUT = 30000; // 30 seconds for normal operations
+	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
+	private networkRetries: Map<number, number> = new Map();
+	private lastNetworkError: Map<number, number> = new Map();
 
 	// Add new properties at the top of the class
 	private watchedStreams: Map<string, number> = new Map(); // URL -> timestamp
@@ -1594,30 +1596,30 @@ private async withLock<T>(
 			);
 		}
 	}
-
-	// Modify disableScreen to use state machine
-	async disableScreen(screen: number, fastDisable: boolean = false): Promise<void> {
+	async disableScreen(screen: number, fastDisable: boolean = true): Promise<void> {
 		// If fast disable is requested, immediately update state and return
 		if (fastDisable) {
 			// Update state to disabled immediately (without lock)
 			await this.setScreenState(screen, StreamState.DISABLED, undefined, true);
-
+	
 			// Clear queue
 			this.queues.delete(screen);
 			queueService.clearQueue(screen);
-
-			// Send quit command to MPV directly
+	
+			// Send quit command to MPV directly with force kill
 			try {
-				logger.info(`Sending quit command to MPV on screen ${screen}`, 'StreamManager');
-				this.playerService.sendCommandToScreen(screen, 'quit');
-				await new Promise((resolve) => setTimeout(resolve, 100));
+				logger.info(`Force stopping stream on screen ${screen}`, 'StreamManager');
+				// Use force=true to ensure immediate termination
+				await this.playerService.stopStream(screen, true, true);
+				// Add a small delay to ensure process is fully terminated
+				await new Promise(resolve => setTimeout(resolve, 100));
 			} catch (error) {
-				logger.warn(`Failed to send quit command to screen ${screen}`, 'StreamManager');
+				logger.warn(`Error during force stop of screen ${screen}: ${error instanceof Error ? error.message : String(error)}`, 'StreamManager');
 			}
-
+	
 			// Update player service (non-blocking)
 			this.playerService.disableScreen(screen);
-
+	
 			// Update screen config
 			const config = this.screenConfigs.get(screen);
 			if (config) {
@@ -1625,105 +1627,105 @@ private async withLock<T>(
 				this.screenConfigs.set(screen, config);
 				this.emit('screenConfigUpdate', screen, config);
 			}
-
-			// Start the full cleanup in the background
-			this.withLock(screen, 'backgroundDisableScreen', async () => {
-				logger.info(`Processing background cleanup for disabled screen ${screen}`, 'StreamManager');
-
-				// Stop any active stream
+	
+			// Clear any retry timers
+			this.clearRetryTimers(screen);
+			
+			return; // Don't proceed with background cleanup for fast disable
+		}
+	
+		// For non-fast disable, proceed with the normal flow
+		return this.withLock(screen, 'disableScreen', async () => {
+			logger.info(`Disabling screen ${screen}`, 'StreamManager');
+			
+			try {
+				// First stop any active stream
 				const hasActiveStream = this.streams.has(screen);
 				if (hasActiveStream) {
 					await this.stopStream(screen, true);
 				}
-
+	
+				// Update state to disabled
+				await this.setScreenState(screen, StreamState.DISABLED);
+				
+				// Update player service
+				this.playerService.disableScreen(screen);
+	
 				// Clear queue
 				this.queues.delete(screen);
 				queueService.clearQueue(screen);
-
-				// Synchronize disabled screens
-				this.synchronizeDisabledScreens();
-
-				logger.info(`Background cleanup completed for screen ${screen}`, 'StreamManager');
-			}).catch((error) => {
+	
+				// Update screen config
+				const config = this.screenConfigs.get(screen);
+				if (config) {
+					config.enabled = false;
+					this.screenConfigs.set(screen, config);
+					this.emit('screenConfigUpdate', screen, config);
+				}
+	
+				// Clear any retry timers
+				this.clearRetryTimers(screen);
+	
+				logger.info(`Screen ${screen} disabled`, 'StreamManager');
+			} catch (error) {
 				logger.error(
-					`Error in background cleanup for screen ${screen}`,
+					`Error disabling screen ${screen}`,
 					'StreamManager',
 					error instanceof Error ? error : new Error(String(error))
 				);
-			});
-
-			return;
-		}
-
-		// Regular disable path with locking
-		return this.withLock(screen, 'disableScreen', async () => {
-			logger.info(`Disabling screen ${screen}`, 'StreamManager');
-
-			// Stop any active stream
-			const hasActiveStream = this.streams.has(screen);
-			if (hasActiveStream) {
-				await this.stopStream(screen, true);
+				throw error;
 			}
-
-			// Clear queue
-			this.queues.delete(screen);
-			queueService.clearQueue(screen);
-
-			// Update state to disabled
-			await this.setScreenState(screen, StreamState.DISABLED);
-
-			// Update player service
-			this.playerService.disableScreen(screen);
-
-			// Update screen config
-			const config = this.screenConfigs.get(screen);
-			if (config) {
-				config.enabled = false;
-				this.screenConfigs.set(screen, config);
-				this.emit('screenConfigUpdate', screen, config);
-			}
-
-			// Synchronize disabled screens
-			this.synchronizeDisabledScreens();
-
-			logger.info(`Screen ${screen} disabled`, 'StreamManager');
 		});
+	}
+	
+	// Add this helper method to clear any pending retry timers
+	private clearRetryTimers(screen: number): void {
+		const retryTimer = this.retryTimers.get(screen);
+		if (retryTimer) {
+			clearTimeout(retryTimer);
+			this.retryTimers.delete(screen);
+		}
+		this.networkRetries.delete(screen);
+		this.lastNetworkError.delete(screen);
 	}
 
 	async enableScreen(screen: number): Promise<void> {
+		// First, ensure any existing lock is cleared
+		await this.ensureUnlocked(screen);
+		
 		return this.withLock(screen, 'enableScreen', async () => {
 			logger.info(`Enabling screen ${screen}`, 'StreamManager');
-
-			// First update state and services
-			await this.setScreenState(screen, StreamState.IDLE);
-			this.playerService.enableScreen(screen);
-
-			const config = this.screenConfigs.get(screen);
-			if (config) {
-				config.enabled = true;
-				this.screenConfigs.set(screen, config);
-				this.emit('screenConfigUpdate', screen, config);
-			}
-
-			// Initialize queue if needed
-			if (!this.queues.has(screen)) {
-				this.queues.set(screen, []);
-			}
-
+	
 			try {
+				// First update state and services
+				await this.setScreenState(screen, StreamState.IDLE);
+				this.playerService.enableScreen(screen);
+	
+				const config = this.screenConfigs.get(screen);
+				if (config) {
+					config.enabled = true;
+					this.screenConfigs.set(screen, config);
+					this.emit('screenConfigUpdate', screen, config);
+				}
+	
+				// Initialize queue if needed
+				if (!this.queues.has(screen)) {
+					this.queues.set(screen, []);
+				}
+	
 				// Update queue first
 				await this.updateQueue(screen);
-
+	
 				// Get the updated queue
 				const queue = this.queues.get(screen) || [];
-
+	
 				if (queue.length > 0) {
 					logger.info(
 						`Found ${queue.length} streams in queue for screen ${screen}, starting first one`,
 						'StreamManager'
 					);
 					const firstStream = queue[0];
-
+	
 					// Start the first stream
 					const result = await this.startStream({
 						url: firstStream.url,
@@ -1733,7 +1735,7 @@ private async withLock<T>(
 						viewerCount: firstStream.viewerCount,
 						startTime: firstStream.startTime
 					});
-
+	
 					if (result.success) {
 						logger.info(`Successfully started stream on screen ${screen}`, 'StreamManager');
 						// Remove the started stream from queue
@@ -1761,13 +1763,40 @@ private async withLock<T>(
 					'StreamManager',
 					error instanceof Error ? error : new Error(String(error))
 				);
-				await this.setScreenState(screen, StreamState.ERROR);
+				// Ensure we don't get stuck in an error state
+				try {
+					await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+				} catch (e) {
+					logger.error(
+						`Failed to reset screen ${screen} state after error`,
+						'StreamManager',
+						e
+					);
+				}
+				throw error; // Re-throw to ensure the lock is released
 			}
-
+	
 			logger.info(`Screen ${screen} enabled`, 'StreamManager');
 		});
 	}
-
+	
+	// Add this helper method to ensure a screen is unlocked
+	private async ensureUnlocked(screen: number): Promise<void> {
+		if (!this.screenMutexes.has(screen)) {
+			return;
+		}
+		
+		const mutex = this.screenMutexes.get(screen)!;
+		try {
+			// Try to acquire and immediately release the lock
+			const release = await mutex.acquire(1000, 'unlock-check', 'unlock-check');
+			release();
+		} catch (error) {
+			// If we can't acquire the lock, force reset it
+			logger.warn(`Force resetting lock for screen ${screen}`, 'StreamManager');
+			this.screenMutexes.delete(screen);
+		}
+	}
 	private async deferStartNextStream(screen: number) {
 		try {
 			const nextUrl = queueService.getNextStream(screen);
