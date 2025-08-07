@@ -116,19 +116,16 @@ export class Logger {
     this.verifyFileAccess();
     this.info('Logger initialized', 'Logger');
   }
-
   private verifyFileAccess() {
     try {
-      [this.errorLogPath, this.combinedLogPath].forEach(file => {
-        fs.accessSync(file, fs.constants.W_OK);
-        this.debug(`Log file accessible: ${file}`, 'Logger');
-      });
+      // Just check if we can write to the directory
+      fs.accessSync(logDir, fs.constants.W_OK);
+      this.debug(`Log directory accessible: ${logDir}`, 'Logger');
     } catch (err) {
-      this.error(`Failed to access log files: ${err}`, 'Logger');
+      console.error(chalk.red(`Cannot write to log directory: ${err}`));
       throw err;
     }
   }
-
   setLevel(level: LogLevel | string) {
     this.currentLevel = level.toLowerCase() as LogLevel;
     this.logger.level = this.currentLevel;

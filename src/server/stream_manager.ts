@@ -149,7 +149,8 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed
 	private processingScreens: Set<number> = new Set();
-	private readonly DEFAULT_LOCK_TIMEOUT = 15000; // 15 seconds
+	private readonly DEFAULT_LOCK_TIMEOUT = 10000; // 15 seconds
+	private readonly RETRY_TIMEOUT = 20000; // 15 seconds
 	private readonly ERROR_HANDLER_TIMEOUT = 60000; // 60 seconds for error handling
 	private readonly OPERATION_TIMEOUT = 30000; // 30 seconds for normal operations
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
@@ -386,7 +387,7 @@ export class StreamManager extends EventEmitter {
 										viewerCount: firstStream.viewerCount,
 										startTime: firstStream.startTime
 									}),
-									3000
+									this.DEFAULT_LOCK_TIMEOUT
 								);
 								logger.info(
 									`Stream start result for screen ${screen}: ${startResult.success ? 'success' : 'failure'}`,
@@ -514,7 +515,7 @@ export class StreamManager extends EventEmitter {
 											viewerCount: firstStream.viewerCount,
 											startTime: firstStream.startTime
 										}),
-										3000
+										this.DEFAULT_LOCK_TIMEOUT
 									);
 
 									if (startResult.success) {
@@ -976,7 +977,7 @@ private async withLock<T>(
 								'StreamManager'
 							);
 							this.updateAllQueues();
-						}, 30000); // Try again in 30 seconds
+						}, this.RETRY_TIMEOUT); // Try again in 20 seconds
 						return;
 					}
 
@@ -1578,7 +1579,7 @@ private async withLock<T>(
 							viewerCount: firstStream.viewerCount,
 							startTime: firstStream.startTime
 						}),
-						3000
+						this.DEFAULT_LOCK_TIMEOUT
 					);
 				} else {
 					logger.info(
@@ -3014,7 +3015,7 @@ private async withLock<T>(
 									quality: this.config.player.defaultQuality || 'best',
 									windowMaximized: true
 								}),
-								3000
+								this.DEFAULT_LOCK_TIMEOUT
 							);
 
 							if (result.success) {

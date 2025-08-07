@@ -59,14 +59,6 @@ async function checkStreamStatus(videoId: string): Promise<boolean> {
           resolve(true);
           return;
         }
-        
-        // Prevent excessive memory usage
-        if (data.length > 500000) { // ~500KB max
-          res.destroy();
-          logger.warn(`Response too large for video ${videoId}`, 'YouTubeUtils');
-          resolve(false);
-          return;
-        }
       });
       
       res.on('end', () => {
