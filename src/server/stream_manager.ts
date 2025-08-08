@@ -631,13 +631,32 @@ export class StreamManager extends EventEmitter {
 		// Otherwise use normal transition validation
 		return stateMachine.transition(state, setupCallback);
 	}
-
-	// Add method to get current screen state with a default
 	private getScreenState(screen: number): StreamState {
 		if (!this.stateMachines.has(screen)) {
 			this.stateMachines.set(screen, new StreamStateMachine(screen));
 		}
-		return this.stateMachines.get(screen)!.getState();
+		
+		const stateMachine = this.stateMachines.get(screen)!;
+		const currentState = stateMachine.getState();
+		
+		// If we think we're playing, verify the stream is actually working
+		if (currentState === StreamState.PLAYING) {
+			const stream = this.streams.get(screen);
+			if (!stream || !this.isStreamHealthy(stream)) {
+				// Stream is dead/unhealthy, transition to error
+				logger.warn(`Stream on screen ${screen} appears unhealthy, transitioning to error state`, 'StreamManager');
+				this.setScreenState(screen, StreamState.ERROR, undefined, true);
+				return StreamState.ERROR;
+			}
+		}
+		
+		return currentState;
+	}
+	
+	private isStreamHealthy(stream: StreamInstance): boolean {
+		// Check if process is alive AND if it's actually streaming
+		// This is where you'd check for recent data, network connectivity, etc.
+		return this.playerService.getActiveStreams().some(s => s.screen === stream.screen) && this.playerService.isStreamHealthy(stream.screen);	
 	}
 private async withLock<T>(
 		screen: number,

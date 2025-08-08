@@ -63,7 +63,7 @@ export class PlayerService {
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
 	private readonly MAX_BACKOFF_TIME = 10000;
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 90000;
+	private readonly STARTUP_TIMEOUT = 120000; // 2 minutes
 	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
@@ -1935,7 +1935,25 @@ export class PlayerService {
 			DATE: timestamp
 		};
 	}
-
+	public isStreamHealthy(screen: number): boolean {
+		const activeStream = this.streams.get(screen);
+		if (!activeStream || !activeStream.process) {
+			return false;
+		}
+		
+		// Check if process is still alive
+		if (activeStream.process.killed || activeStream.process.exitCode !== null) {
+			return false;
+		}
+		
+		// Check for recent network errors (you'd need to track these)
+		const lastError = this.lastNetworkError.get(screen);
+		if (lastError && Date.now() - lastError < 30000) { // 30 seconds
+			return false;
+		}
+		
+		return true;
+	}
 	public getActiveStreams() {
 		return Array.from(this.streams.entries()).map(([screen, stream]) => ({
 			screen,
