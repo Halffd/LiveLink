@@ -154,8 +154,11 @@ export class StreamManager extends EventEmitter {
 	// Add a set to track screens that are currently being processed
 	private processingScreens: Set<number> = new Set();
 	private readonly DEFAULT_LOCK_TIMEOUT = 2000; // 15 seconds
+	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 30_000; // 30 seconds
+	private static readonly ERROR_HANDLER_TIMEOUT = 30_000; // 30 seconds
+	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
+	private static readonly QUEUE_UPDATE_RETRY_DELAY = 5_000; // 5 seconds for normal operations
 	private readonly RETRY_TIMEOUT = 20000; // 15 seconds
-	private readonly ERROR_HANDLER_TIMEOUT = 60000; // 60 seconds for error handling
 	private readonly OPERATION_TIMEOUT = 5000; // 30 seconds for normal operations
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private networkRetries: Map<number, number> = new Map();
@@ -279,11 +282,12 @@ export class StreamManager extends EventEmitter {
 	 * Updates the queue for a single screen and starts a stream if needed
 	 * @param screen The screen number to update
 	 */
-	private async updateSingleScreen(screen: number): Promise<void> {
+	private async updateSingleScreen(screen: number, attempt = 1): Promise<void> {
 		// Mark this screen as being processed
 		this.processingScreens.add(screen);
 
 		try {
+			// Get the current state once to avoid race conditions
 			const currentState = this.getScreenState(screen);
 
 			// Quick state checks first
@@ -292,39 +296,83 @@ export class StreamManager extends EventEmitter {
 				return;
 			}
 
-			// Skip if screen is disabled or already has an active stream
+			// Skip if screen is disabled
 			if (currentState === StreamState.DISABLED) {
+				logger.debug(`Screen ${screen} is disabled, skipping update`, 'StreamManager');
 				return;
 			}
 
-			const activeStream = this.streams.get(screen);
-			if (activeStream) {
+			// Check for active stream without holding the lock for too long
+			const hasActiveStream = this.streams.has(screen);
+			if (hasActiveStream) {
 				logger.debug(`Screen ${screen} already has an active stream`, 'StreamManager');
 				return;
 			}
 
 			// Reset ERROR state to IDLE to allow retries
 			if (currentState === StreamState.ERROR) {
-				this.setScreenState(screen, StreamState.IDLE);
+				logger.info(`Resetting screen ${screen} from ERROR to IDLE state`, 'StreamManager');
+				this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			}
 
 			// Only proceed if in IDLE state
 			if (this.getScreenState(screen) !== StreamState.IDLE) {
+				logger.debug(
+					`Screen ${screen} is not in IDLE state (current: ${this.getScreenState(screen)}), skipping update`,
+					'StreamManager'
+				);
 				return;
 			}
 
-			// Update the queue for this screen
-			await this.updateQueue(screen);
+			// Update the queue for this screen with a timeout and retry logic
+			try {
+				await Promise.race([
+					this.updateQueue(screen),
+					new Promise((_, reject) => 
+						setTimeout(
+							() => reject(new Error(`Queue update timed out after ${StreamManager.DEFAULT_QUEUE_UPDATE_TIMEOUT}ms`)),
+							StreamManager.DEFAULT_QUEUE_UPDATE_TIMEOUT
+						)
+					)
+				]);
+			} catch (error) {
+				if (attempt <= StreamManager.MAX_QUEUE_UPDATE_RETRIES) {
+					const retryDelay = StreamManager.QUEUE_UPDATE_RETRY_DELAY * attempt;
+					logger.warn(
+						`Queue update for screen ${screen} failed (attempt ${attempt}/${StreamManager.MAX_QUEUE_UPDATE_RETRIES}), ` +
+						`retrying in ${retryDelay}ms: ${error instanceof Error ? error.message : String(error)}`,
+						'StreamManager'
+					);
+					
+					// Wait before retrying
+					await new Promise(resolve => setTimeout(resolve, retryDelay));
+					
+					// Retry with exponential backoff
+					return this.updateSingleScreen(screen, attempt + 1);
+				}
+				
+				// If we've exhausted all retries, log the error and continue
+				logger.error(
+					`Queue update for screen ${screen} failed after ${StreamManager.MAX_QUEUE_UPDATE_RETRIES} attempts: ` +
+					`${error instanceof Error ? error.message : String(error)}`,
+					'StreamManager',
+					error
+				);
+				
+				// Clear the processing flag to allow future updates
+				this.processingScreens.delete(screen);
+				return;
+			}
 
 			// Get the queue and start a stream if available
 			const queue = this.queues.get(screen) || [];
 			if (queue.length > 0) {
-				// Use non-blocking call to start stream
+				// Use non-blocking call to start stream with error handling
 				this.tryStartStreamAsync(screen).catch(error => {
 					logger.error(
-						`Failed to start stream on screen ${screen}`,
+						`Failed to start stream on screen ${screen}: ${error instanceof Error ? error.message : String(error)}`,
 						'StreamManager',
-						error instanceof Error ? error : new Error(String(error))
+						error
 					);
 				});
 			} else {
@@ -341,13 +389,13 @@ export class StreamManager extends EventEmitter {
 			this.processingScreens.delete(screen);
 		}
 	}
-	
+
 	/**
 	 * Attempts to start a stream on the specified screen with a short timeout
 	 * Runs asynchronously and handles retries automatically
-     * @param screen The screen number to start the stream on
-     * @param retryCount Number of retry attempts made so far
-     */
+	 * @param screen The screen number to start the stream on
+	 * @param retryCount Number of retry attempts made so far
+	 */
 	private async tryStartStreamAsync(screen: number, retryCount = 0): Promise<void> {
 		// Skip if screen is not in a valid state to start a stream
 		const currentState = this.getScreenState(screen);
@@ -512,10 +560,22 @@ export class StreamManager extends EventEmitter {
 	 */
 	private handleStuckStarting(screen: number): void {
 		logger.warn(
-			`Screen ${screen} appears to be stuck in STARTING state. Resetting to IDLE.`,
+			`Screen ${screen} appears to be stuck in STARTING state. Attempting to reset to IDLE.`,
 			'StreamManager'
 		);
-		this.setScreenState(screen, StreamState.IDLE);
+		// Use force=true to ensure we can transition from STARTING to IDLE
+		this.setScreenState(screen, StreamState.IDLE, undefined, true);
+		
+		// Log the current state after the attempted transition
+		const newState = this.getScreenState(screen);
+		if (newState === StreamState.IDLE) {
+			logger.info(`Successfully reset screen ${screen} from STARTING to IDLE`, 'StreamManager');
+		} else {
+			logger.warn(
+				`Failed to reset screen ${screen} from STARTING to IDLE. Current state: ${newState}`,
+				'StreamManager'
+			);
+		}
 	}
 
 	/**
@@ -553,7 +613,8 @@ export class StreamManager extends EventEmitter {
 private async withLock<T>(
 		screen: number,
 		operation: string,
-		callback: () => Promise<T>
+		callback: () => Promise<T>,
+		customTimeout?: number
 	): Promise<T> {
 		if (!this.screenMutexes.has(screen)) {
 			this.screenMutexes.set(screen, new SimpleMutex(logger, `Screen${screen}Mutex`));
@@ -570,10 +631,21 @@ private async withLock<T>(
 				'StreamManager'
 			);
 
-			// Use longer timeout for error handling
-			const lockTimeout =
-				operation === 'handleError' ? this.ERROR_HANDLER_TIMEOUT : this.DEFAULT_LOCK_TIMEOUT;
-			release = await mutex.acquire(lockTimeout, opId, operation);
+			// Use custom timeout if provided, otherwise use operation-specific timeouts
+			let lockTimeout = customTimeout;
+			if (lockTimeout === undefined) {
+				if (operation === 'handleError') {
+					lockTimeout = this.ERROR_HANDLER_TIMEOUT;
+				} else if (operation === 'updateSingleScreen') {
+					// Give more time for update operations
+					lockTimeout = 10000; // 10 seconds
+				} else {
+					lockTimeout = this.DEFAULT_LOCK_TIMEOUT;
+				}
+			}
+
+			// Acquire the lock
+			release = await mutex.acquire(lockTimeout, 'StreamManager', operation);
 
 			logger.debug(
 				`Acquired lock for screen ${screen} during ${operation} (${opId})`,
