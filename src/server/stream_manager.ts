@@ -117,7 +117,7 @@ export class StreamManager extends EventEmitter {
 	// Active streams and their states
 	private streams: Map<number, StreamInstance> = new Map();
 	private screenMutexes: Map<number, SimpleMutex> = new Map();
-
+	private checkYouTubeStreamLive = false;
 	// User preferences
 	readonly favoriteChannels: FavoriteChannels;
 	private manuallyClosedScreens: Set<number> = new Set();
@@ -153,13 +153,14 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed
 	private processingScreens: Set<number> = new Set();
-	private readonly DEFAULT_LOCK_TIMEOUT = 2000; // 15 seconds
+	private readonly DEFAULT_LOCK_TIMEOUT = 8000; // 15 seconds
 	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 30_000; // 30 seconds
-	private static readonly ERROR_HANDLER_TIMEOUT = 30_000; // 30 seconds
 	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
 	private static readonly QUEUE_UPDATE_RETRY_DELAY = 5_000; // 5 seconds for normal operations
 	private readonly RETRY_TIMEOUT = 20000; // 15 seconds
-	private readonly OPERATION_TIMEOUT = 5000; // 30 seconds for normal operations
+	private readonly OPERATION_TIMEOUT = 5000; // 30 seconds 
+	// for normal operations
+	private readonly ERROR_HANDLER_TIMEOUT = 30_000; // 30 seconds
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private networkRetries: Map<number, number> = new Map();
 	private lastNetworkError: Map<number, number> = new Map();
@@ -312,7 +313,7 @@ export class StreamManager extends EventEmitter {
 			// Reset ERROR state to IDLE to allow retries
 			if (currentState === StreamState.ERROR) {
 				logger.info(`Resetting screen ${screen} from ERROR to IDLE state`, 'StreamManager');
-				this.setScreenState(screen, StreamState.IDLE, undefined, true);
+				this.setScreenState(screen, StreamState.IDLE);
 			}
 
 			// Only proceed if in IDLE state
@@ -442,7 +443,7 @@ export class StreamManager extends EventEmitter {
 					viewerCount: nextStream.viewerCount,
 					startTime: nextStream.startTime
 				}),
-				3000 // 3 second timeout for stream start
+				8000
 			);
 
 			// Handle the result
@@ -563,8 +564,7 @@ export class StreamManager extends EventEmitter {
 			`Screen ${screen} appears to be stuck in STARTING state. Attempting to reset to IDLE.`,
 			'StreamManager'
 		);
-		// Use force=true to ensure we can transition from STARTING to IDLE
-		this.setScreenState(screen, StreamState.IDLE, undefined, true);
+		this.setScreenState(screen, StreamState.IDLE);
 		
 		// Log the current state after the attempted transition
 		const newState = this.getScreenState(screen);
@@ -597,7 +597,7 @@ export class StreamManager extends EventEmitter {
 			if (!stream || !this.isStreamHealthy(stream)) {
 				// Stream is dead/unhealthy, transition to error
 				logger.warn(`Stream on screen ${screen} appears unhealthy, transitioning to error state`, 'StreamManager');
-				this.setScreenState(screen, StreamState.ERROR, undefined, true);
+				this.setScreenState(screen, StreamState.ERROR);
 				return StreamState.ERROR;
 			}
 		}
@@ -608,7 +608,7 @@ export class StreamManager extends EventEmitter {
 	private isStreamHealthy(stream: StreamInstance): boolean {
 		// Check if process is alive AND if it's actually streaming
 		// This is where you'd check for recent data, network connectivity, etc.
-		return this.playerService.getActiveStreams().some(s => s.screen === stream.screen) && this.playerService.isStreamHealthy(stream.screen);	
+		return this.playerService.isStreamHealthy(stream.screen);	
 	}
 private async withLock<T>(
 		screen: number,
@@ -660,6 +660,9 @@ private async withLock<T>(
 				callback(),
 				new Promise<T>((_, reject) => {
 					setTimeout(() => {
+						if (this.isOperationRunning(screen, operation)) {
+							this.cancelOperation(screen, operation);
+						}
 						reject(new Error(`Operation ${operation} timed out after ${operationTimeout / 1000}s`));
 					}, operationTimeout);
 				})
@@ -687,7 +690,7 @@ private async withLock<T>(
 					});
 
 					// Reset screen state immediately
-					await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+					this.setScreenState(screen, StreamState.IDLE);
 
 					// Clear any tracking data
 					this.streams.delete(screen);
@@ -846,13 +849,13 @@ private async withLock<T>(
 					status: 'playing'
 				});
 
-				await this.setScreenState(screen, StreamState.PLAYING);
+				this.setScreenState(screen, StreamState.PLAYING);
 			} else {
 				logger.error(
 					`Failed to start next stream on screen ${screen}: ${startResult.error}`,
 					'StreamManager'
 				);
-				await this.setScreenState(screen, StreamState.ERROR);
+				this.setScreenState(screen, StreamState.ERROR);
 
 				// Remove the failed stream from queue
 				queue.shift();
@@ -869,7 +872,7 @@ private async withLock<T>(
 				'StreamManager',
 				error instanceof Error ? error : new Error(String(error))
 			);
-			await this.setScreenState(screen, StreamState.ERROR);
+			this.setScreenState(screen, StreamState.ERROR);
 
 			// Remove the failed stream from queue
 			queue.shift();
@@ -894,10 +897,6 @@ private async withLock<T>(
 				);
 				return;
 			}
-
-			// Set state to starting before fetching new streams
-			await this.setScreenState(screen, StreamState.STARTING);
-
 			try {
 				logger.info(
 					`Handling empty queue for screen ${screen}, fetching fresh streams`,
@@ -951,7 +950,7 @@ private async withLock<T>(
 							`All ${availableStreams.length} available streams for screen ${screen} have failed recently`,
 							'StreamManager'
 						);
-						await this.setScreenState(screen, StreamState.IDLE);
+						this.setScreenState(screen, StreamState.IDLE);
 
 						// Schedule another attempt after a delay
 						setTimeout(() => {
@@ -1004,7 +1003,7 @@ private async withLock<T>(
 
 					if (result.success) {
 						logger.info(`Successfully started stream on screen ${screen}`, 'StreamManager');
-						await this.setScreenState(screen, StreamState.PLAYING);
+						this.setScreenState(screen, StreamState.PLAYING);
 					} else {
 						logger.error(
 							`Failed to start stream on screen ${screen}: ${result.error}`,
@@ -1018,7 +1017,7 @@ private async withLock<T>(
 						`No live streams available for screen ${screen}, will retry later`,
 						'StreamManager'
 					);
-					await this.setScreenState(screen, StreamState.IDLE);
+					this.setScreenState(screen, StreamState.IDLE);
 
 					// Schedule another attempt after a delay
 					setTimeout(() => {
@@ -1036,7 +1035,7 @@ private async withLock<T>(
 					error instanceof Error ? error : new Error(String(error))
 				);
 
-				await this.setScreenState(screen, StreamState.ERROR);
+				this.setScreenState(screen, StreamState.ERROR);
 
 				// Schedule another attempt after a delay
 				setTimeout(() => {
@@ -1050,7 +1049,6 @@ private async withLock<T>(
 	// Modify startStream to use state machine and locking
 	async startStream(options: StreamOptions & { url: string }): Promise<StreamResponse> {
 		const screen = options.screen;
-// ... (rest of the code remains the same)
 		logger.info(`Starting stream on screen ${screen}: ${options.url}`, 'StreamManager');
 		// Ensure screen is defined
 		if (screen === undefined) {
@@ -1063,23 +1061,8 @@ private async withLock<T>(
 		}
 
 		return this.withLock(screen, 'startStream', async () => {
-			const currentState = this.getScreenState(screen);
-
-			// Only start if in IDLE or ERROR state
-			if (currentState !== StreamState.IDLE && currentState !== StreamState.ERROR) {
-				logger.warn(
-					`Cannot start stream on screen ${screen} in state ${currentState}`,
-					'StreamManager'
-				);
-				return {
-					screen,
-					success: false,
-					error: `Screen is busy in state ${currentState}`
-				};
-			}
-
 			// Set state to starting
-			await this.setScreenState(screen, StreamState.STARTING);
+			this.setScreenState(screen, StreamState.STARTING);
 
 			return safeAsync<StreamResponse>(
 				async () => {
@@ -1124,10 +1107,10 @@ private async withLock<T>(
 							id: Date.now() // Use timestamp as unique ID
 						});
 
-						await this.setScreenState(screen, StreamState.PLAYING);
+						this.setScreenState(screen, StreamState.PLAYING);
 						return { screen, success: true };
 					} else {
-						await this.setScreenState(screen, StreamState.ERROR);
+						this.setScreenState(screen, StreamState.ERROR);
 						return {
 							screen,
 							success: false,
@@ -1160,7 +1143,7 @@ private async withLock<T>(
 			}
 
 			// Update state to stopping
-			await this.setScreenState(screen, StreamState.STOPPING);
+			this.setScreenState(screen, StreamState.STOPPING);
 
 			try {
 				logger.info(
@@ -1207,10 +1190,10 @@ private async withLock<T>(
 				}
 
 				// Update state based on result
-				await this.setScreenState(screen, StreamState.IDLE);
+				this.setScreenState(screen, StreamState.IDLE);
 				return true;
 			} catch (error) {
-				await this.setScreenState(screen, StreamState.ERROR);
+				this.setScreenState(screen, StreamState.ERROR);
 				logger.error(
 					`Error stopping stream on screen ${screen}`,
 					'StreamManager',
@@ -1313,7 +1296,7 @@ private async withLock<T>(
 						logger.debug(`Filtering out ended stream: ${stream.url}`, 'StreamManager');
 						return undefined;
 					}
-					if(stream.platform === 'youtube') {	
+					if(stream.platform === 'youtube' && this.checkYouTubeStreamLive) {	
 						if(!await isYouTubeStreamLive(stream.url)) {
 							logger.debug(`Filtering out live stream: ${stream.url}`, 'StreamManager');
 							return undefined;
@@ -1691,7 +1674,7 @@ private async withLock<T>(
 						`No streams available for screen ${screen}, setting to IDLE state`,
 						'StreamManager'
 					);
-					await this.setScreenState(screen, StreamState.IDLE);
+					this.setScreenState(screen, StreamState.IDLE);
 				}
 			} catch (error) {
 				logger.error(
@@ -1701,7 +1684,7 @@ private async withLock<T>(
 				);
 				// Ensure we don't get stuck in an error state
 				try {
-					await this.setScreenState(screen, StreamState.IDLE);
+					this.setScreenState(screen, StreamState.IDLE);
 				} catch (e) {
 					logger.error(
 						`Failed to reset screen ${screen} state after error`,
@@ -1749,7 +1732,7 @@ private async withLock<T>(
 				await this.startStream(streamOptions);
 			} else {
 				logger.info(`Queue empty for screen ${screen}, setting to IDLE state`, 'StreamManager');
-				await this.setScreenState(screen, StreamState.IDLE);
+				this.setScreenState(screen, StreamState.IDLE);
 			}
 		} catch (error) {
 			logger.error(
@@ -1757,7 +1740,7 @@ private async withLock<T>(
 				'StreamManager',
 				error instanceof Error ? error : new Error(String(error))
 			);
-			await this.setScreenState(screen, StreamState.ERROR);
+			this.setScreenState(screen, StreamState.ERROR);
 		}
 	}
 
@@ -1801,7 +1784,7 @@ private async withLock<T>(
 				// Don't bail here; maybe player is dead already
 			}
 
-			await this.setScreenState(screen, StreamState.STARTING);
+			this.setScreenState(screen, StreamState.STARTING);
 
 			const result = await timeoutPromise(
 				this.startStream({
@@ -1815,7 +1798,7 @@ private async withLock<T>(
 
 			if (result.success) {
 				logger.info(`Successfully restarted stream on screen ${screen}`, 'StreamManager');
-				await this.setScreenState(screen, StreamState.PLAYING);
+				this.setScreenState(screen, StreamState.PLAYING);
 			} else {
 				logger.error(
 					`Failed to restart stream on screen ${screen}: ${result.error}`,
@@ -2679,7 +2662,7 @@ private async withLock<T>(
 		logger.info(`Attempting to recover screen ${screen} from error state`, 'StreamManager');
 		
 		// Clear error state and try to start fresh
-		await this.setScreenState(Number(screen), StreamState.IDLE);
+		this.setScreenState(Number(screen), StreamState.IDLE);
 		
 		// Then handle as idle screen
 		await this.handleIdleScreenRecovery(screen);
@@ -2940,7 +2923,7 @@ private async withLock<T>(
 						const url = data.url;
 						if (url) {
 							// Try to restart the same stream
-							await this.setScreenState(data.screen, StreamState.STARTING);
+							this.setScreenState(data.screen, StreamState.STARTING);
 
 							const result = await timeoutPromise(
 								this.startStream({
@@ -2957,7 +2940,7 @@ private async withLock<T>(
 									`Successfully restarted crashed stream on screen ${data.screen}`,
 									'StreamManager'
 								);
-								await this.setScreenState(data.screen, StreamState.PLAYING);
+								this.setScreenState(data.screen, StreamState.PLAYING);
 							} else {
 								logger.error(
 									`Failed to restart crashed stream on screen ${data.screen}, will try queue: ${result.error}`,

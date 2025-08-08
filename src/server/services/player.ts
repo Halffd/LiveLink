@@ -1942,9 +1942,11 @@ export class PlayerService {
 		}
 		
 		// Check if process is still alive
+		logger.info(`Checking if process ${activeStream.process.pid} is still alive, killed: ${activeStream.process.killed}, exitCode: ${activeStream.process.exitCode}`, 'PlayerService');
 		if (activeStream.process.killed || activeStream.process.exitCode !== null) {
+			logger.info(`Process ${activeStream.process.pid} is not alive`, 'PlayerService');
 			return false;
-		}
+		}	
 		
 		// Check for recent network errors (you'd need to track these)
 		const lastError = this.lastNetworkError.get(screen);
