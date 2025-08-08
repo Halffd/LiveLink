@@ -1491,7 +1491,7 @@ export class PlayerService {
 						);
 					}
 					resolve();
-				}, 250); // Reduced from 500ms to 250ms for faster transitions
+				}, 100); 
 
 				// If process exits gracefully, clear timeout and resolve
 				player.process.once('exit', () => {
