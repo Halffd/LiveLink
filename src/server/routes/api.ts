@@ -1,3 +1,4 @@
+// src/server/routes/api.ts
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
@@ -9,11 +10,11 @@ import { execSync } from 'child_process';
 const router = new Router();
 
 function logError(message: string, service: string, error: unknown): void {
-  if (error instanceof Error) {
-    logger.error(message, service, error);
-  } else {
-    logger.error(message, service, new Error(String(error)));
-  }
+	if (error instanceof Error) {
+		logger.error(message, service, error);
+	} else {
+		logger.error(message, service, new Error(String(error)));
+	}
 }
 
 // Add type for request body
@@ -1368,13 +1369,13 @@ router.post('/api/streams/add-test-stream', async (ctx: Context) => {
 });
 
 // Add a debug endpoint to get diagnostics information about streams
-router.get('/streams/diagnostics', async (ctx) => {
+router.get('/api/streams/diagnostics', async (ctx) => {
 	try {
-		const diagnostic = streamManager.getDiagnostics();
+		const diagnostics = streamManager.getDiagnostics();
 		logger.info('Stream diagnostics accessed', 'API');
 		ctx.body = {
 			success: true,
-			diagnostics: diagnostic
+			diagnostics: diagnostics
 		};
 	} catch (error) {
 		logger.error('Failed to get stream diagnostics', 'API', error instanceof Error ? error : new Error(String(error)));
@@ -1386,4 +1387,4 @@ router.get('/streams/diagnostics', async (ctx) => {
 	}
 });
 
-export const apiRouter = router; 
+export const apiRouter = router;

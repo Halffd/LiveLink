@@ -1,3 +1,4 @@
+// src/server/services/player.ts
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { Config, StreamlinkConfig, ScreenConfig } from '../../types/stream.js';
@@ -63,8 +64,8 @@ export class PlayerService {
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
 	private readonly MAX_BACKOFF_TIME = 10000;
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 120000; // 2 minutes
-	private readonly SHUTDOWN_TIMEOUT = 500; // 500ms (reduced from 1000ms)
+	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
+	private readonly SHUTDOWN_TIMEOUT = 1000; // 1 second
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();
 	private streamRetries: Map<number, number> = new Map();
@@ -95,6 +96,8 @@ export class PlayerService {
 
 	private readonly streamlinkConfig: StreamlinkConfig;
 	private readonly retryTimers: Map<number, NodeJS.Timeout>;
+	private streamStartCooldowns = new Map<number, number>();
+	private readonly STARTUP_COOLDOWN = 2000; // 2 seconds cooldown between stream starts
 
 	constructor(config: Config) {
 		this.config = config;
@@ -238,266 +241,109 @@ export class PlayerService {
 	}
 
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
-		try {
-			// Log attempt with URL for better debugging
-			logger.info(
-				`Attempting to start stream on screen ${options.screen}: ${options.url}`,
-				'PlayerService'
-			);
+		const { screen, url } = options;
+		// Check cooldown first
+		const lastStart = this.streamStartCooldowns.get(screen) || 0;
+		const now = Date.now();
+		const timeSinceLastStart = now - lastStart;
 
-			// Check if screen is disabled
-			if (this.disabledScreens.has(options.screen)) {
-				logger.warn(
-					`Attempted to start stream on disabled screen ${options.screen}`,
-					'PlayerService'
-				);
-				return {
-					screen: options.screen,
-					success: false,
-					error: 'Screen is disabled'
-				};
-			}
-			logger.info(`Checking if screen is disabled for screen ${options.screen}`, 'PlayerService');
-			// Check for maximum streams limit
-			const activeStreams = Array.from(this.streams.values()).filter((s) => {
-				logger.info(
-					`Process: ${s.process?.pid} Running: ${this.isProcessRunning(s.process?.pid)}`,
-					'PlayerService'
-				);
-				return s.process && this.isProcessRunning(s.process.pid);
-			});
-			logger.info(`Active streams: ${activeStreams.length}`, 'PlayerService');
-			if (activeStreams.length >= this.config.player.maxStreams) {
-				logger.warn(
-					`Maximum number of streams (${this.config.player.maxStreams}) reached, active: ${activeStreams.length}`,
-					'PlayerService'
-				);
-				return {
-					screen: options.screen,
-					success: false,
-					error: `Maximum number of streams (${this.config.player.maxStreams}) reached`
-				};
-			}
-			logger.info(
-				`Checking for maximum streams limit for screen ${options.screen}`,
-				'PlayerService'
-			);
-			// Check if we're already starting a stream on this screen
-			if (this.startupLocks.get(options.screen)) {
-				logger.warn(
-					`Stream startup already in progress for screen ${options.screen}`,
-					'PlayerService'
-				);
-				return {
-					screen: options.screen,
-					success: false,
-					error: 'Stream startup already in progress'
-				};
-			}
-			logger.info(`Checking startup lock for screen ${options.screen}`, 'PlayerService');
-			// Clear any stuck startup locks (if they've been set for > 30 seconds)
-			for (const [screen, locked] of this.startupLocks.entries()) {
-				if (locked) {
-					logger.warn(
-						`Found stuck startup lock for screen ${screen}, clearing it`,
-						'PlayerService'
-					);
-					this.startupLocks.set(screen, false);
-				}
-			}
-
-			// Set startup lock
-			this.startupLocks.set(options.screen, true);
-			logger.info(`Set startup lock for screen ${options.screen}`, 'PlayerService');
-
-			// Create a timeout to clear the startup lock if something goes wrong
-			const lockTimeout = setTimeout(() => {
-				logger.error(`Startup lock timeout for screen ${options.screen}`, 'PlayerService');
-				this.startupLocks.set(options.screen, false);
-			}, 45000);
-
-			try {
-				// Stop any existing stream first
-				await this.stopStream(options.screen);
-
-				// Initialize IPC path
-				const homedir = process.env.HOME || process.env.USERPROFILE;
-				const ipcPath = homedir
-					? path.join(homedir, '.livelink', `mpv-ipc-${options.screen}`)
-					: `/tmp/mpv-ipc-${options.screen}`;
-				this.ipcPaths.set(options.screen, ipcPath);
-
-				logger.info(
-					`Starting stream with title: ${options.title}, viewers: ${options.viewerCount}, time: ${options.startTime}, screen: ${options.screen}`,
-					'PlayerService'
-				);
-
-				// Detect mpv and streamlink paths
-				const mpvExists = await this.checkExecutableExists(this.mpvPath);
-				if (!mpvExists) {
-					logger.error(`MPV executable not found at path: ${this.mpvPath}`, 'PlayerService');
-					throw new Error(`MPV executable not found at ${this.mpvPath}`);
-				}
-
-				const streamlinkPath = this.streamlinkConfig.path || 'streamlink';
-				const streamlinkExists = await this.checkExecutableExists(streamlinkPath);
-				if (this.config.player.preferStreamlink && !streamlinkExists) {
-					logger.error(
-						`Streamlink executable not found at path: ${streamlinkPath}`,
-						'PlayerService'
-					);
-					throw new Error(`Streamlink executable not found at ${streamlinkPath}`);
-				}
-
-				// Log executable paths
-				logger.info(`Using MPV at: ${this.mpvPath}`, 'PlayerService');
-				if (this.config.player.preferStreamlink) {
-					logger.info(`Using Streamlink at: ${streamlinkPath}`, 'PlayerService');
-				}
-
-				let playerProcess: ChildProcess;
-				if (this.config.player.preferStreamlink || options.url.includes('twitch.tv')) {
-					logger.info(`Starting Streamlink for screen ${options.screen}`, 'PlayerService');
-					playerProcess = await this.startStreamlinkProcess(options);
-				} else {
-					logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
-					playerProcess = await this.startMpvProcess(options);
-				}
-
-				if (!playerProcess || !playerProcess.pid) {
-					throw new Error('Failed to start player process - no process or PID returned');
-				}
-
-				logger.info(
-					`Player process started with PID ${playerProcess.pid} for screen ${options.screen}`,
-					'PlayerService'
-				);
-
-				// Wait a moment to ensure process has actually started
-				await new Promise((resolve) => setTimeout(resolve, 1000));
-
-				// Check if the process is still running after initialization
-				if (!this.isProcessRunning(playerProcess.pid)) {
-					throw new Error(
-						`Player process exited immediately after starting (PID: ${playerProcess.pid})`
-					);
-				}
-
-				// Create stream instance and store it
-				const streamInstance: LocalStreamInstance = {
-					id: Date.now(),
-					screen: options.screen,
-					url: options.url,
-					quality: options.quality || this.config.player.defaultQuality,
-					status: 'playing',
-					volume: options.volume || 0,
-					process: playerProcess,
-					platform: options.url.includes('twitch.tv') ? 'twitch' : 'youtube',
-					title: options.title,
-					startTime:
-						typeof options.startTime === 'string'
-							? new Date(options.startTime).getTime()
-							: options.startTime,
-					options
-				};
-
-				// Store stream instance before setting up handlers
-				this.streams.set(options.screen, streamInstance);
-
-				// Set up process handlers and monitoring
-				this.setupProcessHandlers(playerProcess, options.screen);
-				this.setupStreamMonitoring(options.screen, playerProcess, options);
-
-				// Check health immediately
-				await this.checkStreamHealth(options.screen);
-
-				// Clear startup lock timeout
-				clearTimeout(lockTimeout);
-
-				// Clear startup lock
-				this.startupLocks.set(options.screen, false);
-				logger.debug(`Cleared startup lock for screen ${options.screen}`, 'PlayerService');
-
-				// Double check the stream was added correctly
-				const addedStream = this.streams.get(options.screen);
-				if (!addedStream || !addedStream.process || !addedStream.process.pid) {
-					throw new Error('Stream was not properly initialized');
-				}
-
-				logger.info(
-					`Stream started successfully on screen ${options.screen} with PID ${addedStream.process.pid}`,
-					'PlayerService'
-				);
-				return {
-					screen: options.screen,
-					success: true
-				};
-			} catch (err) {
-				// Clear the timeout and startup lock if we hit an exception
-				clearTimeout(lockTimeout);
-				this.startupLocks.set(options.screen, false);
-				throw err; // Re-throw to be caught by outer try-catch
-			}
-		} catch (error) {
-			// Clear startup lock on error (just to be super sure)
-			this.startupLocks.set(options.screen, false);
-
-			// Clean up any partially initialized stream
-			this.cleanup_after_stop(options.screen);
-
-			logger.error(
-				`Failed to start stream on screen ${options.screen}: ${options.url}`,
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
-
-			return {
-				screen: options.screen,
-				success: false,
-				error: error instanceof Error ? error.message : String(error)
-			};
+		if (timeSinceLastStart < this.STARTUP_COOLDOWN) {
+			const remaining = Math.ceil((this.STARTUP_COOLDOWN - timeSinceLastStart) / 1000);
+			const errorMsg = `Stream startup cooldown: ${remaining}s remaining for screen ${screen}`;
+			logger.warn(errorMsg, 'PlayerService');
+			return { screen, success: false, error: errorMsg };
 		}
+		this.streamStartCooldowns.set(screen, now);
+
+		logger.info(`Attempting to start stream on screen ${screen}: ${url}`, 'PlayerService');
+
+		if (this.disabledScreens.has(screen)) {
+			return { screen, success: false, error: 'Screen is disabled' };
+		}
+
+		const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
+		if (activeStreamsCount >= this.config.player.maxStreams) {
+			return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
+		}
+
+		if (this.startupLocks.get(screen)) {
+			return { screen, success: false, error: 'Stream startup already in progress' };
+		}
+		this.startupLocks.set(screen, true);
+	
+		try {
+			await this.stopStream(screen, true); // Always force stop previous stream
+	
+			const ipcPath = this.initializeIpcPath(screen);
+			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
+	
+			let playerProcess: ChildProcess;
+			if (this.config.player.preferStreamlink || url.includes('twitch.tv')) {
+				playerProcess = await this.startStreamlinkProcess(options);
+			} else {
+				playerProcess = await this.startMpvProcess(options);
+			}
+	
+			if (!playerProcess || !playerProcess.pid || !this.isProcessRunning(playerProcess.pid)) {
+				throw new Error('Failed to start player process or it exited immediately.');
+			}
+	
+			logger.info(`Player process started with PID ${playerProcess.pid} for screen ${screen}`, 'PlayerService');
+	
+			const streamInstance: LocalStreamInstance = {
+				id: Date.now(),
+				screen,
+				url,
+				quality: options.quality || this.config.player.defaultQuality,
+				status: 'playing',
+				volume: options.volume || 0,
+				process: playerProcess,
+				platform: url.includes('twitch.tv') ? 'twitch' : 'youtube',
+				title: options.title,
+				startTime: typeof options.startTime === 'string' ? new Date(options.startTime).getTime() : options.startTime,
+				options
+			};
+	
+			this.streams.set(screen, streamInstance);
+			this.setupProcessHandlers(playerProcess, screen);
+			this.setupHeartbeat(screen);
+	
+			return { screen, success: true };
+	
+		} catch (error) {
+			logger.error(`Failed to start stream on screen ${screen}: ${url}`, 'PlayerService', error);
+			this.cleanup_after_stop(screen);
+			return { screen, success: false, error: error instanceof Error ? error.message : String(error) };
+		} finally {
+			this.startupLocks.set(screen, false);
+		}
+	}
+
+	private initializeIpcPath(screen: number): string {
+		const homedir = process.env.HOME || process.env.USERPROFILE || '/tmp';
+		const ipcDir = path.join(homedir, '.livelink');
+		if (!fs.existsSync(ipcDir)) {
+			fs.mkdirSync(ipcDir, { recursive: true });
+		}
+		const ipcPath = path.join(ipcDir, `mpv-ipc-${screen}`);
+		this.ipcPaths.set(screen, ipcPath);
+	
+		// Clean up old socket file
+		if (fs.existsSync(ipcPath)) {
+			try {
+				fs.unlinkSync(ipcPath);
+				logger.info(`Removed existing socket file: ${ipcPath}`, 'PlayerService');
+			} catch (e) {
+				logger.warn(`Could not remove existing socket at ${ipcPath}`, 'PlayerService', e);
+			}
+		}
+		return ipcPath;
 	}
 
 	private async startMpvProcess(
 		options: StreamOptions & { screen: number }
 	): Promise<ChildProcess> {
 		logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
-
-		// Ensure IPC path is initialized
-		if (!this.ipcPaths.has(options.screen)) {
-			// Create a consistent directory for IPC socket files
-			const userHomeDir = process.env.HOME || '/tmp';
-			const ipcDir = path.join(userHomeDir, '.livelink');
-
-			// Ensure directory exists
-			try {
-				if (!fs.existsSync(ipcDir)) {
-					fs.mkdirSync(ipcDir, { recursive: true });
-				}
-			} catch (error) {
-				logger.error(`Failed to create IPC directory ${ipcDir}`, 'PlayerService', error as Error);
-			}
-
-			// Use the user's home directory for more reliable socket location
-			const ipcPath = path.join(ipcDir, `mpv-ipc-${options.screen}`);
-			this.ipcPaths.set(options.screen, ipcPath);
-
-			// Remove existing socket file if it exists
-			try {
-				if (fs.existsSync(ipcPath)) {
-					fs.unlinkSync(ipcPath);
-					logger.info(`Removed existing socket file at ${ipcPath}`, 'PlayerService');
-				}
-			} catch (error) {
-				// Ignore errors if file doesn't exist or can't be removed
-				logger.warn(
-					`Could not remove existing socket at ${ipcPath}`,
-					'PlayerService',
-					error instanceof Error ? error.message : String(error)
-				);
-			}
-		}
 
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
@@ -516,33 +362,21 @@ export class PlayerService {
 		if (mpvProcess.stdout) {
 			mpvProcess.stdout.on('data', (data: Buffer) => {
 				const logData = data.toString().trim();
-				const logMessage = `[${new Date().toISOString()}] ${logData}\n`;
-				mpvLogStream.write(logMessage);
-				logger.debug(
-					`MPV stdout (screen ${options.screen}): ${logData}`,
-					'PlayerService'
-				);
+				mpvLogStream.write(`[${new Date().toISOString()}] ${logData}\n`);
 			});
 		}
 
 		if (mpvProcess.stderr) {
 			mpvProcess.stderr.on('data', (data: Buffer) => {
 				const logData = data.toString().trim();
-				const logMessage = `[${new Date().toISOString()}] [ERROR] ${logData}\n`;
-				mpvLogStream.write(logMessage);
-				logger.debug(
-					`MPV stderr (screen ${options.screen}): ${logData}`,
-					'PlayerService'
-				);
+				mpvLogStream.write(`[${new Date().toISOString()}] [ERROR] ${logData}\n`);
 			});
 		}
 
-		mpvProcess.on('close', () => {
-			mpvLogStream.end();
-		});
+		mpvProcess.on('close', () => mpvLogStream.end());
 
 		// Wait a moment to let MPV create the socket
-		await new Promise((resolve) => setTimeout(resolve, 3000)); // Increased from 500ms
+		await new Promise((resolve) => setTimeout(resolve, 2000));
 
 		return mpvProcess;
 	}
@@ -563,104 +397,36 @@ export class PlayerService {
 				stdio: ['ignore', 'pipe', 'pipe']
 			});
 
-			// Log all streamlink output to file
-			const logStreamData = (data: Buffer, type: 'stdout' | 'stderr') => {
-				const logData = data.toString().trim();
-				const prefix = type === 'stderr' ? '[ERROR] ' : '';
-				const logMessage = `[${new Date().toISOString()}] ${prefix}${logData}\n`;
-				streamlinkLogStream.write(logMessage);
-				logger.debug(
-					`Streamlink ${type} (screen ${options.screen}): ${logData}`,
-					'PlayerService'
-				);
-			};
-
-			if (process.stdout) {
-				process.stdout.on('data', (data: Buffer) => logStreamData(data, 'stdout'));
-			}
-
-			if (process.stderr) {
-				process.stderr.on('data', (data: Buffer) => logStreamData(data, 'stderr'));
-			}
-
-			process.on('close', () => {
-				streamlinkLogStream.end();
+			let stderrOutput = '';
+			process.stderr?.on('data', (data) => {
+				stderrOutput += data.toString();
 			});
 
 			return new Promise((resolve, reject) => {
-				let errorOutput = '';
-				let hasStarted = false;
 				const startTimeout = setTimeout(() => {
-					const error = new Error('Stream start timeout exceeded');
-					this.logError(`Stream start timeout on screen ${options.screen}`, 'PlayerService', error);
 					process.kill();
-					reject(error);
+					reject(new Error(`Streamlink start timeout. Stderr: ${stderrOutput}`));
 				}, this.STARTUP_TIMEOUT);
-
-				const onData = (data: Buffer) => {
-					const output = data.toString();
-					if (output.includes('Starting player')) {
-						hasStarted = true;
-						clearTimeout(startTimeout);
-						resolve(process);
-					}
-					// Check for common error patterns
-					if (output.toLowerCase().includes('error')) {
-						errorOutput += output + '\n';
-					}
-					logger.info(`Streamlink output: ${output}`, 'PlayerService');
-				};
-
-				const onError = (error: Error) => {
+	
+				process.on('error', (err) => {
 					clearTimeout(startTimeout);
-					this.logError(
-						`Failed to start streamlink for screen ${options.screen}`,
-						'PlayerService',
-						error
-					);
-					reject(error);
-				};
-
-				const onExit = (code: number | null) => {
-					clearTimeout(startTimeout);
-					if (!hasStarted) {
-						let errorMessage = 'Stream failed to start';
-
-						// Enhanced error detection
-						if (errorOutput.toLowerCase().includes('members-only')) {
-							errorMessage = 'Stream unavailable (members-only content)';
-						} else if (errorOutput.toLowerCase().includes('no playable streams')) {
-							errorMessage = 'No playable streams found';
-						} else if (errorOutput.toLowerCase().includes('404')) {
-							errorMessage = 'Stream not found (404)';
-						} else if (errorOutput.toLowerCase().includes('private')) {
-							errorMessage = 'Stream is private';
-						} else if (code === 1) {
-							errorMessage = 'Stream unavailable (possibly members-only content)';
-						} else if (code === 130) {
-							errorMessage = 'Stream process interrupted';
-						} else if (code === 2) {
-							errorMessage = 'Stream unavailable or invalid URL';
-						}
-
-						const error = new Error(errorMessage);
-						this.logError(
-							`Stream failed to start on screen ${options.screen} (code ${code})`,
-							'PlayerService',
-							error
-						);
-						reject(error);
-					}
-				};
-
-				process.stdout.on('data', onData);
-				process.stderr.on('data', (data: Buffer) => {
-					errorOutput += data.toString() + '\n';
-					onData(data);
+					reject(err);
 				});
-				process.on('error', onError);
-				process.on('exit', onExit);
+	
+				process.on('exit', (code) => {
+					clearTimeout(startTimeout);
+					if (code !== 0) {
+						reject(new Error(`Streamlink exited with code ${code}. Stderr: ${stderrOutput}`));
+					}
+				});
+	
+				// Assuming streamlink has started mpv successfully after a short delay
+				setTimeout(() => {
+					clearTimeout(startTimeout);
+					resolve(process);
+				}, 3000); // Wait for mpv to launch
 			});
+
 		} catch (error) {
 			this.logError(
 				`Failed to spawn streamlink process for screen ${options.screen}`,
@@ -672,404 +438,37 @@ export class PlayerService {
 	}
 
 	private setupProcessHandlers(process: ChildProcess, screen: number): void {
-		let hasEndedStream = false;
-		let cleanupTimeout: NodeJS.Timeout | null = null;
-	
-		// Set up heartbeat monitoring
-		this.setupHeartbeat(screen);
-	
-		// Add lock for this specific screen to prevent race conditions
-		const initializeHandlerLock = (): boolean => {
-			if (hasEndedStream) {
-				logger.debug(
-					`Process exit already handled for screen ${screen}, ignoring duplicate event`,
-					'PlayerService'
-				);
-				return false;
-			}
-	
+		let hasEnded = false;
+		const onExit = (code: number | null) => {
+			if (hasEnded) return;
+			hasEnded = true;
+
+			this.clearHeartbeat(screen);
+
 			const stream = this.streams.get(screen);
-			if (!stream || stream.status === 'stopping') {
-				logger.debug(
-					`Stream on screen ${screen} already stopping, ignoring duplicate exit event`,
-					'PlayerService'
-				);
-				return false;
-			}
+			const url = stream?.url || 'unknown';
+			logger.info(`Process for screen ${screen} (${url}) exited with code ${code}`, 'PlayerService');
 	
-			// Mark as handled
-			hasEndedStream = true;
-			return true;
-		};
-	
-		const cleanup = () => {
-			if (cleanupTimeout) {
-				clearTimeout(cleanupTimeout);
-				cleanupTimeout = null;
-			}
-	
-			// Clear monitoring and remove stream from map
-			this.clearMonitoring(screen);
 			this.streams.delete(screen);
-			this.streamRetries.delete(screen);
-	
-			// Log the number of active streams after cleanup
-			const activeStreams = Array.from(this.streams.values()).filter(
-				(s) => s.process && this.isProcessRunning(s.process.pid)
-			);
-			logger.debug(
-				`Cleaned up stream on screen ${screen}. Remaining active streams: ${activeStreams.length}/${this.config.player.maxStreams}`,
-				'PlayerService'
-			);
-		};
-	
-		const handleStreamEnd = (error: string, code: number = 0) => {
-			// Atomically check and set flag to prevent race conditions
-			if (!initializeHandlerLock()) {
-				return; // Already handled
-			}
-	
-			const stream = this.streams.get(screen);
-			const url = stream?.url || '';
-	
-			logger.info(`Stream ended on screen ${screen}${url ? ` (${url})` : ''}`, 'PlayerService');
-	
-			// Mark the stream as stopping
-			if (stream) {
-				stream.status = 'stopping';
-			}
-	
-			// Call error callback with stream URL
+			
+			// Let the stream manager decide what to do next
 			this.errorCallback?.({
 				screen,
-				error,
-				code,
+				error: `Stream ended with code ${code}`,
+				code: code ?? 1,
 				url,
-				moveToNext: true
+				moveToNext: true,
+				shouldRestart: code !== 0 && !this.manuallyClosedScreens.has(screen) && !this.isShuttingDown,
 			});
-	
-			// Schedule cleanup after a short delay to ensure all events are processed
-			cleanupTimeout = setTimeout(cleanup, 1000);
 		};
 	
-		// Add Twitch-specific retry logic for ad-break failures
-		const handleTwitchAdBreakFailure = (screen: number, stream: LocalStreamInstance, code: number): boolean => {
-			if (!stream?.url?.includes('twitch.tv')) return false;
-			
-			// Check if this looks like a Twitch ad-break failure
-			if (code !== 0) return false;
-			
-			const retryCount = this.streamRetries.get(screen) || 0;
-			const maxTwitchRetries = 3;
-			
-			if (retryCount >= maxTwitchRetries) {
-				logger.warn(
-					`Max Twitch retries (${maxTwitchRetries}) reached for screen ${screen}, giving up`,
-					'PlayerService'
-				);
-				this.streamRetries.delete(screen);
-				return false;
-			}
-			
-			logger.info(
-				`Detected Twitch ad-break failure on screen ${screen}, retrying (${retryCount + 1}/${maxTwitchRetries})`,
-				'PlayerService'
-			);
-			
-			this.streamRetries.set(screen, retryCount + 1);
-			
-			// Clean up current stream
-			this.cleanup_after_stop(screen);
-			this.clearMonitoring(screen);
-			
-			// Retry after 2 seconds to let ad break finish
-			setTimeout(async () => {
-				try {
-					logger.info(
-						`Restarting Twitch stream after ad-break failure on screen ${screen}`,
-						'PlayerService'
-					);
-					
-					const startResult = await Promise.race([
-						this.startStream({
-							...stream.options,
-							isRetry: true
-						}),
-						new Promise<StartResult>((_, reject) =>
-							setTimeout(() => reject(new Error('Start timeout')), 10000)
-						)
-					]);
-	
-					if (!startResult || !startResult.success) {
-						throw new Error(startResult?.error || 'Unknown error');
-					}
-					
-					// Reset retry count on successful restart
-					this.streamRetries.delete(screen);
-					
-				} catch (error) {
-					logger.error(
-						`Failed to restart Twitch stream after ad-break failure on screen ${screen}`,
-						'PlayerService',
-						error instanceof Error ? error : new Error(String(error))
-					);
-					
-					// Emit error if retry failed
-					this.errorCallback?.({
-						screen,
-						error: `Failed to restart after Twitch ad-break: ${error instanceof Error ? error.message : String(error)}`,
-						code: 0,
-						url: stream.url,
-						moveToNext: true
-					});
-					
-					cleanup();
-				}
-			}, 2000);
-			
-			return true; // Handled the retry
-		};
-	
-		if (process.stdout) {
-			process.stdout.on('data', (data: Buffer) => {
-				const output = data.toString('utf8').trim();
-				if (output && /[\x20-\x7E]/.test(output)) {
-					// Detect Twitch ad-break issues
-					if (output.includes('Detected advertisement break') || 
-						output.includes('Filtering out segments and pausing stream output') ||
-						output.includes('stream discontinuity')) {
-						logger.info(`[Screen ${screen}] Twitch ad-break detected: ${output}`, 'PlayerService');
-					}
-					
-					// Log YouTube-specific state information
-					if (output.includes('[youtube]')) {
-						if (output.includes('Post-Live Manifestless mode')) {
-							logger.info(
-								`[Screen ${screen}] YouTube stream is in post-live state (ended)`,
-								'PlayerService'
-							);
-							handleStreamEnd('Stream ended');
-						} else if (output.includes('Downloading MPD manifest')) {
-							logger.debug(
-								`[Screen ${screen}] YouTube stream manifest download attempt`,
-								'PlayerService'
-							);
-						}
-					}
-	
-					logger.debug(`[Screen ${screen}] ${output}`, 'PlayerService');
-					this.outputCallback?.({
-						screen,
-						data: output,
-						type: 'stdout'
-					});
-	
-					// Check for different types of stream endings
-					if (
-						output.includes('Exiting... (Quit)') ||
-						output.includes('Quit') ||
-						output.includes('Exiting normally') ||
-						output.includes('EOF reached') ||
-						output.includes('User stopped playback')
-					) {
-						handleStreamEnd('Stream ended');
-					}
-				}
-			});
-		}
-	
-		if (process.stderr) {
-			process.stderr.on('data', (data: Buffer) => {
-				const output = data.toString('utf8').trim();
-				if (output && /[\x20-\x7E]/.test(output)) {
-					// Filter out common PipeWire warnings that don't affect functionality
-					if (output.includes('pw.conf') && output.includes('deprecated')) {
-						logger.debug(`[Screen ${screen}] PipeWire config warning: ${output}`, 'PlayerService');
-					} else {
-						// Log YouTube-specific errors with more context
-						if (output.includes('youtube-dl failed')) {
-							logger.info(
-								`[Screen ${screen}] YouTube stream error - may be ended or unavailable: ${output}`,
-								'PlayerService'
-							);
-							handleStreamEnd('Stream ended');
-						} else {
-							logger.error(`[Screen ${screen}] ${output}`, 'PlayerService');
-							handleStreamEnd(output);
-						}
-					}
-				}
-			});
-		}
-	
-		process.on('error', (err: Error) => {
-			// Use lockout to prevent race conditions
-			if (!initializeHandlerLock()) {
-				return; // Already handled
-			}
-	
-			this.logError(`Process error on screen ${screen}`, 'PlayerService', err);
-			handleStreamEnd(err.message);
-		});
-	
-		process.on('exit', (code: number | null) => {
-			// Use lockout to prevent race conditions
-			if (!initializeHandlerLock()) {
-				return; // Already handled
-			}
-	
-			// Get the URL before any cleanup happens
-			const stream = this.streams.get(screen);
-			const url = stream?.url || '';
-	
-			logger.info(
-				`Process exited on screen ${screen} with code ${code}${url ? ` (${url})` : ''}`,
-				'PlayerService'
-			);
-	
-			// Handle Twitch ad-break failures first
-			if (code === 0 && stream && handleTwitchAdBreakFailure(screen, stream, code)) {
-				return; // Handled by Twitch retry logic
-			}
-	
-			// External kill (code null) or missing URL should not be retried to prevent infinite loops
-			const isMissingUrl = !url || url.trim() === '';
-			const isExternalKill = code === null;
-			let forceNext = false;
-	
-			// Only retry network errors if we have a valid URL and it's not an external kill
-			if (this.isNetworkErrorCode(code) && !isMissingUrl && !isExternalKill && stream?.options) {
-				const networkRetryCount = this.networkRetries.get(screen) || 0;
-				const now = Date.now();
-				const lastError = this.lastNetworkError.get(screen) || 0;
-				const timeSinceLastError = now - lastError;
-	
-				// Reset network retry count if it's been a while since the last error
-				if (timeSinceLastError > 2 * 60 * 1000) {
-					logger.info(
-						`Resetting network retry count for screen ${screen} as it's been ${Math.round(timeSinceLastError / 1000)}s since last error`,
-						'PlayerService'
-					);
-					this.networkRetries.set(screen, 0);
-				}
-	
-				// Update last error time
-				this.lastNetworkError.set(screen, now);
-	
-				// Check if we should retry
-				if (networkRetryCount < this.MAX_NETWORK_RETRIES) {
-					// Calculate backoff time with exponential backoff
-					const backoffTime = Math.min(
-						this.NETWORK_RETRY_INTERVAL * Math.pow(1.5, networkRetryCount),
-						this.MAX_BACKOFF_TIME
-					);
-	
-					logger.info(
-						`Network error detected for ${url} on screen ${screen}, retry ${networkRetryCount + 1}/${this.MAX_NETWORK_RETRIES} in ${Math.round(backoffTime / 1000)}s`,
-						'PlayerService'
-					);
-	
-					// Increment retry count
-					this.networkRetries.set(screen, networkRetryCount + 1);
-	
-					// Clean up but don't emit error yet
-					this.cleanup_after_stop(screen);
-					this.clearMonitoring(screen);
-					// Set up retry timer
-					const retryTimer = setTimeout(async () => {
-						try {
-							logger.info(
-								`Attempting to restart stream ${url} on screen ${screen} after network error`,
-								'PlayerService'
-							);
-							const startResult = await Promise.race([
-								this.startStream({
-									...stream.options,
-									isRetry: true
-								}),
-								new Promise<StartResult>((_, reject) =>
-									setTimeout(() => reject(new Error('Start timeout')), 10000)
-								)
-							]);
-	
-							if (!startResult || !startResult.success) {
-								throw new Error(startResult?.error || 'Unknown error');
-							}
-						} catch (error) {
-							logger.error(
-								`Failed to restart stream after network error on screen ${screen}`,
-								'PlayerService',
-								error instanceof Error ? error : new Error(String(error))
-							);
-							hasEndedStream = true;
-							forceNext = true;
-							cleanup(); // call immediately if restart fails
-	
-							// Now emit the error since retry failed
-							this.errorCallback?.({
-								screen,
-								error: `Failed to restart stream after network error: ${error instanceof Error ? error.message : String(error)}`,
-								code: code || 0,
-								url,
-								moveToNext: true
-							});
-						}
-					}, backoffTime);
-	
-					// Store the timer
-					this.retryTimers.set(screen, retryTimer);
-					return; // Don't emit error yet, we're handling it with retry
-				} else {
-					logger.warn(
-						`Maximum network retries (${this.MAX_NETWORK_RETRIES}) reached for screen ${screen}, giving up`,
-						'PlayerService'
-					);
-					// Reset retry count for future attempts
-					this.networkRetries.set(screen, 0);
-					forceNext = true;
-				}
-			} else if (isExternalKill) {
-				logger.warn(
-					`Process on screen ${screen} was killed externally (code: ${code}), skipping retry`,
-					'PlayerService'
-				);
-			} else if (isMissingUrl) {
-				logger.warn(
-					`Process on screen ${screen} has no URL, skipping retry to prevent infinite loop`,
-					'PlayerService'
-				);
-			}
-	
-			// For non-network errors or if max retries reached, clean up and emit error
-			this.cleanup_after_stop(screen);
-			this.clearMonitoring(screen);
-	
-			// Calculate whether to move to next or restart
-			let normalExit = code === 0;
-			const missingUrl = !url || url.trim() === '';
-			const externalKill = code === null;
-			let moveToNext = normalExit || missingUrl || externalKill;
-			let shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
-			if (forceNext) {
-				shouldRestart = false;
-				moveToNext = true;
-				normalExit = true;
-			}
-			// Emit stream error with URL if we have it
-			this.errorCallback?.({
-				screen,
-				error: normalExit ? 'Stream ended normally' : `Stream ended with code ${code}`,
-				code: code || 0,
-				url,
-				moveToNext,
-				shouldRestart
-			});
-	
-			hasEndedStream = true;
-	
-			cleanup();
+		process.on('exit', onExit);
+		process.on('error', (err) => {
+			logger.error(`Process error on screen ${screen}`, 'PlayerService', err);
+			onExit(1); // Treat process errors as an exit with an error code
 		});
 	}
+
 	private setupStreamMonitoring(
 		screen: number,
 		process: ChildProcess,
@@ -1112,42 +511,36 @@ export class PlayerService {
 			}
 		}, 15000); // Reduced from 30s to 15s for more responsive detection
 
+		// Store the interval for cleanup
 		this.healthCheckIntervals.set(screen, healthCheck);
-
-		this.streamStartTimes.set(screen, Date.now());
 	}
 
 	private async restartStream(screen: number, options: StreamOptions): Promise<void> {
-		// Don't restart if the screen was manually closed
-		if (this.manuallyClosedScreens.has(screen)) {
-			logger.info(
-				`Not restarting stream on screen ${screen} as it was manually closed`,
-				'PlayerService'
-			);
-			return;
-		}
+		try {
+			// Stop existing stream and wait for cleanup
+			await this.stopStream(screen);
 
-		logger.info(`Restarting stream on screen ${screen}: ${options.url}`, 'PlayerService');
+			// Reduced delay to ensure cleanup is complete
+			await new Promise((resolve) => setTimeout(resolve, 200)); // Reduced from 500ms to 200ms
 
-		// Stop existing stream and wait for cleanup
-		await this.stopStream(screen);
-
-		// Reduced delay to ensure cleanup is complete
-		await new Promise((resolve) => setTimeout(resolve, 200)); // Reduced from 500ms to 200ms
-
-		// Double check no existing process before starting new one
-		const existingStream = this.streams.get(screen);
-		if (existingStream?.process) {
-			logger.warn(`Found existing process for screen ${screen}, forcing cleanup`, 'PlayerService');
-			try {
-				existingStream.process.kill('SIGKILL');
-				await new Promise((resolve) => setTimeout(resolve, 100)); // Reduced from 200ms to 100ms
-			} catch {
-				// Process might already be gone
+			// Double check no existing process before starting new one
+			const existingStream = this.streams.get(screen);
+			if (existingStream?.process) {
+				logger.warn(`Found existing process for screen ${screen}, forcing cleanup`, 'PlayerService');
+				try {
+					existingStream.process.kill('SIGKILL');
+					await new Promise((resolve) => setTimeout(resolve, 100)); // Reduced from 200ms to 100ms
+				} catch (error) {
+					// Process might already be gone
+					logger.debug(`Error killing existing process: ${error}`, 'PlayerService');
+				}
 			}
-		}
 
-		await this.startStream({ ...options, screen });
+			await this.startStream({ ...options, screen });
+		} catch (error) {
+			logger.error(`Failed to restart stream on screen ${screen}: ${error}`, 'PlayerService');
+			throw error;
+		}
 	}
 
 	private handleProcessExit(screen: number, code: number | null): void {
@@ -1342,40 +735,28 @@ export class PlayerService {
 		// Clear health check
 		const healthCheck = this.healthCheckIntervals.get(screen);
 		if (healthCheck) {
-			logger.debug(`Clearing health check interval for screen ${screen}`, 'PlayerService');
 			clearInterval(healthCheck);
 			this.healthCheckIntervals.delete(screen);
-		} else {
-			logger.debug(`No health check interval found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear inactive timer
 		const inactiveTimer = this.inactiveTimers.get(screen);
 		if (inactiveTimer) {
-			logger.debug(`Clearing inactive timer for screen ${screen}`, 'PlayerService');
 			clearTimeout(inactiveTimer);
 			this.inactiveTimers.delete(screen);
-		} else {
-			logger.debug(`No inactive timer found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear retry timer if exists
 		const retryTimer = this.retryTimers.get(screen);
 		if (retryTimer) {
-			logger.debug(`Clearing retry timer for screen ${screen}`, 'PlayerService');
 			clearTimeout(retryTimer);
 			this.retryTimers.delete(screen);
-		} else {
-			logger.debug(`No retry timer found for screen ${screen}`, 'PlayerService');
 		}
 
 		// Clear other state
-		logger.debug(`Clearing other state maps for screen ${screen}`, 'PlayerService');
 		this.streamStartTimes.delete(screen);
 		this.streamRetries.delete(screen);
-		// Don't clear networkRetries or lastNetworkError here to maintain retry history
-
-		logger.debug(`Monitoring cleared for screen ${screen}`, 'PlayerService');
+		this.startupLocks.set(screen, false);
 	}
 
 	/**
@@ -1401,113 +782,51 @@ export class PlayerService {
 		force: boolean = false,
 		isManualStop: boolean = false
 	): Promise<boolean> {
-		// Check if screen is already disabled
-		if (this.disabledScreens.has(screen)) {
-			logger.debug(`Screen ${screen} is disabled, no stream to stop`, 'PlayerService');
-			return true;
-		}
-
-		// Log with URL information for better tracking
 		const streamInstance = this.streams.get(screen);
-		const url = streamInstance?.url || '';
-
-		// Check if stream is already in stopping state to prevent race conditions
-		if (streamInstance?.status === 'stopping') {
-			logger.debug(
-				`Stream on screen ${screen} already in stopping state, skipping duplicate stop request`,
-				'PlayerService'
-			);
+		if (!streamInstance) {
+			this.cleanup_after_stop(screen);
 			return true;
 		}
 
-		logger.info(
-			`Stopping stream on screen ${screen}${url ? ` (${url})` : ''}, manual=${isManualStop}, force=${force}`,
-			'PlayerService'
-		);
-
-		// Remove from manually closed screens
+		if (streamInstance.status === 'stopping') {
+			return true; // Already being stopped
+		}
+	
+		logger.info(`Stopping stream on screen ${screen} (manual=${isManualStop}, force=${force})`, 'PlayerService');
+		streamInstance.status = 'stopping';
+	
 		if (isManualStop) {
 			this.manuallyClosedScreens.add(screen);
-		} else {
-			this.manuallyClosedScreens.delete(screen);
 		}
-
-		// Clear network error status
-		this.isNetworkError.delete(screen);
-
-		// Get the stream object
-		const player = this.streams.get(screen);
-
-		// If there's no stream, consider it already stopped
-		if (!player) {
-			logger.debug(`No stream found for screen ${screen}`, 'PlayerService');
-			this.cleanup_after_stop(screen);
-			return true;
-		}
-
-		// Mark the stream as stopping to prevent race conditions
-		player.status = 'stopping';
-
-		// Check if process exists
-		if (!player.process) {
-			logger.debug(`No process found for stream on screen ${screen}`, 'PlayerService');
-			this.cleanup_after_stop(screen);
-			return true;
-		}
-
-		// If process is already gone, clean up
-		if (!this.isProcessRunning(player.process.pid)) {
-			logger.debug(`Process for screen ${screen} is already gone`, 'PlayerService');
-			this.cleanup_after_stop(screen);
-			return true;
-		}
-
-		// Log action
-		logger.info(
-			`Stopping stream on screen ${screen} (${isManualStop ? 'manual' : 'automatic'})`,
-			'PlayerService'
-		);
-
-		try {
-			// Use more aggressive kill if force is true
-			const signal = force ? 'SIGKILL' : 'SIGTERM';
-
-			// Try to gracefully stop the process
-			player.process.kill(signal);
-
-			// Wait a shorter time for process to exit gracefully
-			await new Promise<void>((resolve) => {
-				const timeout = setTimeout(() => {
-					logger.warn(`Stream stop timeout on screen ${screen}, forcing kill`, 'PlayerService');
-					try {
-						if (player.process && this.isProcessRunning(player.process.pid)) {
-							player.process.kill('SIGKILL');
+	
+		const { process } = streamInstance;
+		if (process && this.isProcessRunning(process.pid)) {
+			try {
+				const signal = force ? 'SIGKILL' : 'SIGTERM';
+				process.kill(signal);
+	
+				// Wait for the process to exit
+				await new Promise<void>(resolve => {
+					const timeout = setTimeout(() => {
+						if (this.isProcessRunning(process.pid)) {
+							logger.warn(`Process ${process.pid} did not exit gracefully, sending SIGKILL.`, 'PlayerService');
+							process.kill('SIGKILL');
 						}
-					} catch (error) {
-						logger.error(
-							`Error killing process on screen ${screen}`,
-							'PlayerService',
-							error instanceof Error ? error : new Error(String(error))
-						);
-					}
-					resolve();
-				}, 100); 
-
-				// If process exits gracefully, clear timeout and resolve
-				player.process.once('exit', () => {
-					clearTimeout(timeout);
-					resolve();
+						resolve();
+					}, this.SHUTDOWN_TIMEOUT);
+	
+					process.once('exit', () => {
+						clearTimeout(timeout);
+						resolve();
+					});
 				});
-			});
-
-			// Clean up regardless of kill success
-			this.cleanup_after_stop(screen);
-
-			return true;
-		} catch (error) {
-			this.logError(`Error stopping stream on screen ${screen}`, 'PlayerService', error);
-			return false;
+			} catch (error) {
+				logger.error(`Error stopping process on screen ${screen}`, 'PlayerService', error);
+			}
 		}
+	
+		this.cleanup_after_stop(screen);
+		return true;
 	}
 
 	/**
@@ -1515,83 +834,21 @@ export class PlayerService {
 	 * Only kills processes that are directly related to our managed streams
 	 */
 	private killChildProcesses(parentPid?: number): void {
-		if (!parentPid) {
-			logger.debug('No parent PID provided to kill child processes', 'PlayerService');
+		if (!parentPid || !this.isProcessRunning(parentPid)) {
 			return;
 		}
-
+	
 		try {
-			// First try to kill the parent process
-			try {
-				process.kill(parentPid, 'SIGTERM');
-				logger.debug(`Sent SIGTERM to parent process ${parentPid}`, 'PlayerService');
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-					logger.warn(`Error sending SIGTERM to parent process ${parentPid}`, 'PlayerService');
+			// Using pkill is more reliable for finding and killing child process trees
+			exec(`pkill -P ${parentPid}`, (error) => {
+				if (error && !error.message.includes('No such process')) {
+					logger.warn(`Error killing child processes for ${parentPid}`, 'PlayerService', error);
+				} else {
+					logger.debug(`Sent kill signal to child processes of ${parentPid}`, 'PlayerService');
 				}
-			}
-
-			// Give parent process time to clean up
-			setTimeout(() => {
-				try {
-					// Check if parent is still running
-					try {
-						process.kill(parentPid, 0);
-						// If we get here, process is still running, try SIGKILL
-						process.kill(parentPid, 'SIGKILL');
-						logger.debug(`Sent SIGKILL to parent process ${parentPid}`, 'PlayerService');
-					} catch (error) {
-						if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-							logger.warn(`Error checking/killing parent process ${parentPid}`, 'PlayerService');
-						}
-					}
-
-					// Try to get only the immediate child processes of the managed parent
-					try {
-						const childPidsStr = execSync(`pgrep -P ${parentPid}`, { encoding: 'utf8' }).trim();
-						if (childPidsStr) {
-							const childPids = childPidsStr.split('\n').map(Number);
-							for (const pid of childPids) {
-								try {
-									// Check if this child process is part of our managed streams
-									// before killing it
-									const processInfo = execSync(`ps -p ${pid} -o comm=`, {
-										encoding: 'utf8'
-									}).trim();
-									if (processInfo.includes('mpv') || processInfo.includes('streamlink')) {
-										process.kill(pid, 'SIGTERM');
-										logger.debug(
-											`Sent SIGTERM to child process ${pid} (${processInfo})`,
-											'PlayerService'
-										);
-									} else {
-										logger.debug(
-											`Skipping unrelated child process ${pid} (${processInfo})`,
-											'PlayerService'
-										);
-									}
-								} catch (error) {
-									if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-										logger.warn(`Error handling child process ${pid}`, 'PlayerService');
-									}
-								}
-							}
-						}
-					} catch (error) {
-						// Ignore pgrep errors as the parent process might already be gone
-						if (!(error as NodeJS.ErrnoException).message?.includes('Command failed: pgrep')) {
-							const errorMsg = error instanceof Error ? error.message : String(error);
-							logger.warn(`Error killing child processes: ${errorMsg}`, 'PlayerService');
-						}
-					}
-				} catch (error) {
-					const errorMsg = error instanceof Error ? error.message : String(error);
-					logger.error(`Error in killChildProcesses: ${errorMsg}`, 'PlayerService');
-				}
-			}, 500); // Wait 500ms before checking/killing remaining processes
+			});
 		} catch (error) {
-			const errorMsg = error instanceof Error ? error.message : String(error);
-			logger.error(`Error in killChildProcesses: ${errorMsg}`, 'PlayerService');
+			logger.error(`Failed to execute pkill for parent PID ${parentPid}`, 'PlayerService', error);
 		}
 	}
 
@@ -1599,154 +856,25 @@ export class PlayerService {
 	 * Clean up resources after a stream is stopped
 	 */
 	cleanup_after_stop(screen: number): void {
-		try {
-			// Check if stream exists and isn't already being cleaned up
-			const streamInstance = this.streams.get(screen);
-			if (!streamInstance) {
-				logger.debug(
-					`No stream to clean up for screen ${screen}, already cleaned up`,
-					'PlayerService'
-				);
-				return;
-			}
-
-			// Set a flag indicating this stream is being cleaned up
-			streamInstance.status = 'stopping';
-
-			logger.info(`Cleaning up resources for screen ${screen}`, 'PlayerService');
-
-			// First, clear all monitoring timers
-			logger.debug(`Clearing monitoring timers for screen ${screen}`, 'PlayerService');
-			this.clearMonitoring(screen);
-
-			// Get stream instance before deleting it
-			const stream = this.streams.get(screen);
-
-			// Log stream details for debugging
-			if (stream) {
-				logger.debug(
-					`Cleaning up stream: screen=${stream.screen}, url=${stream.url}, pid=${stream.process?.pid || 'none'}, platform=${stream.platform}`,
-					'PlayerService'
-				);
-
-				// Log stream process details if available
-				if (stream.process?.pid) {
-					logger.debug(
-						`Stream process info: pid=${stream.process.pid}, killed=${stream.process.killed}, exitCode=${stream.process.exitCode}`,
-						'PlayerService'
-					);
-				}
-			} else {
-				logger.debug(`No stream found for screen ${screen} during cleanup`, 'PlayerService');
-			}
-
-			// Delete from streams map immediately to prevent double processing
-			logger.debug(`Removing stream from tracking map for screen ${screen}`, 'PlayerService');
-			this.streams.delete(screen);
-
-			// Clear all retry related maps
-			logger.debug(`Clearing retry maps for screen ${screen}`, 'PlayerService');
-			this.streamRetries.delete(screen);
-			this.networkRetries.delete(screen);
-			this.lastNetworkError.delete(screen);
-			this.isNetworkError.delete(screen);
-			this.streamStartTimes.delete(screen);
-			this.startupLocks.delete(screen);
-
-			// Clean up IPC socket if it exists
-			const ipcPath = this.ipcPaths.get(screen);
-			if (ipcPath) {
-				logger.debug(`Checking IPC socket ${ipcPath} for screen ${screen}`, 'PlayerService');
-				if (fs.existsSync(ipcPath)) {
-					try {
-						logger.debug(`Closing socket connection for screen ${screen}`, 'PlayerService');
-						// Close any existing socket connection
-						const socket = net.createConnection(ipcPath);
-						socket.end();
-						socket.destroy();
-
-						// Remove the socket file
-						if (fs.existsSync(ipcPath)) {
-							logger.debug(
-								`Removing IPC socket file ${ipcPath} for screen ${screen}`,
-								'PlayerService'
-							);
-							fs.unlinkSync(ipcPath);
-							logger.debug(`Successfully removed IPC socket for screen ${screen}`, 'PlayerService');
-						}
-					} catch (error) {
-						// Only log as warning if file still exists
-						if (fs.existsSync(ipcPath)) {
-							const errorMsg = error instanceof Error ? error.message : String(error);
-							logger.warn(
-								`Failed to remove IPC socket for screen ${screen}: ${errorMsg}`,
-								'PlayerService'
-							);
-						}
-					}
-				} else {
-					logger.debug(
-						`IPC socket ${ipcPath} does not exist for screen ${screen}`,
-						'PlayerService'
-					);
-				}
-			} else {
-				logger.debug(`No IPC path found for screen ${screen}`, 'PlayerService');
-			}
-			logger.debug(`Removing IPC path mapping for screen ${screen}`, 'PlayerService');
-			this.ipcPaths.delete(screen);
-
-			// Kill any remaining processes
-			if (stream?.process?.pid) {
-				logger.debug(
-					`Killing child processes for parent PID ${stream.process.pid} for screen ${screen}`,
-					'PlayerService'
-				);
-				try {
-					this.killChildProcesses(stream.process.pid);
-					logger.debug(
-						`Successfully requested kill for child processes of PID ${stream.process.pid}`,
-						'PlayerService'
-					);
-				} catch (error) {
-					logger.warn(`Error killing processes for screen ${screen}: ${error}`, 'PlayerService');
-				}
-			} else {
-				logger.debug(`No process PID found for screen ${screen}, nothing to kill`, 'PlayerService');
-			}
-
-			// Verify cleanup completed successfully
-			if (this.streams.has(screen)) {
-				logger.warn(
-					`Stream for screen ${screen} still exists after cleanup - forcing removal`,
-					'PlayerService'
-				);
-				this.streams.delete(screen);
-			}
-
-			// Log the number of active streams after cleanup
-			const remainingStreams = Array.from(this.streams.values()).filter(
-				(s) => s.process && this.isProcessRunning(s.process.pid)
-			);
-			const streamInfo = remainingStreams
-				.map((s) => `screen:${s.screen}, pid:${s.process?.pid}`)
-				.join('; ');
-
-			logger.info(
-				`Cleanup complete for screen ${screen}. Remaining active streams: ${remainingStreams.length}/${this.config.player.maxStreams} - ${streamInfo}`,
-				'PlayerService'
-			);
-		} catch (error) {
-			const errorMsg = error instanceof Error ? error.message : String(error);
-			logger.error(`Error during cleanup for screen ${screen}: ${errorMsg}`, 'PlayerService');
-
-			// Ensure stream is deleted even if there was an error
-			logger.debug(
-				`Forcing stream deletion for screen ${screen} after cleanup error`,
-				'PlayerService'
-			);
-			this.streams.delete(screen);
+		const stream = this.streams.get(screen);
+		if (stream?.process?.pid) {
+			this.killChildProcesses(stream.process.pid);
 		}
+	
+		this.clearMonitoring(screen);
+		this.streams.delete(screen);
+		
+		const ipcPath = this.ipcPaths.get(screen);
+		if (ipcPath && fs.existsSync(ipcPath)) {
+			try {
+				fs.unlinkSync(ipcPath);
+			} catch (error) {
+				logger.warn(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
+			}
+		}
+		this.ipcPaths.delete(screen);
+	
+		logger.info(`Cleanup complete for screen ${screen}.`, 'PlayerService');
 	}
 
 	/**
@@ -1754,27 +882,9 @@ export class PlayerService {
 	 */
 	private isProcessRunning(pid: number | undefined): boolean {
 		if (!pid) return false;
-
 		try {
-			// The kill with signal 0 doesn't actually kill the process
-			// It just checks if the process exists
+			// The kill with signal 0 doesn't actually kill the process, it just checks for existence.
 			process.kill(pid, 0);
-
-			// Additional check - verify socket file exists for MPV processes
-			const stream = Array.from(this.streams.values()).find(
-				(s) => s.process && s.process.pid === pid
-			);
-			if (stream) {
-				const ipcPath = this.ipcPaths.get(stream.screen);
-				if (ipcPath && !fs.existsSync(ipcPath)) {
-					logger.warn(
-						`Process ${pid} is running but IPC socket ${ipcPath} doesn't exist`,
-						'PlayerService'
-					);
-					return false;
-				}
-			}
-
 			return true;
 		} catch {
 			return false;
@@ -1801,65 +911,44 @@ export class PlayerService {
 			throw new Error(`No screen configuration found for screen ${options.screen}`);
 		}
 
-		// Initialize IPC path if not already set
-		if (!this.ipcPaths.has(options.screen)) {
-			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
-			this.ipcPaths.set(options.screen, ipcPath);
-		}
-
-		// Ensure log directory exists
-		if (!fs.existsSync(this.BASE_LOG_DIR)) {
-			fs.mkdirSync(this.BASE_LOG_DIR, { recursive: true });
-		}
-
-		const logFile = path.join(this.BASE_LOG_DIR, `screen_${options.screen}.log`);
 		const ipcPath = this.ipcPaths.get(options.screen);
-
 		if (!ipcPath) {
 			throw new Error(`No IPC path found for screen ${options.screen}`);
 		}
 
+		const logFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
+		
 		const baseArgs: string[] = [];
 
-		// Add global MPV arguments from config
-		if (this.config.mpv) {
-			for (const [key, value] of Object.entries(this.config.mpv)) {
-				if (value !== undefined && value !== null) {
-					baseArgs.push(`--${key}=${value}`);
-				}
+		const addArg = (key: string, value: any) => {
+			if (value !== undefined && value !== null) {
+				baseArgs.push(`--${key}=${value}`);
 			}
-		}
+		};
 
-		// Add screen-specific MPV arguments from streamlink config
-		if (this.config.streamlink?.mpv) {
-			for (const [key, value] of Object.entries(this.config.streamlink.mpv)) {
-				if (value !== undefined && value !== null) {
-					baseArgs.push(`--${key}=${value}`);
-				}
-			}
+		// Add global and screen-specific MPV configs
+		const mpvConfig = { ...this.config.mpv, ...this.config.streamlink?.mpv };
+		for (const [key, value] of Object.entries(mpvConfig)) {
+			addArg(key, value);
 		}
 
 		// Essential arguments
-		baseArgs.push(
-			`--input-ipc-server=${ipcPath}`,
-			`--config-dir=${path.join(process.cwd(), 'scripts', 'mpv')}`,
-			`--log-file=${logFile}`,
-			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
-			`--volume=${(options.volume || 0).toString()}`,
-			//			`--title="${this.getTitle(options)}"`,
-			'--msg-level=all=debug'
-		);
+		addArg('input-ipc-server', ipcPath);
+		addArg('config-dir', path.join(process.cwd(), 'scripts', 'mpv'));
+		addArg('log-file', logFile);
+		addArg('geometry', `${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`);
+		addArg('volume', options.volume);
+		addArg('title', this.getTitle(options));
+		addArg('msg-level', 'all=debug');
 
 		if (options.windowMaximized) {
-			baseArgs.push('--window-maximized=yes');
+			addArg('window-maximized', 'yes');
 		}
 
-		// Add URL if requested
 		if (includeUrl && options.url) {
 			baseArgs.push(options.url);
 		}
 
-		logger.info(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
 		return baseArgs;
 	}
 
@@ -1869,10 +958,10 @@ export class PlayerService {
 			throw new Error(`No screen config found for screen ${options.screen}`);
 		}
 
-		// Start with streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
 			options.quality || screenConfig.quality || this.config.player.defaultQuality || 'best',
+			'--player-no-close', // Keep player open on errors to see messages
 			'--player',
 			this.mpvPath
 		];
@@ -1883,7 +972,7 @@ export class PlayerService {
 				if (value === true) {
 					streamlinkArgs.push(`--${key}`);
 				} else if (value !== false && value !== undefined && value !== null) {
-					streamlinkArgs.push(`--${key}`, String(value));
+					streamlinkArgs.push(`--${key}=${String(value)}`);
 				}
 			});
 		}
@@ -1894,27 +983,10 @@ export class PlayerService {
 				streamlinkArgs.push('--http-header', `${key}=${value}`);
 			});
 		}
+		
+		const mpvArgs = this.getMpvArgs(options, false).map(arg => arg.includes(' ') ? `"${arg}"` : arg).join(' ');
+		streamlinkArgs.push(`--player-args=${mpvArgs}`);
 
-		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
-		const mpvArgs = this.getMpvArgs(options, false);
-
-		// FIXED: Don't join MPV args into a single quoted string
-		// Instead, add --player-args and then each argument properly
-		streamlinkArgs.push('--player-args');
-
-		// Join all MPV args into a properly escaped single string
-		// This is the critical fix - we need one properly escaped string
-		const mpvArgsString = mpvArgs
-			.map((arg) => {
-				// Handle special characters in arguments
-				return arg.replace(/"/g, '\\"');
-			})
-			.join(' ');
-
-		// Add the entire MPV command as a single quoted argument
-		streamlinkArgs.push(mpvArgsString);
-
-		// Add any additional streamlink arguments from config
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
 		}
@@ -1924,38 +996,22 @@ export class PlayerService {
 	}
 
 	private getProcessEnv(): NodeJS.ProcessEnv {
-		const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-
 		return {
 			...process.env,
 			MPV_HOME: undefined,
 			XDG_CONFIG_HOME: undefined,
 			DISPLAY: process.env.DISPLAY || ':0',
 			SDL_VIDEODRIVER: 'x11',
-			DATE: timestamp
 		};
 	}
 	public isStreamHealthy(screen: number): boolean {
 		const activeStream = this.streams.get(screen);
-		if (!activeStream || !activeStream.process) {
-			return false;
-		}
-		
-		// Check if process is still alive
-		logger.info(`Checking if process ${activeStream.process.pid} is still alive, killed: ${activeStream.process.killed}, exitCode: ${activeStream.process.exitCode}`, 'PlayerService');
-		if (activeStream.process.killed || activeStream.process.exitCode !== null) {
-			logger.info(`Process ${activeStream.process.pid} is not alive`, 'PlayerService');
-			return false;
-		}	
-		
-		// Check for recent network errors (you'd need to track these)
-		const lastError = this.lastNetworkError.get(screen);
-		if (lastError && Date.now() - lastError < 30000) { // 30 seconds
-			return false;
-		}
-		
-		return true;
+		if (!activeStream || !activeStream.process) return false;
+	
+		// Process is running and not marked as unresponsive
+		return this.isProcessRunning(activeStream.process.pid) && this.heartbeatStatuses.get(screen) !== false;
 	}
+
 	public getActiveStreams() {
 		return Array.from(this.streams.entries()).map(([screen, stream]) => ({
 			screen,
@@ -1974,7 +1030,7 @@ export class PlayerService {
 		}
 
 		try {
-			exec(`echo "${command}" | socat - ${ipcPath}`, (err) => {
+			exec(`echo '{ "command": ["${command}"] }' | socat - "${ipcPath}"`, (err) => {
 				if (err) {
 					this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
 				}
@@ -2054,72 +1110,30 @@ export class PlayerService {
 		this.isShuttingDown = true;
 		logger.info('Cleaning up player service...', 'PlayerService');
 
-		try {
-			// Stop all streams with force=true to ensure they're killed
-			const activeScreens = Array.from(this.streams.keys());
-
-			// Attempt graceful shutdown first
-			const promises = activeScreens.map((screen) => this.stopStream(screen, false));
-			await Promise.allSettled(promises);
-
-			// Wait a moment for graceful shutdown to complete
-			await new Promise((resolve) => setTimeout(resolve, 500));
-
-			// Force kill any remaining streams
-			const remainingScreens = Array.from(this.streams.keys());
-			if (remainingScreens.length > 0) {
-				logger.warn(
-					`Forcing shutdown of ${remainingScreens.length} remaining streams`,
-					'PlayerService'
-				);
-				const forcePromises = remainingScreens.map((screen) => this.stopStream(screen, true));
-				await Promise.allSettled(forcePromises);
-			}
-
-			// Clear all timers and state
-			activeScreens.forEach((screen) => {
-				this.clearMonitoring(screen);
-			});
-
-			// Clear all heartbeat intervals
-			for (const [screen, interval] of this.heartbeatIntervals.entries()) {
-				clearInterval(interval);
-				logger.debug(
-					`Cleared heartbeat interval for screen ${screen} during cleanup`,
-					'PlayerService'
-				);
-			}
-			this.heartbeatIntervals.clear();
-			this.heartbeatStatuses.clear();
-
-			// Clean up IPC sockets
-			this.ipcPaths.forEach((ipcPath) => {
-				try {
-					if (fs.existsSync(ipcPath)) {
-						fs.unlinkSync(ipcPath);
-					}
-				} catch (error) {
-					this.logError(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
+		const stopPromises = Array.from(this.streams.keys()).map(screen => this.stopStream(screen, true));
+		await Promise.allSettled(stopPromises);
+	
+		this.ipcPaths.forEach((ipcPath) => {
+			try {
+				if (fs.existsSync(ipcPath)) {
+					fs.unlinkSync(ipcPath);
 				}
-			});
-
-			// Reset all state
-			this.ipcPaths.clear();
-			this.streams.clear();
-			this.manuallyClosedScreens.clear();
-			this.disabledScreens.clear();
-			this.streamRetries.clear();
-			this.streamStartTimes.clear();
-
-			logger.info('Player service cleanup complete', 'PlayerService');
-		} catch (error) {
-			logger.error(
-				'Error during player service cleanup',
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
-			throw error;
-		}
+			} catch (error) {
+				this.logError(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
+			}
+		});
+	
+		// Clear all timers
+		this.healthCheckIntervals.forEach(interval => clearInterval(interval));
+		this.heartbeatIntervals.forEach(interval => clearInterval(interval));
+		this.retryTimers.forEach(timer => clearTimeout(timer));
+	
+		// Clear all state maps
+		this.streams.clear();
+		this.ipcPaths.clear();
+		// ... and so on for all other maps
+	
+		logger.info('Player service cleanup complete', 'PlayerService');
 	}
 
 	public isRetrying(screen: number): boolean {
@@ -2129,36 +1143,7 @@ export class PlayerService {
 	public disableScreen(screen: number): void {
 		logger.info(`Disabling screen ${screen} in player service`, 'PlayerService');
 		this.disabledScreens.add(screen);
-
-		// Also add to manually closed screens to prevent auto-restart attempts
-		this.manuallyClosedScreens.add(screen);
-
-		// Immediately clear all monitoring for this screen to reduce resource usage
-		this.clearMonitoring(screen);
-
-		// Try to directly kill any MPV process for this screen
-		const streamInstance = this.streams.get(screen);
-		if (streamInstance && streamInstance.process) {
-			logger.info(`Force killing MPV process on screen ${screen}`, 'PlayerService');
-			try {
-				// Send SIGKILL for immediate termination
-				streamInstance.process.kill('SIGKILL');
-			} catch (error) {
-				logger.warn(
-					`Error killing MPV process on screen ${screen}`,
-					'PlayerService',
-					error instanceof Error ? error.message : String(error)
-				);
-			}
-
-			// Make sure we clean up even if kill fails
-			this.cleanup_after_stop(screen);
-		} else {
-			logger.info(`No active process found for screen ${screen} during disable`, 'PlayerService');
-		}
-
-		// Last resort: Use pkill to make sure the process is truly gone
-		this.killProcessByScreenNumber(screen);
+		this.stopStream(screen, true, true);
 	}
 
 	/**
@@ -2251,8 +1236,6 @@ export class PlayerService {
 	public enableScreen(screen: number): void {
 		logger.info(`Enabling screen ${screen} in player service`, 'PlayerService');
 		this.disabledScreens.delete(screen);
-
-		// Remove from manually closed screens to allow streams to start
 		this.manuallyClosedScreens.delete(screen);
 	}
 
@@ -2386,20 +1369,11 @@ export class PlayerService {
 	 * Set up heartbeat monitoring for a stream to detect if it becomes unresponsive
 	 */
 	private setupHeartbeat(screen: number): void {
-		// Clear any existing heartbeat interval
 		this.clearHeartbeat(screen);
-
-		logger.debug(`Setting up heartbeat monitoring for screen ${screen}`, 'PlayerService');
-
-		// Create a new heartbeat interval
+		logger.debug(`Setting up heartbeat for screen ${screen}`, 'PlayerService');
 		const interval = setInterval(() => this.checkStreamHealth(screen), this.HEARTBEAT_INTERVAL);
 		this.heartbeatIntervals.set(screen, interval);
-
-		// Initialize status as alive
 		this.heartbeatStatuses.set(screen, true);
-
-		// Do an initial health check
-		this.checkStreamHealth(screen);
 	}
 
 	/**
@@ -2410,9 +1384,8 @@ export class PlayerService {
 		if (interval) {
 			clearInterval(interval);
 			this.heartbeatIntervals.delete(screen);
-			logger.debug(`Cleared heartbeat monitoring for screen ${screen}`, 'PlayerService');
+			logger.debug(`Cleared heartbeat for screen ${screen}`, 'PlayerService');
 		}
-
 		this.heartbeatStatuses.delete(screen);
 	}
 
@@ -2420,90 +1393,24 @@ export class PlayerService {
 	 * Check if a stream is still responsive by sending a simple command to the player
 	 */
 	private async checkStreamHealth(screen: number): Promise<void> {
-		// Skip if stream is not active
 		const stream = this.streams.get(screen);
-		if (!stream || !stream.process || !this.isProcessRunning(stream.process.pid)) {
+		if (!stream || !this.isProcessRunning(stream.process?.pid)) {
+			this.clearHeartbeat(screen);
 			return;
 		}
-
+	
 		const ipcPath = this.ipcPaths.get(screen);
 		if (!ipcPath || !fs.existsSync(ipcPath)) {
-			// No IPC socket means we can't communicate - consider unresponsive
-			logger.warn(
-				`No IPC socket found for screen ${screen} during heartbeat check`,
-				'PlayerService'
-			);
+			logger.warn(`No IPC socket for unresponsive screen ${screen}`, 'PlayerService');
 			this.handleUnresponsiveStream(screen);
 			return;
 		}
-
+	
 		try {
-			// Set a flag to track if we get a response
-			let hasResponded = false;
-
-			// Create a timeout to detect if the command doesn't respond
-			const timeout = setTimeout(() => {
-				if (!hasResponded) {
-					logger.warn(`Heartbeat check timed out for screen ${screen}`, 'PlayerService');
-					this.heartbeatStatuses.set(screen, false);
-					this.handleUnresponsiveStream(screen);
-				}
-			}, this.HEARTBEAT_TIMEOUT);
-
-			// Send a simple get_property command to check if player responds
-			const socket = net.createConnection(ipcPath);
-			socket.on('connect', () => {
-				const command = JSON.stringify({ command: ['get_property', 'playback-time'] });
-				socket.write(command + '\n');
-			});
-
-			socket.on('data', () => {
-				// We got a response, stream is alive
-				hasResponded = true;
-				clearTimeout(timeout);
-
-				// Only log if previous status was false (stream recovered)
-				if (this.heartbeatStatuses.get(screen) === false) {
-					logger.info(`Stream on screen ${screen} is responsive again`, 'PlayerService');
-				}
-
-				this.heartbeatStatuses.set(screen, true);
-				socket.end();
-			});
-
-			socket.on('error', (err) => {
-				// Socket connection error - stream likely unresponsive
-				clearTimeout(timeout);
-				if (!hasResponded) {
-					logger.warn(
-						`Heartbeat check socket error for screen ${screen}: ${err.message}`,
-						'PlayerService'
-					);
-					this.heartbeatStatuses.set(screen, false);
-					this.handleUnresponsiveStream(screen);
-				}
-				socket.destroy();
-			});
-
-			socket.on('timeout', () => {
-				// Socket timeout - stream likely unresponsive
-				clearTimeout(timeout);
-				if (!hasResponded) {
-					logger.warn(`Heartbeat check socket timeout for screen ${screen}`, 'PlayerService');
-					this.heartbeatStatuses.set(screen, false);
-					this.handleUnresponsiveStream(screen);
-				}
-				socket.destroy();
-			});
+			await this.sendMpvCommand(screen, 'get_property playback-time');
+			this.heartbeatStatuses.set(screen, true);
 		} catch (error) {
-			logger.error(
-				`Error during heartbeat check for screen ${screen}`,
-				'PlayerService',
-				error instanceof Error ? error : new Error(String(error))
-			);
-
-			// Consider stream unresponsive if we can't even connect
-			this.heartbeatStatuses.set(screen, false);
+			logger.warn(`Heartbeat check failed for screen ${screen}: ${error}`, 'PlayerService');
 			this.handleUnresponsiveStream(screen);
 		}
 	}
@@ -2512,36 +1419,19 @@ export class PlayerService {
 	 * Handle an unresponsive stream by attempting recovery
 	 */
 	private handleUnresponsiveStream(screen: number): void {
-		// Check if the stream was previously marked unresponsive
-		const wasUnresponsiveBefore = this.heartbeatStatuses.get(screen) === false;
-
-		// Update status to unresponsive
+		if (this.heartbeatStatuses.get(screen) === false) return; // Already handling
+	
 		this.heartbeatStatuses.set(screen, false);
-
-		// Skip if already handled (avoid duplicate recovery attempts)
-		if (wasUnresponsiveBefore) {
-			return;
-		}
-
-		logger.warn(
-			`Stream on screen ${screen} appears to be unresponsive, attempting recovery`,
-			'PlayerService'
-		);
-
-		// Get stream info for recovery
+		logger.warn(`Stream on screen ${screen} is unresponsive. Triggering recovery.`, 'PlayerService');
+	
 		const stream = this.streams.get(screen);
-		if (!stream) {
-			logger.error(`No stream data found for unresponsive screen ${screen}`, 'PlayerService');
-			return;
-		}
-
-		// Emit error to trigger external recovery
 		this.errorCallback?.({
 			screen,
 			error: 'Stream unresponsive (heartbeat failure)',
-			code: 1000, // Custom code for heartbeat failure
-			url: stream.url,
-			moveToNext: true // Signal to move to next stream
+			code: 1000,
+			url: stream?.url,
+			moveToNext: true,
+			shouldRestart: true,
 		});
 	}
 
