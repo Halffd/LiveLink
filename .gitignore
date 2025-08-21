@@ -34,7 +34,6 @@ src/config/user/*
 # Environment variables
 .env
 .history
-.prompts
 
 # Database
 data/
