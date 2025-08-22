@@ -563,7 +563,7 @@ export class StreamManager extends EventEmitter {
 			// Get the queue and start a stream if available
 			const queue = this.queues.get(screen) || [];
 			if (queue.length > 0) {
-				await this.handleStreamEnd(screen); // This will start the next stream
+				await this._handleStreamEndInternal(screen); // This will start the next stream
 			} else {
 				logger.debug(`No streams in queue for screen ${screen}`, 'StreamManager');
 			}
@@ -615,7 +615,9 @@ export class StreamManager extends EventEmitter {
 
 			if (elapsed >= timeoutMs) {
 				logger.warn(
-					`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(timeoutMs/1000)}s). Resetting.`,
+					`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(
+						timeoutMs / 1000
+					)}s). Resetting.`,
 					'StreamManager'
 				);
 				this.screenStartingTimestamps.delete(screen);
@@ -631,69 +633,73 @@ export class StreamManager extends EventEmitter {
 	 * This is a central part of the stream lifecycle.
 	 * @param screen The screen number where the stream ended or should be started.
 	 */
-	private async handleStreamEnd(screen: number): Promise<void> {
-		await this.withLock(screen, `handleStreamEnd`, async () => {
-			try {
-				// 1. Cleanup existing stream (if any)
-				const currentStream = this.streams.get(screen);
-				if (currentStream) {
-					logger.info(`Cleaning up previous stream on screen ${screen}: ${currentStream.url}`, 'StreamManager');
-					this.markStreamAsWatched(currentStream.url);
-					await this.stopStream(screen, true); // Force stop to ensure cleanup
+	private async _handleStreamEndInternal(screen: number): Promise<void> {
+		try {
+			// 1. Cleanup existing stream (if any)
+			const currentStream = this.streams.get(screen);
+			if (currentStream) {
+				logger.info(`Cleaning up previous stream on screen ${screen}: ${currentStream.url}`, 'StreamManager');
+				this.markStreamAsWatched(currentStream.url);
+				await this.stopStream(screen, true); // Force stop to ensure cleanup
+			}
+			await this.setScreenState(screen, StreamState.IDLE);
+
+			// 2. Find the next valid stream from the queue
+			const queue = this.queues.get(screen) || [];
+			let nextStream: StreamSource | undefined;
+			let streamIndex = -1;
+
+			for (let i = 0; i < queue.length; i++) {
+				const potentialStream = queue[i];
+				const failRecord = this.failedStreamAttempts.get(potentialStream.url);
+				const isWatched = this.isStreamWatched(potentialStream.url);
+
+				if (isWatched) {
+					logger.debug(`Skipping watched stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
+					continue;
 				}
-				await this.setScreenState(screen, StreamState.IDLE);
-	
-				// 2. Find the next valid stream from the queue
-				const queue = this.queues.get(screen) || [];
-				let nextStream: StreamSource | undefined;
-				let streamIndex = -1;
-	
-				for (let i = 0; i < queue.length; i++) {
-					const potentialStream = queue[i];
-					const failRecord = this.failedStreamAttempts.get(potentialStream.url);
-					const isWatched = this.isStreamWatched(potentialStream.url);
-	
-					if (isWatched) {
-						logger.debug(`Skipping watched stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
+
+				if (failRecord && Date.now() - failRecord.timestamp < this.STREAM_FAILURE_RESET_TIME) {
+					if (failRecord.count >= this.MAX_STREAM_ATTEMPTS) {
+						logger.warn(`Skipping stream with multiple recent failures: ${potentialStream.url}`, 'StreamManager');
 						continue;
 					}
-	
-					if (failRecord && Date.now() - failRecord.timestamp < this.STREAM_FAILURE_RESET_TIME) {
-						if (failRecord.count >= this.MAX_STREAM_ATTEMPTS) {
-							logger.warn(`Skipping stream with multiple recent failures: ${potentialStream.url}`, 'StreamManager');
-							continue;
-						}
-					}
-					
-					// Found a valid stream
-					nextStream = potentialStream;
-					streamIndex = i;
-					break;
-				}
-	
-				// If no valid stream is found, update the queue and try again later.
-				if (!nextStream) {
-					logger.info(`No valid streams in queue for screen ${screen}. Will refresh queue.`, 'StreamManager');
-					// Use fire-and-forget to avoid holding the lock
-					this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
-					return;
 				}
 				
-				// Remove the stream we are about to start from the queue
-				if (streamIndex !== -1) {
-					queue.splice(streamIndex, 1);
-					this.queues.set(screen, queue);
-					queueService.setQueue(screen, queue);
-				}
-	
-				// 3. Start the next stream
-				logger.info(`Starting next stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
-				await this.startNextStream(screen, nextStream);
-	
-			} catch (error) {
-				logger.error(`Error in handleStreamEnd for screen ${screen}`, 'StreamManager', error);
-				await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+				// Found a valid stream
+				nextStream = potentialStream;
+				streamIndex = i;
+				break;
 			}
+
+			// If no valid stream is found, update the queue and try again later.
+			if (!nextStream) {
+				logger.info(`No valid streams in queue for screen ${screen}. Will refresh queue.`, 'StreamManager');
+				// Use fire-and-forget to avoid holding the lock
+				this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
+				return;
+			}
+			
+			// Remove the stream we are about to start from the queue
+			if (streamIndex !== -1) {
+				queue.splice(streamIndex, 1);
+				this.queues.set(screen, queue);
+				queueService.setQueue(screen, queue);
+			}
+
+			// 3. Start the next stream
+			logger.info(`Starting next stream on screen ${screen}: ${nextStream.url}`, 'StreamManager');
+			await this.startNextStream(screen, nextStream);
+
+		} catch (error) {
+			logger.error(`Error in handleStreamEnd for screen ${screen}`, 'StreamManager', error);
+			await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+		}
+	}
+
+	private async handleStreamEnd(screen: number): Promise<void> {
+		await this.withLock(screen, `handleStreamEnd`, async () => {
+			await this._handleStreamEndInternal(screen);
 		}, 30000); // Give this critical operation a longer timeout
 	}
 

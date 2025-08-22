@@ -35,8 +35,8 @@ describe('PlayerService Network Error Handling', () => {
   let mockConfig: Config;
   let mockProcess: any;
   let errorCallback: jest.Mock;
-  let childProcess = require('child_process');
-  let fs = require('fs');
+  import * as childProcess from 'child_process';
+import * as fs from 'fs';
 
   beforeEach(() => {
     jest.clearAllMocks();

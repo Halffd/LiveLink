@@ -54,8 +54,7 @@ describe('PlayerService Catch Blocks', () => {
 
   test('should handle unlink errors gracefully', async () => {
     // Set up the test to trigger the catch block
-    const fsModule = require('fs');
-    fsModule.existsSync.mockReturnValue(true);
+    fs.existsSync.mockReturnValue(true);
     fsModule.unlinkSync.mockImplementation(() => {
       throw new Error('Cannot unlink file');
     });
