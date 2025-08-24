@@ -502,7 +502,7 @@ export class StreamManager extends EventEmitter {
 		// Process all screens in parallel with individual error handling
 		await Promise.allSettled(
 			screensToProcess.map(screen =>
-				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 30000) // 30s timeout
+				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 65000) // 30s timeout
 				.catch(error => {
 					logger.error(
 						`Failed to update queue for screen ${screen}`,
@@ -622,7 +622,7 @@ export class StreamManager extends EventEmitter {
 				);
 				this.screenStartingTimestamps.delete(screen);
 				await this.setScreenState(screen, StreamState.ERROR, new Error('Stuck in starting state'));
-				await this.handleStreamEnd(screen); // Trigger recovery
+				await this._handleStreamEndInternal(screen); // Trigger recovery
 			}
 		});
 	}
@@ -700,7 +700,7 @@ export class StreamManager extends EventEmitter {
 	private async handleStreamEnd(screen: number): Promise<void> {
 		await this.withLock(screen, `handleStreamEnd`, async () => {
 			await this._handleStreamEndInternal(screen);
-		}, 30000); // Give this critical operation a longer timeout
+		}, 60000); // Increased timeout for critical operation
 	}
 
 
