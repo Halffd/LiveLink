@@ -456,7 +456,7 @@ export class StreamManager extends EventEmitter {
 		}
 
 		// First run immediately
-		await this.updateAllQueues();
+		await this.autoStartStreams();
 
 		// Set up interval for periodic updates
 		this.queueUpdateInterval = setInterval(async () => {
@@ -481,16 +481,18 @@ export class StreamManager extends EventEmitter {
 	 * Updates stream queues for all enabled screens in parallel
 	 * Processes each screen independently with proper error handling
 	 */
-	public async updateAllQueues() {
+	public async updateAllQueues(screens?: number[]) {
 		if (this.isShuttingDown) {
 			logger.debug('Skipping queue update - shutdown in progress', 'StreamManager');
 			return;
 		}
 
 		// Get list of enabled screens that aren't currently being processed
-		const screensToProcess = this.config.streams
-			.filter(s => s.enabled && !this.processingScreens.has(s.screen))
-			.map(s => s.screen);
+		const screensToProcess =
+			screens ??
+			this.config.streams
+				.filter((s) => s.enabled && !this.processingScreens.has(s.screen))
+				.map((s) => s.screen);
 
 		if (screensToProcess.length === 0) {
 			logger.debug('No screens to process for queue update', 'StreamManager');
@@ -501,15 +503,15 @@ export class StreamManager extends EventEmitter {
 
 		// Process all screens in parallel with individual error handling
 		await Promise.allSettled(
-			screensToProcess.map(screen =>
+			screensToProcess.map((screen) =>
 				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 65000) // 30s timeout
-				.catch(error => {
-					logger.error(
-						`Failed to update queue for screen ${screen}`,
-						'StreamManager',
-						error instanceof Error ? error : new Error(String(error))
-					);
-				})
+					.catch((error) => {
+						logger.error(
+							`Failed to update queue for screen ${screen}`,
+							'StreamManager',
+							error instanceof Error ? error : new Error(String(error))
+						);
+					})
 			)
 		);
 	}
@@ -1050,20 +1052,21 @@ export class StreamManager extends EventEmitter {
 	async autoStartStreams() {
 		if (this.isShuttingDown) return;
 		logger.info('Auto-starting streams...', 'StreamManager');
-	
+
 		const autoStartScreens = this.config.streams
 			.filter((s) => s.enabled && s.autoStart)
 			.map((s) => s.screen);
-	
+
 		if (autoStartScreens.length === 0) {
 			logger.info('No screens configured for auto-start', 'StreamManager');
+			// Even if no screens are set to autostart, we should update all queues once at startup
+			await this.updateAllQueues();
 			return;
 		}
-	
-		// Trigger an update for all screens. The main loop will handle starting streams on idle screens.
-		// This is much safer than starting them directly here.
-		await this.updateAllQueues();
-	
+
+		// Trigger an update for the screens configured to auto-start.
+		await this.updateAllQueues(autoStartScreens);
+
 		logger.info(`Auto-start process initiated for screens: ${autoStartScreens.join(', ')}`, 'StreamManager');
 	}
 	/**
