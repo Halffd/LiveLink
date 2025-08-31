@@ -1,4 +1,3 @@
-// src/server/services/player.ts
 import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import type { Config, StreamlinkConfig, ScreenConfig } from '../../types/stream.js';
@@ -14,6 +13,7 @@ import * as fs from 'fs';
 import * as net from 'net';
 import { exec, execSync } from 'child_process';
 import { format } from 'date-fns';
+import { withTimeout } from '../utils/async_helpers.js';
 
 interface LocalStreamInstance {
 	id: number;
@@ -242,37 +242,34 @@ export class PlayerService {
 
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen, url } = options;
-		// Check cooldown first
+	
 		const lastStart = this.streamStartCooldowns.get(screen) || 0;
 		const now = Date.now();
-		const timeSinceLastStart = now - lastStart;
-
-		if (timeSinceLastStart < this.STARTUP_COOLDOWN) {
-			const remaining = Math.ceil((this.STARTUP_COOLDOWN - timeSinceLastStart) / 1000);
-			const errorMsg = `Stream startup cooldown: ${remaining}s remaining for screen ${screen}`;
+		if (now - lastStart < this.STARTUP_COOLDOWN) {
+			const errorMsg = `Stream startup cooldown for screen ${screen}`;
 			logger.warn(errorMsg, 'PlayerService');
 			return { screen, success: false, error: errorMsg };
 		}
 		this.streamStartCooldowns.set(screen, now);
-
+	
 		logger.info(`Attempting to start stream on screen ${screen}: ${url}`, 'PlayerService');
-
+	
 		if (this.disabledScreens.has(screen)) {
 			return { screen, success: false, error: 'Screen is disabled' };
 		}
-
+	
 		const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
 		if (activeStreamsCount >= this.config.player.maxStreams) {
 			return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
 		}
-
+	
 		if (this.startupLocks.get(screen)) {
 			return { screen, success: false, error: 'Stream startup already in progress' };
 		}
 		this.startupLocks.set(screen, true);
 	
 		try {
-			await this.stopStream(screen, true); // Always force stop previous stream
+			await this.stopStream(screen, true, false); 
 	
 			const ipcPath = this.initializeIpcPath(screen);
 			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
@@ -307,12 +304,15 @@ export class PlayerService {
 			this.streams.set(screen, streamInstance);
 			this.setupProcessHandlers(playerProcess, screen);
 			this.setupHeartbeat(screen);
+			this.manuallyClosedScreens.delete(screen);
+			this.streamRetries.set(screen, 0);
+			this.networkRetries.set(screen, 0);
 	
 			return { screen, success: true };
 	
 		} catch (error) {
 			logger.error(`Failed to start stream on screen ${screen}: ${url}`, 'PlayerService', error);
-			this.cleanup_after_stop(screen);
+			await this.stopStream(screen, true, false);
 			return { screen, success: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
 			this.startupLocks.set(screen, false);
@@ -444,28 +444,33 @@ export class PlayerService {
 			hasEnded = true;
 
 			this.clearHeartbeat(screen);
+			this.cleanup_after_stop(screen);
 
 			const stream = this.streams.get(screen);
 			const url = stream?.url || 'unknown';
 			logger.info(`Process for screen ${screen} (${url}) exited with code ${code}`, 'PlayerService');
 	
-			this.streams.delete(screen);
+			const normalExit = code === 0;
+			const shouldRestart = !normalExit && !this.manuallyClosedScreens.has(screen) && !this.isShuttingDown;
+
+			this.endCallback?.({ screen, code: code ?? undefined });
 			
-			// Let the stream manager decide what to do next
-			this.errorCallback?.({
-				screen,
-				error: `Stream ended with code ${code}`,
-				code: code ?? 1,
-				url,
-				moveToNext: true,
-				shouldRestart: code !== 0 && !this.manuallyClosedScreens.has(screen) && !this.isShuttingDown,
-			});
+			if (!normalExit) {
+				this.errorCallback?.({
+					screen,
+					error: `Stream ended with code ${code}`,
+					code: code ?? 1,
+					url,
+					moveToNext: true,
+					shouldRestart,
+				});
+			}
 		};
 	
 		process.on('exit', onExit);
 		process.on('error', (err) => {
 			logger.error(`Process error on screen ${screen}`, 'PlayerService', err);
-			onExit(1); // Treat process errors as an exit with an error code
+			onExit(1);
 		});
 	}
 
@@ -787,7 +792,7 @@ export class PlayerService {
 			this.cleanup_after_stop(screen);
 			return true;
 		}
-
+	
 		if (streamInstance.status === 'stopping') {
 			return true; // Already being stopped
 		}
@@ -801,11 +806,12 @@ export class PlayerService {
 	
 		const { process } = streamInstance;
 		if (process && this.isProcessRunning(process.pid)) {
+			process.removeAllListeners('exit');
+			process.removeAllListeners('error');
 			try {
 				const signal = force ? 'SIGKILL' : 'SIGTERM';
 				process.kill(signal);
 	
-				// Wait for the process to exit
 				await new Promise<void>(resolve => {
 					const timeout = setTimeout(() => {
 						if (this.isProcessRunning(process.pid)) {
@@ -822,13 +828,13 @@ export class PlayerService {
 				});
 			} catch (error) {
 				logger.error(`Error stopping process on screen ${screen}`, 'PlayerService', error);
+				if (this.isProcessRunning(process.pid)) process.kill('SIGKILL');
 			}
 		}
 	
 		this.cleanup_after_stop(screen);
 		return true;
 	}
-
 	/**
 	 * Kill child processes of a given parent process
 	 * Only kills processes that are directly related to our managed streams
@@ -1022,22 +1028,11 @@ export class PlayerService {
 		}));
 	}
 
-	public sendCommandToScreen(screen: number, command: string): void {
-		const ipcPath = this.ipcPaths.get(screen);
-		if (!ipcPath) {
-			logger.warn(`No IPC path found for screen ${screen}`, 'PlayerService');
-			return;
-		}
-
-		try {
-			exec(`echo '{ "command": ["${command}"] }' | socat - "${ipcPath}"`, (err) => {
-				if (err) {
-					this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
-				}
-			});
-		} catch (err) {
-			this.logError(`Command send error for screen ${screen}`, 'PlayerService', err);
-		}
+	public sendCommandToScreen(screen: number, command: string | string[]): void {
+		const commandArray = Array.isArray(command) ? command : [command];
+		this.sendMpvCommand(screen, commandArray).catch(err => {
+			logger.error(`Failed to send IPC command to screen ${screen}: ${commandArray.join(' ')}`, 'PlayerService', err);
+		});
 	}
 
 	public sendCommandToAll(command: string): void {
@@ -1051,39 +1046,7 @@ export class PlayerService {
 	}
 
 	public onStreamError(callback: (data: StreamError) => void): void {
-		this.errorCallback = (data: StreamError) => {
-			// Log all stream errors with URL information for better tracking
-			if (data.url) {
-				logger.info(
-					`Stream error on screen ${data.screen} with url ${data.url}: ${data.error} (code: ${data.code})`,
-					'PlayerService'
-				);
-			} else {
-				logger.warn(
-					`Stream error on screen ${data.screen} without URL: ${data.error} (code: ${data.code})`,
-					'PlayerService'
-				);
-
-				// Try to get URL from streams map if missing
-				const stream = this.streams.get(data.screen);
-				if (stream?.url) {
-					data.url = stream.url;
-					logger.info(
-						`Added missing URL ${stream.url} to stream error for screen ${data.screen}`,
-						'PlayerService'
-					);
-				} else {
-					// If still no URL, make sure we move to next stream to avoid infinite loops
-					logger.warn(
-						`Cannot recover URL for screen ${data.screen}, ensuring moveToNext=true to prevent loops`,
-						'PlayerService'
-					);
-					data.moveToNext = true;
-					data.shouldRestart = false;
-				}
-			}
-			callback(data);
-		};
+		this.errorCallback = callback;
 	}
 
 	public onStreamEnd(callback: (data: StreamEnd) => void): void {
@@ -1131,7 +1094,11 @@ export class PlayerService {
 		// Clear all state maps
 		this.streams.clear();
 		this.ipcPaths.clear();
-		// ... and so on for all other maps
+		this.healthCheckIntervals.clear();
+		this.heartbeatIntervals.clear();
+		this.heartbeatStatuses.clear();
+		this.retryTimers.clear();
+		this.startupLocks.clear();
 	
 		logger.info('Player service cleanup complete', 'PlayerService');
 	}
@@ -1279,84 +1246,54 @@ export class PlayerService {
 	/**
 	 * Sends a command directly to the MPV IPC socket
 	 */
-	private async sendMpvCommand(screen: number, command: string): Promise<void> {
+	private async sendMpvCommand(screen: number, command: string[]): Promise<any> {
 		const ipcPath = this.ipcPaths.get(screen);
-		logger.info(
-			`Sending command ${command} to screen ${screen} with IPC path ${ipcPath}`,
-			'PlayerService'
-		);
 		if (!ipcPath) {
-			logger.warn(`No IPC path found for screen ${screen}`, 'PlayerService');
 			throw new Error(`No IPC socket for screen ${screen}`);
 		}
-
+	
 		return new Promise((resolve, reject) => {
-			try {
-				const socket = net.createConnection(ipcPath);
-				let hasResponded = false;
-
-				// Set a shorter connection timeout
-				socket.setTimeout(500);
-
-				socket.on('connect', () => {
-					const mpvCommand = JSON.stringify({ command: [command] });
-					socket.write(mpvCommand + '\n', () => {
-						// Wait a brief moment after writing to ensure command is sent
-						setTimeout(() => {
-							if (!hasResponded) {
-								hasResponded = true;
-								socket.end();
-								resolve();
-							}
-						}, 100);
-					});
-				});
-
-				socket.on('error', (err: Error) => {
-					if (!hasResponded) {
-						hasResponded = true;
-						socket.destroy();
-						this.logError(`Failed to send command to screen ${screen}`, 'PlayerService', err);
-						reject(err);
+			const socket = net.createConnection(ipcPath);
+			let responseData = '';
+	
+			const timeout = setTimeout(() => {
+				socket.destroy();
+				reject(new Error('Socket timeout'));
+			}, this.HEARTBEAT_TIMEOUT);
+	
+			socket.on('connect', () => {
+				const mpvCommand = JSON.stringify({ command });
+				socket.write(mpvCommand + '\n');
+			});
+	
+			socket.on('data', (data) => {
+				responseData += data.toString();
+				// MPV responses are newline-terminated JSON
+				if (responseData.includes('\n')) {
+					clearTimeout(timeout);
+					socket.end();
+					try {
+						const jsonResponse = JSON.parse(responseData);
+						resolve(jsonResponse);
+					} catch (e) {
+						reject(new Error('Failed to parse MPV response'));
 					}
-				});
-
-				socket.on('timeout', () => {
-					if (!hasResponded) {
-						hasResponded = true;
-						socket.destroy();
-						logger.error(`Command send timeout for screen ${screen}`, 'PlayerService');
-						reject(new Error('Socket timeout'));
-					}
-				});
-
-				// Cleanup socket on any response
-				socket.on('data', () => {
-					if (!hasResponded) {
-						hasResponded = true;
-						socket.end();
-						resolve();
-					}
-				});
-
-				// Handle socket close
-				socket.on('close', () => {
-					if (!hasResponded) {
-						hasResponded = true;
-						reject(new Error('Socket closed unexpectedly'));
-					}
-				});
-			} catch (err) {
-				this.logError(
-					`Command send error for screen ${screen}`,
-					'PlayerService',
-					err instanceof Error ? err : String(err)
-				);
+				}
+			});
+	
+			socket.on('error', (err) => {
+				clearTimeout(timeout);
 				reject(err);
-			}
+			});
+	
+			socket.on('close', () => {
+				clearTimeout(timeout);
+				if (!responseData) {
+					reject(new Error('Socket closed without response'));
+				}
+			});
 		});
 	}
-
 	private logError(message: string, service: string, error: unknown): void {
 		if (error instanceof Error) {
 			logger.error(message, service, error);
@@ -1399,22 +1336,18 @@ export class PlayerService {
 			return;
 		}
 	
-		const ipcPath = this.ipcPaths.get(screen);
-		if (!ipcPath || !fs.existsSync(ipcPath)) {
-			logger.warn(`No IPC socket for unresponsive screen ${screen}`, 'PlayerService');
-			this.handleUnresponsiveStream(screen);
-			return;
-		}
-	
 		try {
-			await this.sendMpvCommand(screen, 'get_property playback-time');
+			await withTimeout(
+			() => this.sendMpvCommand(screen, ['get_property', 'playback-time']),
+			this.HEARTBEAT_TIMEOUT,
+			`heartbeat-check-screen-${screen}`
+		);
 			this.heartbeatStatuses.set(screen, true);
 		} catch (error) {
 			logger.warn(`Heartbeat check failed for screen ${screen}: ${error}`, 'PlayerService');
 			this.handleUnresponsiveStream(screen);
 		}
 	}
-
 	/**
 	 * Handle an unresponsive stream by attempting recovery
 	 */

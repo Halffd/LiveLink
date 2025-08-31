@@ -68,6 +68,53 @@ const queueCommands = program.command('queue').description('Queue management com
 const playerCommands = program.command('player').description('Player control commands');
 const screenCommands = program.command('screen').description('Screen management commands');
 const serverCommands = program.command('server').description('Server control commands');
+const debugCommands = program.command('debug').description('Debugging commands');
+
+// CLI Command Handlers
+async function handleStreamList() {
+  console.log(getTimestamp(), '[INFO] [CLI] Fetching active streams');
+  try {
+    const response = await fetch(`${API_URL}/streams/active`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const streams = await response.json() as Stream[];
+    if (!streams || streams.length === 0) {
+      console.log('\nNo active streams');
+      return;
+    }
+
+    console.log('\nActive Streams:\n');
+    streams.forEach((stream) => {
+      console.log(chalk.cyan(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`));
+      console.log(`Title: ${stream.title || 'No Title'}`);
+      console.log(`URL: ${stream.url}`);
+      console.log(`Platform: ${stream.platform || 'unknown'}`);
+      console.log(`Status: ${stream.status || 'unknown'}`);
+      console.log('---');
+    });
+  } catch (error) {
+    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function handleQueueShow(screen: number) {
+  console.log(chalk.blue(`Fetching queue for screen ${screen}...`));
+  try {
+    const response = await fetch(`${API_URL}/streams/queue/${screen}`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const queue = await response.json() as StreamSource[];
+    console.log(chalk.blue(`\nQueue for Screen ${screen} (${queue.length} items):`));
+    queue.forEach((stream, index) => {
+      console.log(`${index + 1}. ${stream.title || stream.url}`);
+    });
+  } catch (error) {
+    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+  }
+}
 
 // Stream Management Commands
 streamCommands
@@ -115,7 +162,7 @@ streamCommands
         requestBody.volume = parseInt(options.volume);
       }
 
-      const response = await fetch(`${API_URL}/streams/url`, {
+      const response = await fetch(`${API_URL}/streams/manual-start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody)
@@ -870,72 +917,20 @@ webCommands
     }
   });
 
-// Add backwards compatibility for old command structure
-program
-  .command('list-streams')
-  .description('List all active streams (legacy command)')
+debugCommands
+  .command('diagnostics')
+  .description('Get diagnostic information about the stream manager')
   .action(async () => {
-    console.log(chalk.yellow('Note: This command is deprecated. Use "stream list" instead.'));
     try {
-      logger.info('Fetching active streams', 'CLI');
-      const streams = await fetch(`${API_URL}/streams/active`)
-        .then(res => handleResponse<Stream[]>(res));
-
-      if (streams.length === 0) {
-        console.log(chalk.yellow('No active streams found.'));
-        return;
+      console.log(chalk.blue('Fetching stream diagnostics...'));
+      const response = await fetch(`${API_URL}/streams/diagnostics`);
+      const result = await handleResponse<{ success: boolean; diagnostics: any }>(response);
+      if (result.success) {
+        console.log(chalk.green('Stream Diagnostics:'));
+        console.log(JSON.stringify(result.diagnostics, null, 2));
+      } else {
+        console.error(chalk.red('Failed to get diagnostics'));
       }
-
-      console.log(chalk.blue('Active Streams:'));
-      streams.forEach((stream) => {
-        console.log(chalk.green(`\nScreen ${stream.screen}:`));
-        console.log(`URL: ${stream.url}`);
-        console.log(`Quality: ${stream.quality}`);
-        if (stream.title) console.log(`Title: ${stream.title}`);
-        if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
-        console.log(`Status: ${stream.status || 'playing'}`);
-      });
-    } catch (error) {
-      console.error(chalk.red('Error:'), error);
-    }
-  });
-
-program
-  .command('start-stream')
-  .description('Start a new stream (legacy command)')
-  .requiredOption('-u, --url <url>', 'Stream URL')
-  .option('-q, --quality <quality>', 'Stream quality', 'best')
-  .option('-s, --screen <number>', 'Screen number', '1')
-  .action(async (options) => {
-    console.log(chalk.yellow('Note: This command is deprecated. Use "stream start" instead.'));
-    try {
-      console.log(chalk.blue(`Starting stream on screen ${options.screen}...`));
-      
-      // First check if URL is already playing on any screen
-      const activeStreams = await fetch(`${API_URL}/streams/active`)
-        .then(res => handleResponse<Stream[]>(res));
-      
-      const existingStream = activeStreams.find(stream => stream.url === options.url);
-      if (existingStream) {
-        console.error(chalk.yellow(`Warning: URL is already playing on screen ${existingStream.screen}`));
-        const proceed = process.argv.includes('--force');
-        if (!proceed) {
-          console.log(chalk.yellow('Use --force to start anyway.'));
-          return;
-        }
-      }
-
-      const response = await fetch(`${API_URL}/streams/url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: options.url,
-          quality: options.quality,
-          screen: parseInt(options.screen)
-        })
-      });
-      const result = await handleResponse(response);
-      console.log(chalk.green('Stream started:'), result);
     } catch (error) {
       console.error(chalk.red('Error:'), error);
     }
@@ -948,446 +943,4 @@ if (process.env.DEBUG || options.debug) {
   logger.debug('Debug mode enabled', 'CLI');
 }
 
-// Add start command at root level
-program
-  .command('start')
-  .description('Start both server and web frontend')
-  .argument('[players...]', 'Number of players to start on each screen (e.g., "1 3" for 1 on screen 1 and 3 on screen 2)')
-  .option('-s, --screen <screens>', 'Specific screens to start (comma-separated or multiple flags, e.g., "1,2" or "-s 1 -s 2")')
-  .option('-o, --organization <orgs>', 'Organizations to include by name or priority (comma-separated or multiple flags, e.g., "hololive,nijisanji" or "-o 1 -o 3" for priorities)')
-  .option('--sort <direction>', 'Sort streams by viewer count (asc or desc)', 'desc')
-  .option('-v, --min-viewers <count>', 'Minimum viewer count to include streams')
-  .option('-l, --limit <count>', 'Maximum number of streams to fetch per source')
-  .option('-m, --max <count>', 'Maximum number of concurrent streams (overrides player.json setting)')
-  .action(async (players: string[], options) => {
-    try {
-      // Convert arguments to numbers
-      const screenPlayers = players.map(Number);
-      
-      // Set environment variables for screen configuration
-      if (screenPlayers.length > 0) {
-        process.env.START_SCREENS = screenPlayers.length.toString();
-        screenPlayers.forEach((numPlayers: number, index: number) => {
-          process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
-        });
-      }
-
-      // Handle screen selection
-      if (options.screen) {
-        // Process screen options - could be comma-separated or multiple flags
-        let screens: number[] = [];
-        
-        if (Array.isArray(options.screen)) {
-          // Multiple -s flags were used
-          screens = options.screen.flatMap((s: string) => s.split(',')).map(Number).filter((n: number) => !isNaN(n));
-        } else {
-          // Single flag with possible comma-separated values
-          screens = options.screen.split(',').map(Number).filter((n: number) => !isNaN(n));
-        }
-        
-        if (screens.length > 0) {
-          process.env.SELECTED_SCREENS = screens.join(',');
-          console.log(chalk.blue(`Starting only screens: ${screens.join(', ')}`));
-        }
-      }
-
-      // Handle organization selection
-      if (options.organization) {
-        // Process organization options - could be comma-separated or multiple flags
-        let organizations: string[] = [];
-        
-        if (Array.isArray(options.organization)) {
-          // Multiple -o flags were used
-          organizations = options.organization.flatMap((o: string) => o.split(','));
-        } else {
-          // Single flag with possible comma-separated values
-          organizations = options.organization.split(',');
-        }
-        
-        if (organizations.length > 0) {
-          // Check if any values are numeric (priority) or range (e.g., "1-4")
-          const priorityValues: string[] = [];
-          const nameValues: string[] = [];
-          
-          organizations.forEach(org => {
-            // Check if it's a range like "1-4"
-            if (/^\d+-\d+$/.test(org)) {
-              priorityValues.push(org);
-            }
-            // Check if it's a number (priority)
-            else if (/^\d+$/.test(org)) {
-              priorityValues.push(org);
-            }
-            // Otherwise it's an organization name
-            else {
-              nameValues.push(org);
-            }
-          });
-          
-          if (priorityValues.length > 0) {
-            process.env.ORGANIZATION_PRIORITIES = priorityValues.join(',');
-            console.log(chalk.blue(`Using organization priorities: ${priorityValues.join(', ')}`));
-          }
-          
-          if (nameValues.length > 0) {
-            process.env.ORGANIZATION_NAMES = nameValues.join(',');
-            console.log(chalk.blue(`Using organizations: ${nameValues.join(', ')}`));
-          }
-        }
-      }
-      
-      // Handle sorting option
-      if (options.sort) {
-        const sortDirection = options.sort.toLowerCase();
-        if (sortDirection === 'asc' || sortDirection === 'desc') {
-          process.env.STREAM_SORT = sortDirection;
-          console.log(chalk.blue(`Sorting streams by viewer count: ${sortDirection}`));
-        } else {
-          console.warn(chalk.yellow(`Invalid sort direction: ${sortDirection}. Using default 'desc'`));
-          process.env.STREAM_SORT = 'desc';
-        }
-      }
-      
-      // Handle minimum viewers option
-      if (options.minViewers) {
-        const minViewers = parseInt(options.minViewers);
-        if (!isNaN(minViewers) && minViewers >= 0) {
-          process.env.MIN_VIEWERS = minViewers.toString();
-          console.log(chalk.blue(`Filtering streams with minimum ${minViewers} viewers`));
-        } else {
-          console.warn(chalk.yellow(`Invalid minimum viewers: ${options.minViewers}. Not applying filter.`));
-        }
-      }
-      
-      // Handle stream limit option
-      if (options.limit) {
-        const limit = parseInt(options.limit);
-        if (!isNaN(limit) && limit > 0) {
-          process.env.STREAM_LIMIT = limit.toString();
-          console.log(chalk.blue(`Setting stream fetch limit to ${limit} per source`));
-        } else {
-          console.warn(chalk.yellow(`Invalid stream limit: ${options.limit}. Using default from config.`));
-        }
-      }
-      
-      // Handle max concurrent streams option
-      if (options.max) {
-        const maxStreams = parseInt(options.max);
-        if (!isNaN(maxStreams) && maxStreams > 0) {
-          process.env.MAX_STREAMS = maxStreams.toString();
-          console.log(chalk.blue(`Setting maximum concurrent streams to ${maxStreams}`));
-        } else {
-          console.warn(chalk.yellow(`Invalid max streams: ${options.max}. Using default from player.json.`));
-        }
-      }
-
-      // Start both server and frontend
-      console.log(chalk.blue('Starting LiveLink server and web frontend...'));
-      await import('../server/api.js');
-      console.log(chalk.green('LiveLink server started'));
-      console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
-    } catch (error) {
-      console.error(chalk.red('Failed to start:'), error);
-      process.exit(1);
-    }
-  });
-
-// Parse command line arguments
 program.parse(process.argv);
-
-// Handle default case when no arguments are provided
-if (process.argv.length <= 2 && !process.argv.includes('-h') && !process.argv.includes('--help')) {
-  // Get the number of players to start on each screen from arguments
-  const args = process.argv.slice(2);
-  const screenPlayers = args.map(Number);
-  
-  // Set environment variables for screen configuration
-  if (screenPlayers.length > 0) {
-    process.env.START_SCREENS = screenPlayers.length.toString();
-    screenPlayers.forEach((numPlayers: number, index: number) => {
-      process.env[`START_SCREEN_${index + 1}`] = numPlayers.toString();
-    });
-  }
-
-  // Start both server and frontend
-  console.log(chalk.blue('Starting LiveLink server and web frontend...'));
-  import('../server/api.js').then(() => {
-    console.log(chalk.green('LiveLink server started'));
-    console.log(chalk.yellow('Web frontend functionality is not yet implemented'));
-  }).catch((error) => {
-    console.error(chalk.red('Failed to start:'), error);
-    process.exit(1);
-  });
-} else if (process.argv.length <= 2) {
-  // Show help if only -h or --help is provided
-  program.help();
-}
-
-streamCommands
-  .command('switch')
-  .description('Switch current stream to a new URL')
-  .requiredOption('-u, --url <url>', 'New stream URL')
-  .option('-s, --screen <number>', 'Screen number', '1')
-  .option('-q, --quality <quality>', 'Stream quality', 'best')
-  .action(async (options) => {
-    try {
-      const screen = parseInt(options.screen);
-      console.log(chalk.blue(`Switching stream on screen ${screen} to ${options.url}...`));
-
-      // First get current stream to mark as watched
-      const activeStreams = await fetch(`${API_URL}/streams/active`)
-        .then(res => handleResponse<Stream[]>(res));
-      
-      const currentStream = activeStreams.find(s => s.screen === screen);
-      if (currentStream?.url) {
-        // Mark current stream as watched
-        await fetch(`${API_URL}/streams/watched`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: currentStream.url })
-        });
-        console.log(chalk.gray(`Marked current stream as watched: ${currentStream.url}`));
-      }
-
-      // Stop current stream
-      await fetch(`${API_URL}/streams/${screen}`, {
-        method: 'DELETE'
-      });
-
-      // Start new stream
-      const response = await fetch(`${API_URL}/streams/url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url: options.url,
-          quality: options.quality,
-          screen
-        })
-      });
-      const result = await handleResponse(response);
-      console.log(chalk.green('Stream switched successfully:'), result);
-    } catch (error) {
-      console.error(chalk.red('Error:'), error);
-    }
-  });
-
-interface ScreenInfo {
-  enabled: boolean;
-  queueProcessing?: boolean;
-}
-
-async function handleQueueShow(screen: number) {
-  console.log(chalk.blue(`Fetching queue for screen ${screen}...`));
-  try {
-    // First, get information about any active stream on this screen
-    const activeStreamsResponse = await fetch(`${API_URL}/streams/active`);
-    const activeStreams = await activeStreamsResponse.json() as Stream[];
-    const activeStream = activeStreams.find(s => s.screen === screen);
-    
-    if (activeStream) {
-      console.log(chalk.green(`\nActive stream on screen ${screen}:`));
-      console.log(chalk.bold(`Title: ${activeStream.title || 'No Title'}`));
-      console.log(`URL: ${activeStream.url}`);
-      console.log(`Platform: ${activeStream.platform}`);
-      console.log(`Status: ${activeStream.status}`);
-      console.log(chalk.gray('----------------------------------------'));
-    }
-    
-    // Next, trigger a queue refresh
-    console.log(chalk.yellow('Triggering queue refresh...'));
-    const refreshResponse = await fetch(`${API_URL}/streams/queue/${screen}/refresh`, {
-      method: 'POST'
-    });
-    
-    if (!refreshResponse.ok) {
-      console.log(chalk.yellow('Warning: Could not refresh queue'));
-    } else {
-      console.log(chalk.green('Queue refresh successful'));
-    }
-
-    // Now get the queue
-    const response = await fetch(`${API_URL}/streams/queue/${screen}`);
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.log(chalk.yellow(`No queue found for screen ${screen}`));
-        return;
-      }
-      throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
-    }
-
-    const queue = await response.json() as StreamSource[];
-    if (!queue || queue.length === 0) {
-      console.log(chalk.yellow('Queue is empty'));
-      return;
-    }
-
-    // Get screen info to show enabled/disabled status
-    const screenInfoResponse = await fetch(`${API_URL}/screens/${screen}`);
-    const screenInfo = screenInfoResponse.ok ? await screenInfoResponse.json() as ScreenInfo : null;
-    
-    // Display screen status if available
-    if (screenInfo) {
-      const screenStatus = screenInfo.enabled ? chalk.green('Enabled') : chalk.red('Disabled');
-      console.log(chalk.blue(`\nScreen ${screen} Status: ${screenStatus}`));
-    }
-
-    console.log(chalk.blue(`\nQueue for Screen ${screen} (${queue.length} items):`));
-    console.log(chalk.gray('----------------------------------------'));
-    
-    queue.forEach((stream: StreamSource, index: number) => {
-      // Title with source type and priority indicator
-      const sourceType = stream.subtype === 'favorites' ? chalk.magenta('[FAV]') :
-                        stream.organization ? chalk.cyan(`[${stream.organization}]`) :
-                        '';
-      const priorityIndicator = stream.priority !== undefined ? 
-        chalk.gray(`(P${stream.priority})`) : '';
-      
-      console.log(chalk.green(`\n${index + 1}. ${sourceType} ${priorityIndicator} ${stream.title || 'No Title'}`));
-      console.log(`Platform: ${stream.platform || 'Unknown'}`);
-      console.log(`URL: ${stream.url}`);
-      if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount.toLocaleString()}`);
-      if (stream.organization) console.log(`Organization: ${stream.organization}`);
-      if (stream.sourceStatus) {
-        const statusColor = stream.sourceStatus === 'live' ? chalk.green :
-                          stream.sourceStatus === 'upcoming' ? chalk.yellow :
-                          chalk.red;
-        console.log(`Status: ${statusColor(stream.sourceStatus)}`);
-      }
-      console.log(chalk.gray('----------------------------------------'));
-    });
-
-    // Show queue processing status if available
-    if (screenInfo?.queueProcessing) {
-      console.log(chalk.yellow('\nQueue is currently being processed...'));
-    }
-    
-    // If there's an active stream, show a note about what will happen next
-    if (activeStream) {
-      console.log(chalk.blue('\nNote:'), 'When the current stream ends, the next stream in the queue will automatically start.');
-    }
-  } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
-  }
-}
-
-async function handleStreamList() {
-  console.log(getTimestamp(), '[INFO] [CLI] Fetching active streams');
-  try {
-    const response = await fetch(`${API_URL}/streams/active`);
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const streams = await response.json() as Stream[];
-    if (!streams || streams.length === 0) {
-      console.log('\nNo active streams');
-      return;
-    }
-
-    console.log('\nActive Streams:\n');
-
-    for (let i = 0; i < streams.length; i++) {
-      const stream = streams[i];
-      
-      // Get additional details for each stream
-      try {
-        const detailsResponse = await fetch(`${API_URL}/streams/${stream.screen}/details`);
-        const details = detailsResponse.ok ? await detailsResponse.json() as Stream : null;
-        
-        console.log(chalk.cyan(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`));
-        console.log(`Title: ${stream.title || details?.title || 'No Title'}`);
-        console.log(`URL: ${stream.url}`);
-        console.log(`Platform: ${stream.platform || 'unknown'}`);
-        console.log(`Quality: ${stream.quality || 'default'}`);
-        console.log(`Status: ${stream.status || 'unknown'}`);
-        
-        if (details) {
-          if (details.viewerCount) console.log(`Viewers: ${details.viewerCount.toLocaleString()}`);
-          if (details.organization) console.log(`Organization: ${details.organization}`);
-          if (stream.startTime) {
-            const uptime = formatUptime(stream.startTime);
-            console.log(`Uptime: ${uptime}`);
-          }
-        }
-        
-        // Add a divider between streams unless it's the last one
-        if (i < streams.length - 1) {
-          console.log('\n' + '-'.repeat(30) + '\n');
-        }
-      } catch (error) {
-        console.error(chalk.yellow(`Error getting details for screen ${stream.screen}:`), 
-          error instanceof Error ? error.message : String(error));
-        
-        // Print basic info even if details fail
-        console.log(chalk.cyan(`Screen ${stream.screen} ${stream.status === 'playing' ? '●' : '○'}`));
-        console.log(`Title: ${stream.title || 'No Title'}`);
-        console.log(`URL: ${stream.url}`);
-        console.log(`Status: ${stream.status || 'unknown'}`);
-        
-        // Add a divider between streams unless it's the last one
-        if (i < streams.length - 1) {
-          console.log('\n' + '-'.repeat(30) + '\n');
-        }
-      }
-    }
-  } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
-  }
-}
-
-program
-  .command('force-start')
-  .description('Force start a stream on a specific screen')
-  .argument('<screen>', 'Screen number')
-  .argument('<url>', 'Stream URL to start')
-  .action(async (screen: string, url: string) => {
-    console.log(getTimestamp(), `[INFO] [CLI] Forcing stream start on screen ${screen} with URL: ${url}`);
-    try {
-      const response = await fetch(`${API_URL}/streams/start`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          url,
-          screen: parseInt(screen, 10),
-          quality: 'best',
-          manual: true
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
-      }
-
-      const result = await response.json() as { success: boolean; error?: string };
-      if (result.success) {
-        console.log(chalk.green(`Stream started successfully on screen ${screen}`));
-      } else {
-        console.log(chalk.yellow(`Failed to start stream: ${result.error || 'Unknown error'}`));
-      }
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
-    }
-  });
-
-// Add command to force refresh queues
-program
-  .command('refresh')
-  .description('Force refresh all stream queues')
-  .action(async () => {
-    console.log(getTimestamp(), '[INFO] [CLI] Forcing queue refresh');
-    try {
-      const response = await fetch(`${API_URL}/streams/refresh`, {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}, message: ${response.statusText}`);
-      }
-
-      console.log(chalk.green('Queue refresh triggered successfully'));
-    } catch (error) {
-      console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
-    }
-  });

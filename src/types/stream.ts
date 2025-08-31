@@ -497,6 +497,7 @@ export interface StreamError {
 }
 
 export interface StreamEnd {
-  screen: string;
-  url: string;
+  screen: number;
+  code?: number;
+  url?: string; // Keep url as optional for backward compatibility
 } 
