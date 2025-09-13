@@ -763,16 +763,16 @@ export class StreamManager extends EventEmitter {
 				failRecord.timestamp = Date.now();
 				this.failedStreamAttempts.set(nextStream.url, failRecord);
 	
-				// Mark as error and try the next one
+				a// Mark as error and try the next one
 				await this.setScreenState(screen, StreamState.ERROR, new Error(startResult.error));
 				// Use setTimeout to avoid deep recursion and holding the lock.
-				setTimeout(() => this.handleStreamEnd(screen), 200);
+				setTimeout(() => this.handleStreamEnd(screen), 2200);
 			}
 		} catch (error) {
 			logger.error(`Error starting next stream on screen ${screen}`, 'StreamManager', error);
 			await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
 			// Use setTimeout to avoid deep recursion and holding the lock.
-			setTimeout(() => this.handleStreamEnd(screen), 200);
+			setTimeout(() => this.handleStreamEnd(screen), 2200);
 		}
 	}
 
@@ -849,7 +849,7 @@ export class StreamManager extends EventEmitter {
 				return { screen, success: true, message: 'Stream started' };
 			} else {
 				await this.setScreenState(screen, StreamState.ERROR, new Error(result.error || 'Failed to start stream'));
-				setTimeout(() => this.handleStreamEnd(screen), 200);
+				setTimeout(() => this.handleStreamEnd(screen), 2200);
 				return { screen, success: false, error: result.error || 'Failed to start stream' };
 			}
 		} catch (error) {
@@ -857,7 +857,7 @@ export class StreamManager extends EventEmitter {
 			const err = error instanceof Error ? error : new Error(String(error));
 			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
 			await this.setScreenState(screen, StreamState.ERROR, err);
-			setTimeout(() => this.handleStreamEnd(screen), 200);
+			setTimeout(() => this.handleStreamEnd(screen), 2200);
 			return { screen, success: false, error: err.message };
 		}
 	}

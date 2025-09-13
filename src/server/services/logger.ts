@@ -209,6 +209,15 @@ export class Logger {
 
   rotateLogs() {
     const now = new Date().toISOString();
+    
+    // Close existing transports first
+    this.logger.transports.forEach(transport => {
+      if (transport instanceof transports.File) {
+        transport.close();
+      }
+    });
+    
+    // Rotate files
     [this.errorLogPath, this.combinedLogPath].forEach(file => {
       if (fs.existsSync(file)) {
         const rotatedFile = `${file}.${now}`;
@@ -216,6 +225,18 @@ export class Logger {
         this.info(`Rotated log file: ${file} → ${rotatedFile}`, 'Logger');
       }
     });
+    
+    // Recreate transports with fresh file handles
+    this.logger.add(new transports.File({
+      filename: this.errorLogPath,
+      level: 'error',
+      format: fileFormat
+    }));
+    
+    this.logger.add(new transports.File({
+      filename: this.combinedLogPath,
+      format: fileFormat
+    }));
   }
 }
 
