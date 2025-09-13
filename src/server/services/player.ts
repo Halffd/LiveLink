@@ -1027,7 +1027,7 @@ export class PlayerService {
 		}
 		
 		const mpvArgs = this.getMpvArgs(options, false).map(arg => arg.includes(' ') ? `"${arg}"` : arg).join(' ');
-		streamlinkArgs.push(`--player-args=${mpvArgs}`);
+		streamlinkArgs.push('--player-args', mpvArgs);
 
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
