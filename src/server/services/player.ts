@@ -375,8 +375,21 @@ export class PlayerService {
 
 		mpvProcess.on('close', () => mpvLogStream.end());
 
-		// Wait a moment to let MPV create the socket
-		await new Promise((resolve) => setTimeout(resolve, 2000));
+		// Wait for IPC socket to be created
+		const ipcPath = this.ipcPaths.get(options.screen);
+		if (!ipcPath) {
+			mpvProcess.kill();
+			throw new Error('IPC path not found for screen ' + options.screen);
+		}
+
+		const maxWait = 10000; // 10 seconds
+		try {
+			await this.waitForIpcSocket(ipcPath, maxWait);
+			logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
+		} catch (error) {
+			mpvProcess.kill();
+			throw error;
+		}
 
 		return mpvProcess;
 	}
@@ -419,12 +432,35 @@ export class PlayerService {
 						reject(new Error(`Streamlink exited with code ${code}. Stderr: ${stderrOutput}`));
 					}
 				});
-	
-				// Assuming streamlink has started mpv successfully after a short delay
-				setTimeout(() => {
-					clearTimeout(startTimeout);
-					resolve(process);
-				}, 3000); // Wait for mpv to launch
+
+				// Wait for IPC socket to be created
+                const ipcPath = this.ipcPaths.get(options.screen);
+                if (!ipcPath) {
+                    clearTimeout(startTimeout);
+                    process.kill();
+                    return reject(new Error('IPC path not found for screen ' + options.screen));
+                }
+
+                const checkInterval = 250; // ms
+                const maxWait = 15000; // 15 seconds
+                let waited = 0;
+
+                const intervalId = setInterval(() => {
+                    if (fs.existsSync(ipcPath)) {
+                        clearInterval(intervalId);
+                        clearTimeout(startTimeout);
+                        logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
+                        resolve(process);
+                    } else {
+                        waited += checkInterval;
+                        if (waited >= maxWait) {
+                            clearInterval(intervalId);
+                            clearTimeout(startTimeout);
+                            process.kill();
+                            reject(new Error(`IPC socket at ${ipcPath} not created after ${maxWait / 1000}s. Stderr: ${stderrOutput}`));
+                        }
+                    }
+                }, checkInterval);
 			});
 
 		} catch (error) {
@@ -1294,6 +1330,20 @@ export class PlayerService {
 			});
 		});
 	}
+
+	private async waitForIpcSocket(ipcPath: string, timeout: number): Promise<void> {
+		const checkInterval = 250;
+		let waited = 0;
+		while (waited < timeout) {
+			if (fs.existsSync(ipcPath)) {
+				return;
+			}
+			await new Promise(resolve => setTimeout(resolve, checkInterval));
+			waited += checkInterval;
+		}
+		throw new Error(`IPC socket at ${ipcPath} not created after ${timeout / 1000}s`);
+	}
+
 	private logError(message: string, service: string, error: unknown): void {
 		if (error instanceof Error) {
 			logger.error(message, service, error);

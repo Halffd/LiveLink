@@ -507,47 +507,45 @@ router.post('/api/server/stop-all', async (ctx: Context) => {
     // Force send the response
     ctx.res.end();
     
-    // Perform cleanup after response is sent
-    setTimeout(async () => {
-      try {
-        logger.info('Stopping all player processes...', 'API');
+    // Perform cleanup immediately
+    try {
+      logger.info('Stopping all player processes...', 'API');
+      
+      // Get all active streams and stop them
+      const activeStreams = streamManager.getActiveStreams();
+      logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
+      
+      if (activeStreams.length > 0) {
+        logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
         
-        // Get all active streams and stop them
-        const activeStreams = streamManager.getActiveStreams();
-        logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
+        // First attempt - stop streams through the API
+        const stopPromises = activeStreams.map((stream: StreamInfo) => {
+          logger.info(`Stopping player on screen ${stream.screen}`, 'API');
+          return streamManager.stopStream(stream.screen, true);
+        });
         
-        if (activeStreams.length > 0) {
-          logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
-          
-          // First attempt - stop streams through the API
-          const stopPromises = activeStreams.map((stream: StreamInfo) => {
-            logger.info(`Stopping player on screen ${stream.screen}`, 'API');
-            return streamManager.stopStream(stream.screen, true);
-          });
-          
-          // Wait for all streams to be stopped with a timeout
-          const results = await Promise.allSettled(stopPromises);
-          logger.info(`Stop results: ${JSON.stringify(results)}`, 'API');
-          
-          // Check if all streams were stopped
-          const allStopped = results.every(r => r.status === 'fulfilled' && r.value === true);
-          if (!allStopped) {
-            logger.warn('Not all streams stopped successfully, using fallback methods', 'API');
-          }
-        } else {
-          logger.info('No active streams found through API, checking for orphaned processes', 'API');
+        // Wait for all streams to be stopped with a timeout
+        const results = await Promise.allSettled(stopPromises);
+        logger.info(`Stop results: ${JSON.stringify(results)}`, 'API');
+        
+        // Check if all streams were stopped
+        const allStopped = results.every(r => r.status === 'fulfilled' && r.value === true);
+        if (!allStopped) {
+          logger.warn('Not all streams stopped successfully, using fallback methods', 'API');
         }
-        
-        // Then perform server cleanup
-        logger.info('Starting server cleanup...', 'API');
-        await streamManager.cleanup();
-        logger.info('Server cleanup complete, exiting...', 'API');
-        process.exit(0);
-      } catch (error) {
-        logError('Failed during stop-all sequence', 'API', error);
-        process.exit(1);
+      } else {
+        logger.info('No active streams found through API, checking for orphaned processes', 'API');
       }
-    }, 1000);
+      
+      // Then perform server cleanup
+      logger.info('Starting server cleanup...', 'API');
+      await streamManager.cleanup();
+      logger.info('Server cleanup complete, exiting...', 'API');
+      process.exit(0);
+    } catch (error) {
+      logError('Failed during stop-all sequence', 'API', error);
+      process.exit(1);
+    }
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
@@ -808,9 +806,8 @@ router.post('/api/streams/close-all', async (ctx: Context) => {
     const activeStreams = streamManager.getActiveStreams();
     
     // Stop all streams
-    for (const stream of activeStreams) {
-      await streamManager.stopStream(stream.screen, true);
-    }
+    const stopPromises = activeStreams.map(stream => streamManager.stopStream(stream.screen, true));
+    await Promise.all(stopPromises);
     
     ctx.body = { success: true, message: 'All players closed' };
   } catch (error) {

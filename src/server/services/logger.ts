@@ -212,7 +212,7 @@ export class Logger {
     
     // Close existing transports first
     this.logger.transports.forEach(transport => {
-      if (transport instanceof transports.File) {
+      if (transport instanceof transports.File && typeof transport.close === 'function') {
         transport.close();
       }
     });
