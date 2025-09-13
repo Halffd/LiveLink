@@ -157,7 +157,7 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed to prevent race conditions
 	private processingScreens: Set<number> = new Set();
-	private readonly DEFAULT_LOCK_TIMEOUT = 65000; // 15 seconds
+	private readonly DEFAULT_LOCK_TIMEOUT = 120000; // 15 seconds
 	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 30_000; // 30 seconds
 	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
 	private static readonly QUEUE_UPDATE_RETRY_DELAY = 5_000; // 5 seconds for normal operations
@@ -740,7 +740,7 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 	
-		try {
+		try {	
 			const streamOptions: StreamOptions = {
 				url: nextStream.url,
 				screen,

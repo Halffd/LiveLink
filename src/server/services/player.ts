@@ -62,7 +62,7 @@ export class PlayerService {
 	private readonly MAX_NETWORK_RETRIES = 2; // Maximum network-specific retries
 	private readonly RETRY_INTERVAL = 50; // 100ms (reduced from 200ms)
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
-	private readonly MAX_BACKOFF_TIME = 10000;
+	private readonly MAX_BACKOFF_TIME = 120000;
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
 	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
 	private readonly SHUTDOWN_TIMEOUT = 1000; // 1 second
@@ -382,7 +382,7 @@ export class PlayerService {
 			throw new Error('IPC path not found for screen ' + options.screen);
 		}
 
-		const maxWait = 10000; // 10 seconds
+		const maxWait = 120000; // 70 seconds
 		try {
 			await this.waitForIpcSocket(ipcPath, maxWait);
 			logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
@@ -442,7 +442,7 @@ export class PlayerService {
                 }
 
                 const checkInterval = 250; // ms
-                const maxWait = 15000; // 15 seconds
+                const maxWait = 120000; // 15 seconds
                 let waited = 0;
 
                 const intervalId = setInterval(() => {
@@ -550,7 +550,7 @@ export class PlayerService {
 					});
 				}
 			}
-		}, 15000); // Reduced from 30s to 15s for more responsive detection
+		}, 5000);
 
 		// Store the interval for cleanup
 		this.healthCheckIntervals.set(screen, healthCheck);
@@ -696,7 +696,7 @@ export class PlayerService {
 								isRetry: true
 							}),
 							new Promise<StartResult>((_, reject) =>
-								setTimeout(() => reject(new Error('Start timeout')), 10000)
+								setTimeout(() => reject(new Error('Start timeout')), 120000)
 							)
 						]);
 
@@ -1027,7 +1027,7 @@ export class PlayerService {
 		}
 		
 		const mpvArgs = this.getMpvArgs(options, false).map(arg => arg.includes(' ') ? `"${arg}"` : arg).join(' ');
-		streamlinkArgs.push('--player-args', mpvArgs);
+		streamlinkArgs.push(`--player-args=${mpvArgs}`);
 
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
