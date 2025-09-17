@@ -449,6 +449,17 @@ export class StreamManager extends EventEmitter {
 		return activeStreams;
 	}
 
+	public getActiveAndStartingStreamsCount(): number {
+		let count = 0;
+		for (const stateMachine of this.stateMachines.values()) {
+			const state = stateMachine.getState();
+			if (state === StreamState.PLAYING || state === StreamState.STARTING) {
+				count++;
+			}
+		}
+		return count;
+	}
+
 	// Simplified startQueueUpdates method using one central interval
 	private async startQueueUpdates() {
 		if (this.queueUpdateInterval !== null) {
@@ -642,6 +653,12 @@ export class StreamManager extends EventEmitter {
 		const currentState = this.getScreenState(screen);
 		if (![StreamState.IDLE, StreamState.ERROR, StreamState.PLAYING, StreamState.STOPPING].includes(currentState)) {
 			logger.debug(`handleStreamEnd called on screen ${screen} in state ${currentState}, skipping.`, 'StreamManager');
+			return;
+		}
+
+		if (this.getActiveAndStartingStreamsCount() >= (this.config.player.maxStreams || 2)) {
+			logger.warn(`Maximum number of streams reached. Deferring start for screen ${screen}`, 'StreamManager');
+			setTimeout(() => this.handleStreamEnd(screen), 30000); // Try again in 30 seconds
 			return;
 		}
 		
@@ -853,9 +870,12 @@ export class StreamManager extends EventEmitter {
 				await this.setScreenState(screen, StreamState.PLAYING);
 				return { screen, success: true, message: 'Stream started' };
 			} else {
-				await this.setScreenState(screen, StreamState.ERROR, new Error(result.error || 'Failed to start stream'));
-				setTimeout(() => this.handleStreamEnd(screen), 1000);
-				return { screen, success: false, error: result.error || 'Failed to start stream' };
+				const error = result.error || 'Failed to start stream';
+				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
+				// If the error is max streams, wait longer before retrying.
+				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
+				setTimeout(() => this.handleStreamEnd(screen), retryDelay);
+				return { screen, success: false, error: error };
 			}
 		} catch (error) {
 			this.screenStartingTimestamps.delete(screen);
