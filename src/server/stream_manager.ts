@@ -150,7 +150,8 @@ export class StreamManager extends EventEmitter {
 	private failedStreamAttempts: Map<string, { timestamp: number; count: number }> = new Map();
 	private readonly MAX_STREAM_ATTEMPTS = 3;
 	private readonly STREAM_FAILURE_RESET_TIME = 10 * 60 * 1000; // 10 minutes in ms
-
+	private lastUpdateTimestamp: Map<number, number> = new Map();
+	private minUpdateSeconds: number = 60;
 	// Add a map to track when screens entered the STARTING state
 	private screenStartingTimestamps: Map<number, number> = new Map();
 	private readonly MAX_STARTING_TIME = 45000; // 45 seconds max in starting state
@@ -653,6 +654,10 @@ export class StreamManager extends EventEmitter {
 		await this.setScreenState(screen, StreamState.IDLE, undefined, true); // Force to IDLE to prepare for start
 
 		// 2. Find the next valid stream from the queue
+		const lastUpdate = this.lastUpdateTimestamp.get(screen);
+		if (lastUpdate === undefined || lastUpdate < Date.now() - this.minUpdateSeconds * 1000) {
+			await this.updateQueue(screen);
+		}
 		const queue = this.queues.get(screen) || [];
 		let nextStream: StreamSource | undefined;
 		let streamIndex = -1;
@@ -1733,6 +1738,7 @@ export class StreamManager extends EventEmitter {
 	 */
 	async updateQueue(screen: number): Promise<void> {
 		try {
+			this.lastUpdateTimestamp.set(screen, Date.now());
 			const screenConfig = this.config.streams.find((s) => s.screen === screen);
 			if (!screenConfig || !screenConfig.enabled) {
 				logger.debug(
