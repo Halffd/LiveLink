@@ -495,57 +495,21 @@ router.post('/api/server/stop', async (ctx: Context) => {
 // Stop server and all player processes
 router.post('/api/server/stop-all', async (ctx: Context) => {
   try {
-    logger.info('Received stop-all request (stopping all players and server)', 'API');
+    logger.info('Received stop-all request. Sending SIGINT to process.', 'API');
     
     // Set response headers to prevent connection from closing
     ctx.set('Connection', 'close');
     
     // Send response before cleanup
     ctx.status = 200;
-    ctx.body = { success: true, message: 'Stopping all players and server...' };
+    ctx.body = { success: true, message: 'Stopping all players and server via SIGINT...' };
     
     // Force send the response
     ctx.res.end();
     
-    // Perform cleanup immediately
-    try {
-      logger.info('Stopping all player processes...', 'API');
-      
-      // Get all active streams and stop them
-      const activeStreams = streamManager.getActiveStreams();
-      logger.info(`Active streams: ${JSON.stringify(activeStreams)}`, 'API');
-      
-      if (activeStreams.length > 0) {
-        logger.info(`Found ${activeStreams.length} active streams to stop`, 'API');
-        
-        // First attempt - stop streams through the API
-        const stopPromises = activeStreams.map((stream: StreamInfo) => {
-          logger.info(`Stopping player on screen ${stream.screen}`, 'API');
-          return streamManager.stopStream(stream.screen, true);
-        });
-        
-        // Wait for all streams to be stopped with a timeout
-        const results = await Promise.allSettled(stopPromises);
-        logger.info(`Stop results: ${JSON.stringify(results)}`, 'API');
-        
-        // Check if all streams were stopped
-        const allStopped = results.every(r => r.status === 'fulfilled' && r.value === true);
-        if (!allStopped) {
-          logger.warn('Not all streams stopped successfully, using fallback methods', 'API');
-        }
-      } else {
-        logger.info('No active streams found through API, checking for orphaned processes', 'API');
-      }
-      
-      // Then perform server cleanup
-      logger.info('Starting server cleanup...', 'API');
-      await streamManager.cleanup();
-      logger.info('Server cleanup complete, exiting...', 'API');
-      process.exit(0);
-    } catch (error) {
-      logError('Failed during stop-all sequence', 'API', error);
-      process.exit(1);
-    }
+    // Send SIGINT to the current process to trigger the graceful shutdown handler
+    process.kill(process.pid, 'SIGINT');
+
   } catch (error) {
     ctx.status = 500;
     ctx.body = { error: String(error) };
