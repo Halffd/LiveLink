@@ -656,7 +656,11 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 
-		if (this.getActiveAndStartingStreamsCount() >= (this.config.player.maxStreams || 2)) {
+		let activeStreams = this.getActiveAndStartingStreamsCount();
+		if (currentState === StreamState.PLAYING) {
+			activeStreams--;
+		}
+		if (activeStreams >= (this.config.player.maxStreams || 2)) {
 			logger.warn(`Maximum number of streams reached. Deferring start for screen ${screen}`, 'StreamManager');
 			setTimeout(() => this.handleStreamEnd(screen), 30000); // Try again in 30 seconds
 			return;
