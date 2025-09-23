@@ -64,7 +64,7 @@ export class PlayerService {
 	private readonly NETWORK_RETRY_INTERVAL = 1000; // 1 second (reduced from 2 seconds)
 	private readonly MAX_BACKOFF_TIME = 120000;
 	private readonly INACTIVE_RESET_TIMEOUT = 60 * 1000; // 1 minute (reduced from 2 minutes)
-	private readonly STARTUP_TIMEOUT = 30000; // 30 seconds
+	private readonly STARTUP_TIMEOUT = 60000; // 60 seconds
 	private readonly SHUTDOWN_TIMEOUT = 1000; // 1 second
 	private readonly SCRIPTS_PATH: string;
 	private streams: Map<number, LocalStreamInstance> = new Map();

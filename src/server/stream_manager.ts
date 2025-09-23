@@ -237,17 +237,7 @@ export class StreamManager extends EventEmitter {
 		const stateMachine = this.stateMachines.get(screen)!;
 		const currentState = stateMachine.getState();
 
-		// If we think we're playing, verify the stream is actually working
-		if (currentState === StreamState.PLAYING) {
-			const stream = this.streams.get(screen);
-			if (!stream || !this.isStreamHealthy(stream)) {
-				// Stream is dead/unhealthy, transition to error
-				logger.warn(`Stream on screen ${screen} appears unhealthy, transitioning to error state`, 'StreamManager');
-				// Use the setScreenState method to ensure a valid transition
-				this.setScreenState(screen, StreamState.ERROR, new Error('Unhealthy stream detected'));
-				return StreamState.ERROR;
-			}
-		}
+		
 
 		return currentState;
 	}
@@ -656,16 +646,6 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 
-		let activeStreams = this.getActiveAndStartingStreamsCount();
-		if (currentState === StreamState.PLAYING) {
-			activeStreams--;
-		}
-		if (activeStreams >= (this.config.player.maxStreams || 2)) {
-			logger.warn(`Maximum number of streams reached. Deferring start for screen ${screen}`, 'StreamManager');
-			setTimeout(() => this.handleStreamEnd(screen), 30000); // Try again in 30 seconds
-			return;
-		}
-		
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
@@ -677,7 +657,7 @@ export class StreamManager extends EventEmitter {
 		// 2. Find the next valid stream from the queue
 		const lastUpdate = this.lastUpdateTimestamp.get(screen);
 		if (lastUpdate === undefined || lastUpdate < Date.now() - this.minUpdateSeconds * 1000) {
-			await this.updateQueue(screen);
+			this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
 		}
 		const queue = this.queues.get(screen) || [];
 		let nextStream: StreamSource | undefined;
@@ -748,7 +728,7 @@ export class StreamManager extends EventEmitter {
 		}
 	}
 	private async handleStreamEnd(screen: number): Promise<void> {
-		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen), 30000); 
+		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen), 65000); 
 	}
 
 
@@ -875,6 +855,10 @@ export class StreamManager extends EventEmitter {
 				return { screen, success: true, message: 'Stream started' };
 			} else {
 				const error = result.error || 'Failed to start stream';
+				const failRecord = this.failedStreamAttempts.get(url) || { timestamp: 0, count: 0 };
+				failRecord.count++;
+				failRecord.timestamp = Date.now();
+				this.failedStreamAttempts.set(url, failRecord);
 				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
 				// If the error is max streams, wait longer before retrying.
 				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
@@ -1092,10 +1076,9 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 
+		logger.info(`Auto-start process initiated for screens: ${autoStartScreens.join(', ')}`, 'StreamManager');
 		// Trigger an update for the screens configured to auto-start.
 		await this.updateAllQueues(autoStartScreens);
-
-		logger.info(`Auto-start process initiated for screens: ${autoStartScreens.join(', ')}`, 'StreamManager');
 	}
 	/**
 	 * Disables a screen and optionally forces immediate stop
