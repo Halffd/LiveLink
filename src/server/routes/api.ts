@@ -1,7 +1,7 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
 import { streamManager } from '../stream_manager.js';
-import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo, Config } from '../../types/stream.js';
+import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo, Config, FavoriteChannel } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
 import { execSync } from 'child_process';
@@ -40,13 +40,13 @@ interface UpdateConfigBody {
       };
     };
     holodex?: {
-      [groupName: string]: string[];
+      [groupName: string]: FavoriteChannel[];
     };
     twitch?: {
-      [groupName: string]: string[];
+      [groupName: string]: FavoriteChannel[];
     };
     youtube?: {
-      [groupName: string]: string[];
+      [groupName: string]: FavoriteChannel[];
     };
   };
 }
@@ -108,7 +108,7 @@ router.get('/api/streams/japanese', async (ctx: Context) => {
 // General routes
 router.get('/api/streams', async (ctx: Context) => {
   try {
-    const streams = await streamManager.getLiveStreams();
+    const streams = await streamManager.getActiveStreams();
     ctx.body = streams;
   } catch (error: unknown) {
     logError('Failed to get streams', 'API', error);
@@ -709,15 +709,7 @@ router.put('/api/config', async (ctx: Context) => {
       configUpdate.organizations = body.organizations;
     }
     
-    if (body.favoriteChannels) {
-      // Ensure the favoriteChannels structure matches FavoriteChannels type
-      configUpdate.favoriteChannels = {
-        groups: body.favoriteChannels.groups || {},
-        holodex: body.favoriteChannels.holodex || {},
-        twitch: body.favoriteChannels.twitch || {},
-        youtube: body.favoriteChannels.youtube || {}
-      };
-    }
+    configUpdate.favoriteChannels = body.favoriteChannels as any;
     
     await streamManager.updateConfig(configUpdate);
     ctx.body = { success: true };

@@ -1,4 +1,4 @@
-import { HolodexApiClient, VideoStatus, VideoType, type Video } from 'holodex.js';
+import { HolodexApiClient, VideoStatus, VideoType, type Video, type Channel } from 'holodex.js';
 import type { StreamSource } from '../../types/stream.js';
 import { logger } from './logger.js';
 import type { StreamService } from '../../types/stream.js';
@@ -27,6 +27,16 @@ export class HolodexService implements StreamService {
     } catch (error) {
       logger.warn('Failed to initialize Holodex service - some features will be disabled', 'HolodexService');
       logger.debug(error instanceof Error ? error.message : String(error), 'HolodexService');
+    }
+  }
+
+  async getChannel(channelId: string): Promise<Channel | undefined> {
+    if (!this.client) return undefined;
+    try {
+      return await this.client.getChannel(channelId);
+    } catch (error) {
+      logger.error(`Failed to get channel ${channelId}`, 'HolodexService', error);
+      return undefined;
     }
   }
 

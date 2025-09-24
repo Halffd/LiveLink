@@ -1,4 +1,4 @@
-import { ApiClient, type HelixStream } from '@twurple/api';
+import { ApiClient, type HelixStream, type HelixUser } from '@twurple/api';
 import { RefreshingAuthProvider } from '@twurple/auth';
 import type { TwitchAuth } from '../db/database.js';
 import type { StreamSource, StreamService } from '../../types/stream.js';
@@ -247,6 +247,17 @@ export class TwitchService implements StreamService {
       limit,
       language: 'ja'
     });
+  }
+
+  async getChannel(channelId: string): Promise<HelixUser | undefined> {
+    if (!this.client) return undefined;
+    try {
+      const user = await this.client.users.getUserById(channelId);
+      return user ?? undefined;
+    } catch (error) {
+      logger.error(`Failed to get user ${channelId}`, 'TwitchService', error);
+      return undefined;
+    }
   }
 
   async getFollowedStreams(userId: string): Promise<StreamSource[]> {

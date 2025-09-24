@@ -72,6 +72,8 @@ export interface StreamSource {
   volume?: number;
   /** Current playback status */
   status?: string;
+  /** Score of the stream */
+  score?: number;
 }
 
 /**
@@ -256,12 +258,10 @@ export interface FavoriteGroups {
   [groupName: string]: FavoriteGroup;
 }
 
-/**
- * Platform-specific favorite channels by group
- */
-export interface PlatformFavorites {
-  /** Map of group names to channel IDs */
-  [groupName: string]: string[];
+export interface FavoriteChannel {
+  id: string;
+  name: string;
+  score: number;
 }
 
 /**
@@ -271,11 +271,17 @@ export interface FavoriteChannels {
   /** Favorite groups configuration */
   groups: FavoriteGroups;
   /** Holodex channel IDs by group */
-  holodex: PlatformFavorites;
+  holodex:  {
+    [groupName: string]: FavoriteChannel[];
+  };
   /** Twitch channel IDs/names by group */
-  twitch: PlatformFavorites;
+  twitch:  {
+    [groupName: string]: FavoriteChannel[];
+  };
   /** YouTube channel IDs by group */
-  youtube: PlatformFavorites;
+  youtube:  {
+    [groupName: string]: FavoriteChannel[];
+  };
 }
 
 export interface MpvConfig {
