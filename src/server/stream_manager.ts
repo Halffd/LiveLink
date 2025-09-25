@@ -150,7 +150,8 @@ export class StreamManager extends EventEmitter {
 	// Track streams that failed to start to avoid infinite retry loops
 	private failedStreamAttempts: Map<string, { timestamp: number; count: number }> = new Map();
 	private readonly MAX_STREAM_ATTEMPTS = 3;
-	private readonly STREAM_FAILURE_RESET_TIME = 10 * 60 * 1000; // 10 minutes in ms
+	    private readonly STREAM_FAILURE_RESET_TIME = 10 * 60 * 1000; // 10 minutes in ms
+    private manuallyClosedStreams: Map<string, number> = new Map();
 	private lastUpdateTimestamp: Map<number, number> = new Map();
 	private minUpdateSeconds: number = 60;
 	// Add a map to track when screens entered the STARTING state
@@ -670,6 +671,13 @@ export class StreamManager extends EventEmitter {
 			const potentialStream = queue[i];
 			const failRecord = this.failedStreamAttempts.get(potentialStream.url);
 			const isWatched = this.isStreamWatched(potentialStream.url);
+			const isManuallyClosed = this.manuallyClosedStreams.has(potentialStream.url);
+
+			if (isManuallyClosed) {
+				logger.debug(`Skipping manually closed stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
+				this.manuallyClosedStreams.delete(potentialStream.url); // Consume it
+				continue;
+			}
 
 			if (isWatched && (screenConfig?.skipWatchedStreams ?? true)) {
 				logger.debug(`Skipping watched stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
@@ -885,7 +893,14 @@ export class StreamManager extends EventEmitter {
 			}
 			
 			await this.setScreenState(screen, StreamState.STOPPING);
-			if (isManualStop) this.manuallyClosedScreens.add(screen);
+			        if (isManualStop) {
+            const streamInstance = this.streams.get(screen);
+            if (streamInstance) {
+                this.manuallyClosedScreens.add(screen);
+                this.manuallyClosedStreams.set(streamInstance.url, Date.now());
+                logger.info(`Marked stream ${streamInstance.url} on screen ${screen} as manually closed.`, 'StreamManager');
+            }
+        }
 			const success = await this.playerService.stopStream(screen, true, isManualStop);
 			this.streams.delete(screen);
 			await this.setScreenState(screen, StreamState.IDLE);

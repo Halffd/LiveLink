@@ -259,10 +259,6 @@ export class PlayerService {
 		}
 	
 		const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
-		if (activeStreamsCount >= this.config.player.maxStreams) {
-			return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
-		}
-	
 		if (this.startupLocks.get(screen)) {
 			return { screen, success: false, error: 'Stream startup already in progress' };
 		}
@@ -270,6 +266,11 @@ export class PlayerService {
 	
 		try {
 			await this.stopStream(screen, true, false); 
+	
+			const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
+			if (activeStreamsCount >= this.config.player.maxStreams) {
+				return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
+			} 
 	
 			const ipcPath = this.initializeIpcPath(screen);
 			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
