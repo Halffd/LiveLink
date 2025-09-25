@@ -81,7 +81,7 @@ export class PlayerService {
 	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
 	private heartbeatIntervals: Map<number, NodeJS.Timeout> = new Map();
 	private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds
-	private readonly HEARTBEAT_TIMEOUT = 5000; // 5 seconds
+	    private readonly HEARTBEAT_TIMEOUT = 70000; // 70 seconds
 	private heartbeatStatuses: Map<number, boolean> = new Map(); // true = alive, false = unresponsive
 
 	private config: Config;
@@ -899,6 +899,7 @@ export class PlayerService {
 	 */
 	cleanup_after_stop(screen: number): void {
 		const stream = this.streams.get(screen);
+		logger.info(`Running cleanup for screen ${screen}, stream URL: ${stream?.url ?? 'N/A'}`, 'PlayerService');
 		if (stream?.process?.pid) {
 			this.killChildProcesses(stream.process.pid);
 		}

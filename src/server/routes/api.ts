@@ -495,24 +495,22 @@ router.post('/api/server/stop', async (ctx: Context) => {
 // Stop server and all player processes
 router.post('/api/server/stop-all', async (ctx: Context) => {
   try {
-    logger.info('Received stop-all request. Sending SIGINT to process.', 'API');
+    logger.info('Received aggressive stop-all request.', 'API');
     
-    // Set response headers to prevent connection from closing
-    ctx.set('Connection', 'close');
-    
-    // Send response before cleanup
     ctx.status = 200;
-    ctx.body = { success: true, message: 'Stopping all players and server via SIGINT...' };
+    ctx.body = { success: true, message: 'Aggressively stopping all streams...' };
     
-    // Force send the response
-    ctx.res.end();
+    await streamManager.cleanup();
     
-    // Send SIGINT to the current process to trigger the graceful shutdown handler
-    process.kill(process.pid, 'SIGINT');
+    setTimeout(() => {
+        process.exit(0);
+    }, 1000);
 
   } catch (error) {
+    logError('Failed during aggressive stop-all', 'API', error);
     ctx.status = 500;
-    ctx.body = { error: String(error) };
+    ctx.body = { error: 'Failed to stop all streams' };
+    process.exit(1);
   }
 });
 

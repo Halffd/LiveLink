@@ -2146,16 +2146,14 @@ export class StreamManager extends EventEmitter {
 
 	// Add the missing setupEventListeners method
 	private setupEventListeners(): void {
-		this.playerService.onStreamError(async (data: StreamError) => {
-			if (this.isShuttingDown || this.manuallyClosedScreens.has(data.screen)) {
-				logger.info(`Ignoring error for manually closed/shutting down screen ${data.screen}`, 'StreamManager');
-				return;
-			}
-	
-			logger.warn(`Stream error on screen ${data.screen}: ${data.error}. Triggering recovery.`, 'StreamManager');
-			await this.setScreenState(data.screen, StreamState.ERROR, new Error(data.error));
-			this.handleStreamEnd(data.screen);
-		});
+		    this.playerService.onStreamError(async (error) => {
+        await this.withLock(error.screen, 'onStreamError', async () => {
+            logger.warn(`Stream error on screen ${error.screen}: ${error.error}. Triggering recovery.`, 'StreamManager');
+            await this.playerService.stopStream(error.screen, true, false);
+            await this.setScreenState(error.screen, StreamState.ERROR, new Error(error.error));
+            await this._handleStreamEndInternal(error.screen);
+        });
+    });
 	
 		this.playerService.onStreamEnd((data: StreamEnd) => {
 			if (this.isShuttingDown || this.manuallyClosedScreens.has(data.screen)) {
