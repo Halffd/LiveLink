@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { apiRouter } from './routes/api.js';
 import appRouter from './router.js';
 import { db } from './db/database.js';
-import { streamManager } from './stream_manager.js';
+import streamManager from './stream_manager.js';
 import { logger } from './services/logger.js';
 import { exec } from 'child_process';
 

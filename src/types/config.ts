@@ -93,4 +93,11 @@ export interface Config {
   player: PlayerSettings & {
     screens: StreamConfig[];
   };
+  sorting?: {
+    fields: Array<{ 
+      field: string;
+      order: 'asc' | 'desc';
+      ignore?: string | string[];
+    }>;
+  };
 } 

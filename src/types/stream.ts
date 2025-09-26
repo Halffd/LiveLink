@@ -240,24 +240,6 @@ export interface StreamResponse {
   error?: string;
 }
 
-/**
- * Favorite group configuration
- */
-export interface FavoriteGroup {
-  /** Description of the favorite group */
-  description: string;
-  /** Priority of the favorite group (lower number = higher priority) */
-  priority: number;
-}
-
-/**
- * Favorite groups configuration
- */
-export interface FavoriteGroups {
-  /** Map of group names to group configurations */
-  [groupName: string]: FavoriteGroup;
-}
-
 export interface FavoriteChannel {
   id: string;
   name: string;
@@ -265,21 +247,22 @@ export interface FavoriteChannel {
 }
 
 /**
- * Enhanced favorite channels configuration with groups
+ * Simplified favorite channels configuration
  */
 export interface FavoriteChannels {
-  /** Favorite groups configuration */
-  groups: FavoriteGroups;
-  /** Holodex channel IDs by group */
-  holodex:  {
+  groups?: {
+    [groupName: string]: {
+      description: string;
+      priority: number;
+    };
+  };
+  holodex?: {
     [groupName: string]: FavoriteChannel[];
   };
-  /** Twitch channel IDs/names by group */
-  twitch:  {
+  twitch?: {
     [groupName: string]: FavoriteChannel[];
   };
-  /** YouTube channel IDs by group */
-  youtube:  {
+  youtube?: {
     [groupName: string]: FavoriteChannel[];
   };
 }
@@ -384,15 +367,17 @@ export interface Config {
   mpv?: MpvConfig;
   /** Streamlink configuration */
   streamlink?: StreamlinkConfig;
-  /** Filters configuration */
+  sorting?: {
+    fields: Array<{ 
+      field: string;
+      order: 'asc' | 'desc';
+      ignore?: string | string[];
+    }>;
+  };
   filters?: {
-    /** List of filters - can be either simple strings or complex filter objects */
     filters: Array<string | {
-      /** Filter type */
       type: string;
-      /** Filter value */
       value: string;
-      /** Whether to include or exclude */
       include: boolean;
     }>;
   };
@@ -405,7 +390,7 @@ export interface TwitchTokenData {
 }
 
 export type TwitchStream = HelixStream;
-export type HolodexVideo = Video;
+export type HolodexVideo = Video & { status: string };
 export type HolodexChannel = Channel;
 
 export interface StreamLimits {

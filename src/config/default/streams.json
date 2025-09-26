@@ -1,5 +1,11 @@
 {
 	"skipWatchedStreams": false,
+	"sorting": {
+		"fields": [
+			{ "field": "score", "order": "desc" },
+			{ "field": "priority", "order": "asc", "ignore": "favorites" }
+		]
+	},
 	"streams": [
 		{
 			"id": 1,

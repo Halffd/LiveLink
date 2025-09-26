@@ -768,7 +768,7 @@ export class PlayerService {
 		});
 	}
 
-	private clearMonitoring(screen: number): void {
+	    public clearMonitoring(screen: number): void {
 		logger.debug(`Clearing monitoring for screen ${screen}`, 'PlayerService');
 
 		// Clear heartbeat monitoring

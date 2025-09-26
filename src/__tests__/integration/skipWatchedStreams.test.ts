@@ -69,7 +69,6 @@ describe('skipWatchedStreams Integration Tests', () => {
   let mockConfig: ReturnType<typeof createMockConfig>;
   let timerMock: TimerMock;
   let executionTracker: ExecutionTracker;
-  let queueService: QueueService;
   
   beforeEach(() => {
     // Reset all mocks
@@ -96,7 +95,6 @@ describe('skipWatchedStreams Integration Tests', () => {
       mockConfig,
       mockServices.holodexService,
       mockServices.twitchService,
-      mockServices.youtubeService,
       mockServices.playerService
     );
   });

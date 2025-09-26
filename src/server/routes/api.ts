@@ -1,6 +1,6 @@
 import Router from 'koa-router';
 import type { Context } from 'koa';
-import { streamManager } from '../stream_manager.js';
+import streamManager from '../stream_manager.js';
 import type { StreamSource, PlayerSettings, ScreenConfig, StreamOptions, StreamInfo, Config, FavoriteChannel } from '../../types/stream.js';
 import { logger, LogLevel } from '../services/logger.js';
 import { queueService } from '../services/queue_service.js';
@@ -760,7 +760,7 @@ router.post('/api/streams/close-all', async (ctx: Context) => {
     const activeStreams = streamManager.getActiveStreams();
     
     // Stop all streams
-    const stopPromises = activeStreams.map(stream => streamManager.stopStream(stream.screen, true));
+    const stopPromises = activeStreams.map((stream: { screen: number; url: string; quality: string; platform: "youtube" | "twitch"; status: string; }) => streamManager.stopStream(stream.screen, true));
     await Promise.all(stopPromises);
     
     ctx.body = { success: true, message: 'All players closed' };

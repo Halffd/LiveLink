@@ -436,7 +436,7 @@ describe('PlayerService Race Condition Tests', () => {
     
     // Verify clearMonitoring and clearRetryTimer were called
     expect(clearMonitoringSpy).toHaveBeenCalledWith(1);
-    expect(clearRetryTimerSpy).toHaveBeenCalledWith(1);
+    expect(clearRetryTimersSpy).toHaveBeenCalledWith(1);
     
     // Verify that all maps are cleared for this screen
     expect((playerService as any).streams.has(1)).toBe(false);

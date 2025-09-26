@@ -1,5 +1,5 @@
 import { logger } from './services/logger.js';
-import { streamManager } from './stream_manager.js';
+import streamManager from './stream_manager.js';
 import type { StreamInstance } from '../types/stream_instance.js';
 import { exec } from 'child_process';
 import { StreamInfo } from '../types/stream.js';

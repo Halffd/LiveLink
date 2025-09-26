@@ -133,6 +133,26 @@ export function createMockStream(overrides: Partial<Stream> = {}): Stream {
  * Creates a mock config for testing
  */
 export function createMockConfig(overrides: Partial<Config> = {}): Config {
+  const screenConfig = {
+    screen: 1,
+    id: 1,
+    enabled: true,
+    skipWatchedStreams: true,
+    volume: 50,
+    quality: 'best',
+    windowMaximized: false,
+    sources: [
+      {
+        type: 'holodex',
+        subtype: 'organization',
+        enabled: true,
+        priority: 100,
+        limit: 10,
+        name: 'Hololive'
+      }
+    ]
+  };
+
   return {
     skipWatchedStreams: true,
     player: {
@@ -143,85 +163,9 @@ export function createMockConfig(overrides: Partial<Config> = {}): Config {
       autoStart: true,
       preferStreamlink: true,
       force_player: false,
-      screens: [
-        {
-          screen: 1,
-          id: 1,
-          enabled: true,
-          skipWatchedStreams: true,
-          volume: 50,
-          quality: 'best',
-          windowMaximized: false,
-          sources: [
-            {
-              type: 'holodex',
-              subtype: 'organization',
-              enabled: true,
-              priority: 100,
-              limit: 10,
-              name: 'Hololive'
-            }
-          ]
-        },
-        {
-          screen: 2,
-          id: 2,
-          enabled: true,
-          skipWatchedStreams: false, // Different setting for testing
-          volume: 50,
-          quality: 'best',
-          windowMaximized: false,
-          sources: [
-            {
-              type: 'twitch',
-              subtype: 'vtuber',
-              enabled: true,
-              priority: 200,
-              limit: 10
-            }
-          ]
-        }
-      ]
+      screens: [screenConfig]
     },
-    streams: [
-      {
-        screen: 1,
-        id: 1,
-        enabled: true,
-        skipWatchedStreams: true,
-        volume: 50,
-        quality: 'best',
-        windowMaximized: false,
-        sources: [
-          {
-            type: 'holodex',
-            subtype: 'organization',
-            enabled: true,
-            priority: 100,
-            limit: 10,
-            name: 'Hololive'
-          }
-        ]
-      },
-      {
-        screen: 2,
-        id: 2,
-        enabled: true,
-        skipWatchedStreams: false,
-        volume: 50,
-        quality: 'best',
-        windowMaximized: false,
-        sources: [
-          {
-            type: 'twitch',
-            subtype: 'vtuber',
-            enabled: true,
-            priority: 200,
-            limit: 10
-          }
-        ]
-      }
-    ],
+    streams: [screenConfig],
     holodex: {
       apiKey: 'test-api-key'
     },
@@ -231,9 +175,9 @@ export function createMockConfig(overrides: Partial<Config> = {}): Config {
     },
     organizations: ['Hololive', 'Nijisanji'],
     favoriteChannels: {
-      holodex: ['channel1', 'channel2'],
-      twitch: ['channel3', 'channel4'],
-      youtube: ['channel5', 'channel6']
+      holodex: [{ id: 'channel1', name: 'Channel 1', score: 100 }, { id: 'channel2', name: 'Channel 2', score: 90 }],
+      twitch: [{ id: 'channel3', name: 'Channel 3', score: 120 }, { id: 'channel4', name: 'Channel 4', score: 80 }],
+      youtube: [{ id: 'channel5', name: 'Channel 5', score: 110 }, { id: 'channel6', name: 'Channel 6', score: 70 }]
     },
     ...overrides
   };
@@ -250,7 +194,7 @@ export function createMockServices() {
   
   // Set up default implementations
   holodexService.getLiveStreams.mockResolvedValue([]);
-  twitchService.getLiveStreams.mockResolvedValue([]);
+  twitchService.getStreams.mockResolvedValue([]);
   youtubeService.getLiveStreams.mockResolvedValue([]);
   playerService.startStream.mockResolvedValue({ screen: 1, success: true });
   playerService.stopStream.mockResolvedValue(true);

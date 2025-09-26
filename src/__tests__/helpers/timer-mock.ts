@@ -238,7 +238,7 @@ export class TimerMock {
    */
   getTimers(): MockTimer[] {
     return Array.from(this.timers.values())
-      .filter(timer => !timer.isCleared);
+      .filter((timer: MockTimer) => !timer.isCleared);
   }
 
   /**
