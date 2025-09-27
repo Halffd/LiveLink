@@ -707,6 +707,7 @@ export class StreamManager extends EventEmitter {
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
+			this.markStreamAsWatched(existingStream.url);
 			this.streams.delete(screen);
 		}
 
@@ -1014,9 +1015,15 @@ export class StreamManager extends EventEmitter {
 							limit: source.limit || 50
 						});
 						sourceStreams.forEach((stream) => {
-							const favorite = favoriteChannels.find((c: FavoriteChannel) => c.id === stream.channelId);
+							const favorite = favoriteChannels.find((c: FavoriteChannel) => {
+								logger.debug(`  Comparing stream channelId: ${stream.channelId} with favorite id: ${c.id}`, 'StreamManager');
+								return c.id === stream.channelId;
+							});
 							if (favorite) {
 								stream.score = favorite.score;
+								logger.debug(`  Assigned score ${favorite.score} to stream with channelId: ${stream.channelId}`, 'StreamManager');
+							} else {
+								logger.debug(`  No matching favorite found for stream with channelId: ${stream.channelId}. Expected favorite IDs: ${favoriteChannels.map(c => c.id).join(', ')}`, 'StreamManager');
 							}
 						});
 					}
@@ -1029,9 +1036,15 @@ export class StreamManager extends EventEmitter {
 							limit: source.limit || 50
 						});
 						sourceStreams.forEach((stream) => {
-							const favorite = favoriteChannels.find((c: FavoriteChannel) => c.id === stream.channelId);
+							const favorite = favoriteChannels.find((c: FavoriteChannel) => {
+								logger.debug(`  Comparing stream channelId: ${stream.channelId} with favorite id: ${c.id} for Twitch stream ${stream.title}`, 'StreamManager');
+								return c.id === stream.channelId;
+							});
 							if (favorite) {
 								stream.score = favorite.score;
+								logger.debug(`  Assigned score ${favorite.score} to Twitch stream ${stream.title} (channelId: ${stream.channelId}) from favorite ${favorite.name} (id: ${favorite.id})`, 'StreamManager');
+							} else {
+								logger.debug(`  No matching favorite found for Twitch stream ${stream.title} (channelId: ${stream.channelId}). Expected favorite IDs: ${favoriteChannels.map(c => c.id).join(', ')}`, 'StreamManager');
 							}
 						});
 					}
@@ -1508,8 +1521,11 @@ export class StreamManager extends EventEmitter {
 		}
 	}
 
-	private sortStreams(streams: StreamSource[]): StreamSource[] {
-		const sortFields = this.config.sorting?.fields;
+	private sortStreams(streams: StreamSource[], screenConfig?: ScreenConfig): StreamSource[] {
+		const screenSortConfig = screenConfig?.sorting;
+		const screenSortFields = screenSortConfig ? [screenSortConfig] : undefined;
+		const globalSortFields = this.config.sorting?.fields;
+		const sortFields = screenSortFields || globalSortFields;
 
 		if (!sortFields || !Array.isArray(sortFields)) {
 			// Fallback to a sensible default sort if config is not present
@@ -1529,15 +1545,26 @@ export class StreamManager extends EventEmitter {
 		}
 
 		return streams.sort((a, b) => {
+			logger.debug(`Comparing streams: A=${a.title} (score: ${a.score}, priority: ${a.priority}, subtype: ${a.subtype}) vs B=${b.title} (score: ${b.score}, priority: ${b.priority}, subtype: ${b.subtype})`, 'StreamManager');
 			for (const rule of sortFields) {
-				const { field, order, ignore } = rule;
+				const { field, order, ignore } = rule as { field: string; order: 'asc' | 'desc'; ignore?: string | string[]; };
+				logger.debug(`  Applying rule: field=${field}, order=${order}, ignore=${ignore}`, 'StreamManager');
 
-				    const aIsIgnored = ignore && ((Array.isArray(ignore) && a.subtype !== undefined && ignore.includes(a.subtype as string)) || (a.subtype !== undefined && a.subtype === ignore));
-				                const bIsIgnored = ignore && ((Array.isArray(ignore) && b.subtype !== undefined && ignore.includes(b.subtype as string)) || (b.subtype !== undefined && b.subtype === ignore));
+				const aIsIgnored = ignore && ((Array.isArray(ignore) && a.subtype !== undefined && ignore.includes(a.subtype as string)) || (a.subtype !== undefined && a.subtype === ignore));
+				const bIsIgnored = ignore && ((Array.isArray(ignore) && b.subtype !== undefined && ignore.includes(b.subtype as string)) || (b.subtype !== undefined && b.subtype === ignore));
 
-				if (aIsIgnored && bIsIgnored) continue;
-				if (aIsIgnored) return 1;
-				if (bIsIgnored) return -1;
+				if (aIsIgnored && bIsIgnored) {
+					logger.debug(`    Both A and B ignored for rule ${field}`, 'StreamManager');
+					continue;
+				}
+				if (aIsIgnored) {
+					logger.debug(`    A ignored for rule ${field}, pushing A to end`, 'StreamManager');
+					return 1;
+				}
+				if (bIsIgnored) {
+					logger.debug(`    B ignored for rule ${field}, pushing B to end`, 'StreamManager');
+					return -1;
+				}
 
 				const valueA = a[field as keyof StreamSource] as number | undefined;
 				const valueB = b[field as keyof StreamSource] as number | undefined;
@@ -1545,11 +1572,16 @@ export class StreamManager extends EventEmitter {
 				const valA = valueA ?? (order === 'desc' ? -Infinity : Infinity);
 				const valB = valueB ?? (order === 'desc' ? -Infinity : Infinity);
 
+				logger.debug(`    Comparing ${field}: A=${valA} vs B=${valB}`, 'StreamManager');
+
 				if (valA !== valB) {
-					return order === 'desc' ? valB - valA : valA - valB;
+					const result = order === 'desc' ? valB - valA : valA - valB;
+					logger.debug(`    Result for ${field}: ${result}`, 'StreamManager');
+					return result;
 				}
 			}
 			// Fallback
+			logger.debug(`  Falling back to viewerCount sort`, 'StreamManager');
 			return (b.viewerCount ?? 0) - (a.viewerCount ?? 0);
 		});
 	}
@@ -1874,7 +1906,7 @@ export class StreamManager extends EventEmitter {
 				return;
 			}
 			
-			const sortedStreams = this.sortStreams(allStreams);
+			const sortedStreams = this.sortStreams(allStreams, screenConfig);
 
 			// Assign score based on queue index
 			sortedStreams.forEach((stream, index) => {
