@@ -80,8 +80,8 @@ export class PlayerService {
 	private ipcPaths: Map<number, string> = new Map();
 	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
 	private heartbeatIntervals: Map<number, NodeJS.Timeout> = new Map();
-	private readonly HEARTBEAT_INTERVAL = 15000; // 15 seconds
-	    private readonly HEARTBEAT_TIMEOUT = 70000; // 70 seconds
+	private readonly HEARTBEAT_INTERVAL = 180000; // 180 seconds
+	    private readonly HEARTBEAT_TIMEOUT = 240000; // 240 seconds
 	private heartbeatStatuses: Map<number, boolean> = new Map(); // true = alive, false = unresponsive
 
 	private config: Config;
@@ -945,7 +945,6 @@ export class PlayerService {
 
 		return title; // No need to add extra quotes - those will be added by the argument handling
 	}
-
 	private getMpvArgs(
 		options: StreamOptions & { screen: number },
 		includeUrl: boolean = true
@@ -955,44 +954,65 @@ export class PlayerService {
 			throw new Error(`No screen configuration found for screen ${options.screen}`);
 		}
 
+		// Initialize IPC path if not already set
+		if (!this.ipcPaths.has(options.screen)) {
+			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
+			this.ipcPaths.set(options.screen, ipcPath);
+		}
+
+		// Ensure log directory exists
+		if (!fs.existsSync(this.BASE_LOG_DIR)) {
+			fs.mkdirSync(this.BASE_LOG_DIR, { recursive: true });
+		}
+
+		const logFile = path.join(this.BASE_LOG_DIR, `screen_${options.screen}.log`);
 		const ipcPath = this.ipcPaths.get(options.screen);
+
 		if (!ipcPath) {
 			throw new Error(`No IPC path found for screen ${options.screen}`);
 		}
 
-		const logFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
-		
 		const baseArgs: string[] = [];
 
-		const addArg = (key: string, value: any) => {
-			if (value !== undefined && value !== null) {
-				baseArgs.push(`--${key}=${value}`);
+		// Add global MPV arguments from config
+		if (this.config.mpv) {
+			for (const [key, value] of Object.entries(this.config.mpv)) {
+				if (value !== undefined && value !== null) {
+					baseArgs.push(`--${key}=${value}`);
+				}
 			}
-		};
+		}
 
-		// Add global and screen-specific MPV configs
-		const mpvConfig = { ...this.config.mpv, ...this.config.streamlink?.mpv };
-		for (const [key, value] of Object.entries(mpvConfig)) {
-			addArg(key, value);
+		// Add screen-specific MPV arguments from streamlink config
+		if (this.config.streamlink?.mpv) {
+			for (const [key, value] of Object.entries(this.config.streamlink.mpv)) {
+				if (value !== undefined && value !== null) {
+					baseArgs.push(`--${key}=${value}`);
+				}
+			}
 		}
 
 		// Essential arguments
-		addArg('input-ipc-server', ipcPath);
-		addArg('config-dir', path.join(process.cwd(), 'scripts', 'mpv'));
-		addArg('log-file', logFile);
-		addArg('geometry', `${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`);
-		addArg('volume', options.volume);
-		addArg('title', this.getTitle(options));
-		addArg('msg-level', 'all=debug');
+		baseArgs.push(
+			`--input-ipc-server=${ipcPath}`,
+			`--config-dir=${path.join(process.cwd(), 'scripts', 'mpv')}`,
+			`--log-file=${logFile}`,
+			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+			`--volume=${(options.volume || 0).toString()}`,
+			//			`--title="${this.getTitle(options)}"`,
+			'--msg-level=all=debug'
+		);
 
 		if (options.windowMaximized) {
-			addArg('window-maximized', 'yes');
+			baseArgs.push('--window-maximized=yes');
 		}
 
+		// Add URL if requested
 		if (includeUrl && options.url) {
 			baseArgs.push(options.url);
 		}
 
+		logger.info(`MPV args for screen ${options.screen}: ${baseArgs.join(' ')}`, 'PlayerService');
 		return baseArgs;
 	}
 
@@ -1002,10 +1022,10 @@ export class PlayerService {
 			throw new Error(`No screen config found for screen ${options.screen}`);
 		}
 
+		// Start with streamlink-specific arguments
 		const streamlinkArgs = [
 			url,
 			options.quality || screenConfig.quality || this.config.player.defaultQuality || 'best',
-			'--player-no-close', // Keep player open on errors to see messages
 			'--player',
 			this.mpvPath
 		];
@@ -1016,7 +1036,7 @@ export class PlayerService {
 				if (value === true) {
 					streamlinkArgs.push(`--${key}`);
 				} else if (value !== false && value !== undefined && value !== null) {
-					streamlinkArgs.push(`--${key}=${String(value)}`);
+					streamlinkArgs.push(`--${key}`, String(value));
 				}
 			});
 		}
@@ -1027,10 +1047,27 @@ export class PlayerService {
 				streamlinkArgs.push('--http-header', `${key}=${value}`);
 			});
 		}
-		
-		const mpvArgs = this.getMpvArgs(options, false).map(arg => arg.includes(' ') ? `"${arg}"` : arg).join(' ');
-		streamlinkArgs.push('--player-args', mpvArgs);
 
+		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
+		const mpvArgs = this.getMpvArgs(options, false);
+
+		// FIXED: Don't join MPV args into a single quoted string
+		// Instead, add --player-args and then each argument properly
+		streamlinkArgs.push('--player-args');
+
+		// Join all MPV args into a properly escaped single string
+		// This is the critical fix - we need one properly escaped string
+		const mpvArgsString = mpvArgs
+			.map((arg) => {
+				// Handle special characters in arguments
+				return arg.replace(/"/g, '\\"');
+			})
+			.join(' ');
+
+		// Add the entire MPV command as a single quoted argument
+		streamlinkArgs.push(mpvArgsString);
+
+		// Add any additional streamlink arguments from config
 		if (this.config.streamlink?.args) {
 			streamlinkArgs.push(...this.config.streamlink.args);
 		}

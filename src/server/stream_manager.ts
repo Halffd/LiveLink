@@ -782,7 +782,7 @@ export class StreamManager extends EventEmitter {
 					viewerCount: nextStream!.viewerCount,
 					startTime: nextStream!.startTime,
 					quality: nextStream!.quality || screenConfig.quality || 'best',
-					volume: nextStream!.volume ?? screenConfig.volume ?? 50,
+					volume: nextStream!.volume ?? this.config.player.defaultVolume ?? screenConfig.volume ?? 50,
 					windowMaximized: screenConfig.windowMaximized,
 				};
 				this.startStream(streamOptions).catch(err => {
@@ -820,7 +820,7 @@ export class StreamManager extends EventEmitter {
 				viewerCount: nextStream.viewerCount,
 				startTime: nextStream.startTime,
 				quality: nextStream.quality || screenConfig.quality || 'best',
-				volume: nextStream.volume ?? screenConfig.volume ?? 50,
+				volume: nextStream.volume ?? this.config.player.defaultVolume ?? screenConfig.volume ?? 50,
 				windowMaximized: screenConfig.windowMaximized,
 			};
 	
@@ -1230,7 +1230,8 @@ export class StreamManager extends EventEmitter {
 						viewerCount: nextStream.viewerCount,
 						startTime: nextStream.startTime,
 						quality: this.config.player.defaultQuality,
-						screen: screen
+						screen: screen,
+						volume: this.config.player.defaultVolume
 					};
 	
 					await this.startStream(streamOptions);
