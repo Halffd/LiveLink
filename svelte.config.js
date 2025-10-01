@@ -12,8 +12,7 @@ const config = {
 		adapter: adapter({
 			out: 'build',
 			precompress: false,
-			envPrefix: '',
-			polyfill: true
+			envPrefix: ''
 		})
 	},
 

@@ -1403,11 +1403,7 @@ export class StreamManager extends EventEmitter {
 			}
 		}
 
-		// Update queueService to match local state
-		queueService.clearWatchedStreams();
-		for (const url of this.watchedStreams.keys()) {
-			queueService.markStreamAsWatched(url);
-		}
+		
 
 
 		return Array.from(this.watchedStreams.keys());

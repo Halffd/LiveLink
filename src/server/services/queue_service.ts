@@ -228,8 +228,9 @@ class QueueService extends EventEmitter {
 
   // Watched Streams Management
   public markStreamAsWatched(url: string): void {
-    this.watchedStreams.add(url);
-  }
+		if (this.watchedStreams.has(url)) return;
+		this.watchedStreams.add(url);
+	}
 
   public isStreamWatched(url: string): boolean {
     return this.watchedStreams.has(url);
