@@ -1395,6 +1395,9 @@ export class PlayerService {
 	 * Set up heartbeat monitoring for a stream to detect if it becomes unresponsive
 	 */
 	private setupHeartbeat(screen: number): void {
+		if (this.config.player.disableHeartbeat) {
+			return;
+		}
 		this.clearHeartbeat(screen);
 		logger.debug(`Setting up heartbeat for screen ${screen}`, 'PlayerService');
 		const interval = setInterval(() => this.checkStreamHealth(screen), this.HEARTBEAT_INTERVAL);
@@ -1419,6 +1422,9 @@ export class PlayerService {
 	 * Check if a stream is still responsive by sending a simple command to the player
 	 */
 	private async checkStreamHealth(screen: number): Promise<void> {
+		if (this.config.player.disableHeartbeat) {
+			return;
+		}
 		const stream = this.streams.get(screen);
 		if (!stream || !this.isProcessRunning(stream.process?.pid)) {
 			this.clearHeartbeat(screen);
@@ -1441,6 +1447,9 @@ export class PlayerService {
 	 * Handle an unresponsive stream by attempting recovery
 	 */
 	private handleUnresponsiveStream(screen: number): void {
+		if (this.config.player.disableHeartbeat) {
+			return;
+		}
 		if (this.heartbeatStatuses.get(screen) === false) return; // Already handling
 	
 		this.heartbeatStatuses.set(screen, false);

@@ -718,7 +718,7 @@ export class StreamManager extends EventEmitter {
 		if (lastUpdate === undefined || lastUpdate < Date.now() - this.minUpdateSeconds * 1000) {
 			this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
 		}
-		const queue = this.queues.get(screen) || [];
+		const queue = this.getQueueForScreen(screen);
 		let nextStream: StreamSource | undefined;
 		let streamIndex = -1;
 

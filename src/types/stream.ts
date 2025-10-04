@@ -194,6 +194,7 @@ export interface PlayerSettings {
   autoStart: boolean;
   /** Whether to force player to always be running for each enabled screen */
   force_player: boolean;
+  disableHeartbeat?: boolean;
 }
 
 /**
@@ -340,6 +341,7 @@ export interface Config {
     preferStreamlink: boolean;
     /** Whether to force player to always be running for each enabled screen */
     force_player: boolean;
+    disableHeartbeat?: boolean;
     /** Configuration for each screen */
     screens: ScreenConfig[];
   };

@@ -5,6 +5,7 @@
   "maxStreams": 2,
   "autoStart": true,
   "force_player": false,
+  "disableHeartbeat": true,
   "screens": [
     {
       "id": 1,

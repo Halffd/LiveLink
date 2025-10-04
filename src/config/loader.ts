@@ -101,6 +101,7 @@ export function loadAllConfigs(): Config {
         windowMaximized: false,
         maxStreams: 4,
         autoStart: true,
+        disableHeartbeat: false,
         force_player: false,
         screens: [
           {
