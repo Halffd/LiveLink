@@ -1903,7 +1903,8 @@ export class StreamManager extends EventEmitter {
 				return;
 			}
 			
-			const sortedStreams = this.sortStreams(allStreams, screenConfig);
+			const unwatchedStreams = this.filterUnwatchedStreams(allStreams, screen);
+			const sortedStreams = this.sortStreams(unwatchedStreams, screenConfig);
 
 			// Assign score based on queue index
 			sortedStreams.forEach((stream, index) => {
