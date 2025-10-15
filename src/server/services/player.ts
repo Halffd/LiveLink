@@ -73,16 +73,11 @@ export class PlayerService {
 	private lastNetworkError: Map<number, number> = new Map(); // Track when the last network error occurred
 	private streamStartTimes: Map<number, number> = new Map();
 	private inactiveTimers: Map<number, NodeJS.Timeout> = new Map();
-	private healthCheckIntervals: Map<number, NodeJS.Timeout> = new Map();
 	private startupLocks: Map<number, boolean> = new Map();
 	private manuallyClosedScreens: Set<number> = new Set();
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
 	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
-	private heartbeatIntervals: Map<number, NodeJS.Timeout> = new Map();
-	private readonly HEARTBEAT_INTERVAL = 180000; // 180 seconds
-	    private readonly HEARTBEAT_TIMEOUT = 240000; // 240 seconds
-	private heartbeatStatuses: Map<number, boolean> = new Map(); // true = alive, false = unresponsive
 
 	private config: Config;
 	private mpvPath: string;
@@ -304,7 +299,6 @@ export class PlayerService {
 	
 			this.streams.set(screen, streamInstance);
 			this.setupProcessHandlers(playerProcess, screen);
-			this.setupHeartbeat(screen);
 			this.manuallyClosedScreens.delete(screen);
 			this.streamRetries.set(screen, 0);
 			this.networkRetries.set(screen, 0);
@@ -480,7 +474,6 @@ export class PlayerService {
 			if (hasEnded) return;
 			hasEnded = true;
 
-			this.clearHeartbeat(screen);
 			this.cleanup_after_stop(screen);
 
 			const stream = this.streams.get(screen);
@@ -511,79 +504,7 @@ export class PlayerService {
 		});
 	}
 
-	private setupStreamMonitoring(
-		screen: number,
-		process: ChildProcess,
-		options: StreamOptions
-	): void {
-		// Setup health check with more lenient timing
-		const healthCheck = setInterval(() => {
-			if (!process.pid) {
-				logger.warn(`No PID found for stream on screen ${screen}`, 'PlayerService');
-				return;
-			}
-
-			try {
-				// Check if process exists and responds
-				process.kill(0);
-
-				// Also verify the process hasn't been replaced
-				const currentProcess = this.streams.get(screen)?.process;
-				if (currentProcess !== process) {
-					logger.warn(
-						`Process mismatch detected for screen ${screen}, clearing health check`,
-						'PlayerService'
-					);
-					clearInterval(healthCheck);
-					this.healthCheckIntervals.delete(screen);
-					return;
-				}
-			} catch (err) {
-				// Only restart if the process is actually gone
-				if (err && typeof err === 'object' && 'code' in err && err.code === 'ESRCH') {
-					logger.warn(`Stream on screen ${screen} appears to be unresponsive`, 'PlayerService');
-					this.restartStream(screen, options).catch((err) => {
-						logger.error(
-							`Failed to restart unresponsive stream on screen ${screen}`,
-							'PlayerService',
-							err
-						);
-					});
-				}
-			}
-		}, 5000);
-
-		// Store the interval for cleanup
-		this.healthCheckIntervals.set(screen, healthCheck);
-	}
-
-	private async restartStream(screen: number, options: StreamOptions): Promise<void> {
-		try {
-			// Stop existing stream and wait for cleanup
-			await this.stopStream(screen);
-
-			// Reduced delay to ensure cleanup is complete
-			await new Promise((resolve) => setTimeout(resolve, 200)); // Reduced from 500ms to 200ms
-
-			// Double check no existing process before starting new one
-			const existingStream = this.streams.get(screen);
-			if (existingStream?.process) {
-				logger.warn(`Found existing process for screen ${screen}, forcing cleanup`, 'PlayerService');
-				try {
-					existingStream.process.kill('SIGKILL');
-					await new Promise((resolve) => setTimeout(resolve, 100)); // Reduced from 200ms to 100ms
-				} catch (error) {
-					// Process might already be gone
-					logger.debug(`Error killing existing process: ${error}`, 'PlayerService');
-				}
-			}
-
-			await this.startStream({ ...options, screen });
-		} catch (error) {
-			logger.error(`Failed to restart stream on screen ${screen}: ${error}`, 'PlayerService');
-			throw error;
-		}
-	}
+	
 
 	private handleProcessExit(screen: number, code: number | null): void {
 		// Get stream info before any cleanup happens
@@ -770,16 +691,6 @@ export class PlayerService {
 
 	    public clearMonitoring(screen: number): void {
 		logger.debug(`Clearing monitoring for screen ${screen}`, 'PlayerService');
-
-		// Clear heartbeat monitoring
-		this.clearHeartbeat(screen);
-
-		// Clear health check
-		const healthCheck = this.healthCheckIntervals.get(screen);
-		if (healthCheck) {
-			clearInterval(healthCheck);
-			this.healthCheckIntervals.delete(screen);
-		}
 
 		// Clear inactive timer
 		const inactiveTimer = this.inactiveTimers.get(screen);
@@ -1055,12 +966,12 @@ export class PlayerService {
 		// Instead, add --player-args and then each argument properly
 		streamlinkArgs.push('--player-args');
 
-		// Join all MPV args into a properly escaped single string
+				// Join all MPV args into a properly escaped single string
 		// This is the critical fix - we need one properly escaped string
 		const mpvArgsString = mpvArgs
 			.map((arg) => {
 				// Handle special characters in arguments
-				return arg.replace(/"/g, '\\"');
+				return arg.replace(/"/g, '\"');
 			})
 			.join(' ');
 
@@ -1089,8 +1000,8 @@ export class PlayerService {
 		const activeStream = this.streams.get(screen);
 		if (!activeStream || !activeStream.process) return false;
 	
-		// Process is running and not marked as unresponsive
-		return this.isProcessRunning(activeStream.process.pid) && this.heartbeatStatuses.get(screen) !== false;
+		// Process is running
+		return this.isProcessRunning(activeStream.process.pid);
 	}
 
 	public getActiveStreams() {
@@ -1162,16 +1073,11 @@ export class PlayerService {
 		});
 	
 		// Clear all timers
-		this.healthCheckIntervals.forEach(interval => clearInterval(interval));
-		this.heartbeatIntervals.forEach(interval => clearInterval(interval));
 		this.retryTimers.forEach(timer => clearTimeout(timer));
 	
 		// Clear all state maps
 		this.streams.clear();
 		this.ipcPaths.clear();
-		this.healthCheckIntervals.clear();
-		this.heartbeatIntervals.clear();
-		this.heartbeatStatuses.clear();
 		this.retryTimers.clear();
 		this.startupLocks.clear();
 	
@@ -1334,7 +1240,7 @@ export class PlayerService {
 			const timeout = setTimeout(() => {
 				socket.destroy();
 				reject(new Error('Socket timeout'));
-			}, this.HEARTBEAT_TIMEOUT);
+			}, 30000);
 	
 			socket.on('connect', () => {
 				const mpvCommand = JSON.stringify({ command });
@@ -1394,77 +1300,7 @@ export class PlayerService {
 	/**
 	 * Set up heartbeat monitoring for a stream to detect if it becomes unresponsive
 	 */
-	private setupHeartbeat(screen: number): void {
-		if (this.config.player.disableHeartbeat) {
-			return;
-		}
-		this.clearHeartbeat(screen);
-		logger.debug(`Setting up heartbeat for screen ${screen}`, 'PlayerService');
-		const interval = setInterval(() => this.checkStreamHealth(screen), this.HEARTBEAT_INTERVAL);
-		this.heartbeatIntervals.set(screen, interval);
-		this.heartbeatStatuses.set(screen, true);
-	}
-
-	/**
-	 * Clear heartbeat monitoring for a screen
-	 */
-	private clearHeartbeat(screen: number): void {
-		const interval = this.heartbeatIntervals.get(screen);
-		if (interval) {
-			clearInterval(interval);
-			this.heartbeatIntervals.delete(screen);
-			logger.debug(`Cleared heartbeat for screen ${screen}`, 'PlayerService');
-		}
-		this.heartbeatStatuses.delete(screen);
-	}
-
-	/**
-	 * Check if a stream is still responsive by sending a simple command to the player
-	 */
-	private async checkStreamHealth(screen: number): Promise<void> {
-		if (this.config.player.disableHeartbeat) {
-			return;
-		}
-		const stream = this.streams.get(screen);
-		if (!stream || !this.isProcessRunning(stream.process?.pid)) {
-			this.clearHeartbeat(screen);
-			return;
-		}
 	
-		try {
-			await withTimeout(
-			() => this.sendMpvCommand(screen, ['get_property', 'playback-time']),
-			this.HEARTBEAT_TIMEOUT,
-			`heartbeat-check-screen-${screen}`
-		);
-			this.heartbeatStatuses.set(screen, true);
-		} catch (error) {
-			logger.warn(`Heartbeat check failed for screen ${screen}: ${error}`, 'PlayerService');
-			this.handleUnresponsiveStream(screen);
-		}
-	}
-	/**
-	 * Handle an unresponsive stream by attempting recovery
-	 */
-	private handleUnresponsiveStream(screen: number): void {
-		if (this.config.player.disableHeartbeat) {
-			return;
-		}
-		if (this.heartbeatStatuses.get(screen) === false) return; // Already handling
-	
-		this.heartbeatStatuses.set(screen, false);
-		logger.warn(`Stream on screen ${screen} is unresponsive. Triggering recovery.`, 'PlayerService');
-	
-		const stream = this.streams.get(screen);
-		this.errorCallback?.({
-			screen,
-			error: 'Stream unresponsive (heartbeat failure)',
-			code: 1000,
-			url: stream?.url,
-			moveToNext: true,
-			shouldRestart: true,
-		});
-	}
 
 	// Add method to check if stream is having persistent issues
 	private isPersistentIssue(screen: number): boolean {
