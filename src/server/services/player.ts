@@ -92,7 +92,7 @@ export class PlayerService {
 	private readonly streamlinkConfig: StreamlinkConfig;
 	private readonly retryTimers: Map<number, NodeJS.Timeout>;
 	private streamStartCooldowns = new Map<number, number>();
-	private readonly STARTUP_COOLDOWN = 2000; // 2 seconds cooldown between stream starts
+	private readonly STARTUP_COOLDOWN = 5000; // 5 seconds cooldown between stream starts to prevent race conditions
 
 	constructor(config: Config) {
 		this.config = config;
@@ -238,6 +238,7 @@ export class PlayerService {
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen, url } = options;
 	
+		// Use a longer cooldown to prevent race conditions
 		const lastStart = this.streamStartCooldowns.get(screen) || 0;
 		const now = Date.now();
 		if (now - lastStart < this.STARTUP_COOLDOWN) {
@@ -253,19 +254,20 @@ export class PlayerService {
 			return { screen, success: false, error: 'Screen is disabled' };
 		}
 	
-		const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
+		// Check if startup is already in progress for this screen
 		if (this.startupLocks.get(screen)) {
 			return { screen, success: false, error: 'Stream startup already in progress' };
 		}
 		this.startupLocks.set(screen, true);
 	
 		try {
-			await this.stopStream(screen, true, false); 
-	
+			// Check max streams before attempting to start
 			const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
 			if (activeStreamsCount >= this.config.player.maxStreams) {
 				return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
 			} 
+	
+			await this.stopStream(screen, true, false); 
 	
 			const ipcPath = this.initializeIpcPath(screen);
 			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
@@ -310,7 +312,10 @@ export class PlayerService {
 			await this.stopStream(screen, true, false);
 			return { screen, success: false, error: error instanceof Error ? error.message : String(error) };
 		} finally {
-			this.startupLocks.set(screen, false);
+			// Keep the lock for a bit longer to ensure cooldown is effective
+			setTimeout(() => {
+				this.startupLocks.set(screen, false);
+			}, 100); // Small delay to ensure the cooldown is effective
 		}
 	}
 

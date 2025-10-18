@@ -38,6 +38,15 @@ export function loadAllConfigs(): Config {
     const mpv = loadJsonFile<Config['mpv']>('mpv.json');
     const streamlink = loadJsonFile<Config['streamlink']>('streamlink.json');
     const filters = loadJsonFile<{ filters: string[] }>('filters.json');
+    
+    // Load main config file to get API keys
+    let mainConfig: any = {};
+    try {
+      mainConfig = loadJsonFile<any>('config.json');
+    } catch (error) {
+      logger.warn('Main config.json not found, using environment variables for API keys', 'ConfigLoader');
+    }
+    
     logger.info('Config loaded', 'ConfigLoader');
     logger.debug(JSON.stringify({ favorites, streams, player, mpv, streamlink, filters }), 'ConfigLoader');
     // Merge into a single config object
@@ -46,11 +55,11 @@ export function loadAllConfigs(): Config {
       organizations: streams.organizations || [],
       favoriteChannels: favorites,
   holodex: {
-        apiKey: process.env.HOLODEX_API_KEY || ''
+        apiKey: process.env.HOLODEX_API_KEY || mainConfig?.holodex?.apiKey || ''
       },
       twitch: {
-        clientId: process.env.TWITCH_CLIENT_ID || '',
-        clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
+        clientId: process.env.TWITCH_CLIENT_ID || mainConfig?.twitch?.clientId || '',
+        clientSecret: process.env.TWITCH_CLIENT_SECRET || mainConfig?.twitch?.clientSecret || '',
         streamersFile: 'streamers.json'
       },
       player: {
@@ -72,6 +81,14 @@ export function loadAllConfigs(): Config {
       'ConfigLoader'
     );
     
+    // Try to load main config file for API keys even if other files fail
+    let mainConfig: any = {};
+    try {
+      mainConfig = loadJsonFile<any>('config.json');
+    } catch (mainConfigError) {
+      logger.warn('Main config.json also failed to load', 'ConfigLoader');
+    }
+    
     return {
       streams: [],
       organizations: [],
@@ -87,11 +104,11 @@ export function loadAllConfigs(): Config {
         youtube: { default: [] }
       },
       holodex: {
-        apiKey: process.env.HOLODEX_API_KEY || ''
+        apiKey: process.env.HOLODEX_API_KEY || mainConfig?.holodex?.apiKey || ''
       },
   twitch: {
-        clientId: process.env.TWITCH_CLIENT_ID || '',
-        clientSecret: process.env.TWITCH_CLIENT_SECRET || '',
+        clientId: process.env.TWITCH_CLIENT_ID || mainConfig?.twitch?.clientId || '',
+        clientSecret: process.env.TWITCH_CLIENT_SECRET || mainConfig?.twitch?.clientSecret || '',
         streamersFile: 'streamers.json'
       },
       player: {

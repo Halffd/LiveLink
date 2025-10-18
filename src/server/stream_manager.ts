@@ -773,22 +773,17 @@ export class StreamManager extends EventEmitter {
 	
 		const transitionSuccess = await this.setScreenState(screen, StreamState.STARTING);
 		if (transitionSuccess) {
-			// Use setTimeout to release the current execution context (and the lock) before starting the stream.
-			setTimeout(() => {
-				const streamOptions: StreamOptions = {
-					url: nextStream!.url,
-					screen,
-					title: nextStream!.title,
-					viewerCount: nextStream!.viewerCount,
-					startTime: nextStream!.startTime,
-					quality: nextStream!.quality || screenConfig.quality || 'best',
-					volume: nextStream!.volume ?? this.config.player.defaultVolume ?? screenConfig.volume ?? 50,
-					windowMaximized: screenConfig.windowMaximized,
-				};
-				this.startStream(streamOptions).catch(err => {
-					logger.error(`Error bubbled up from async startStream call for screen ${screen}`, 'StreamManager', err);
-				});
-			}, 0);
+			const streamOptions: StreamOptions = {
+				url: nextStream!.url,
+				screen,
+				title: nextStream!.title,
+				viewerCount: nextStream!.viewerCount,
+				startTime: nextStream!.startTime,
+				quality: nextStream!.quality || screenConfig.quality || 'best',
+				volume: nextStream!.volume ?? this.config.player.defaultVolume ?? screenConfig.volume ?? 50,
+				windowMaximized: screenConfig.windowMaximized,
+			};
+			await this.startStream(streamOptions);
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
@@ -837,14 +832,14 @@ export class StreamManager extends EventEmitter {
 	
 				// Mark as error and try the next one
 				await this.setScreenState(screen, StreamState.ERROR, new Error(startResult.error));
-				// Use setTimeout to avoid deep recursion and holding the lock.
-				setTimeout(() => this.handleStreamEnd(screen), 1000);
+				// Use handleStreamEnd which has proper locking
+				await this.handleStreamEnd(screen);
 			}
 		} catch (error) {
 			logger.error(`Error starting next stream on screen ${screen}`, 'StreamManager', error);
 			await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
-			// Use setTimeout to avoid deep recursion and holding the lock.
-			setTimeout(() => this.handleStreamEnd(screen), 1000);
+			// Use handleStreamEnd which has proper locking
+			await this.handleStreamEnd(screen);
 		}
 	}
 
@@ -928,7 +923,20 @@ export class StreamManager extends EventEmitter {
 				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
 				// If the error is max streams, wait longer before retrying.
 				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
-				setTimeout(() => this.handleStreamEnd(screen), retryDelay);
+				if (retryDelay > 1000) {
+					// For longer delays, use setTimeout to not block the current operation
+					setTimeout(() => {
+						// Use withLock to ensure proper synchronization
+						this.withLock(screen, 'retryAfterError', async () => {
+							await this.handleStreamEnd(screen);
+						}).catch(err => {
+							logger.error(`Error in retry after error for screen ${screen}`, 'StreamManager', err);
+						});
+					}, retryDelay);
+				} else {
+					// For short delays, call directly to maintain proper locking
+					await this.handleStreamEnd(screen);
+				}
 				return { screen, success: false, error: error };
 			}
 		} catch (error) {
@@ -936,7 +944,8 @@ export class StreamManager extends EventEmitter {
 			const err = error instanceof Error ? error : new Error(String(error));
 			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
 			await this.setScreenState(screen, StreamState.ERROR, err);
-			setTimeout(() => this.handleStreamEnd(screen), 1000);
+			// Use handleStreamEnd which has proper locking
+			await this.handleStreamEnd(screen);
 			return { screen, success: false, error: err.message };
 		}
 	}
