@@ -716,7 +716,7 @@ export class StreamManager extends EventEmitter {
 		// 2. Find the next valid stream from the queue
 		const lastUpdate = this.lastUpdateTimestamp.get(screen);
 		if (lastUpdate === undefined || lastUpdate < Date.now() - this.minUpdateSeconds * 1000) {
-			this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
+			await this.updateQueue(screen); // Make this await to ensure queue is updated before proceeding
 		}
 		const queue = this.getQueueForScreen(screen);
 		let nextStream: StreamSource | undefined;
@@ -753,14 +753,16 @@ export class StreamManager extends EventEmitter {
 	
 		if (!nextStream) {
 			logger.info(`No valid streams in queue for screen ${screen}. Will refresh queue.`, 'StreamManager');
-			this.updateQueue(screen).catch(err => logger.error(`Error in background queue update for screen ${screen}`, 'StreamManager', err));
+			await this.updateQueue(screen); // Make this await to ensure queue is updated before proceeding
 			return;
 		}
 		
 		if (streamIndex !== -1) {
-			queue.splice(streamIndex, 1);
-			this.queues.set(screen, queue);
-			queueService.setQueue(screen, queue);
+			// Create a copy of the queue to prevent race conditions during manipulation
+			const updatedQueue = [...queue];
+			updatedQueue.splice(streamIndex, 1);
+			this.queues.set(screen, updatedQueue);
+			queueService.setQueue(screen, updatedQueue);
 		}
 	
 		// 3. Transition state to STARTING, then start the stream process after releasing the lock
