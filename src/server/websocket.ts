@@ -43,10 +43,10 @@ export class WebSocketService {
     });
 
     // Listen for queue updates
-    this.streamManager.on('queueUpdate', (screen: number, queue: StreamSource[]) => {
+    this.streamManager.on('queueUpdate', (data: { screen: number, queue: StreamSource[] }) => {
       this.broadcast({
         type: 'queueUpdate',
-        data: { screen, queue }
+        data: { screen: data.screen, queue: data.queue }
       });
     });
 

@@ -763,6 +763,7 @@ export class StreamManager extends EventEmitter {
 			updatedQueue.splice(streamIndex, 1);
 			this.queues.set(screen, updatedQueue);
 			queueService.setQueue(screen, updatedQueue);
+			this.emit('queueUpdate', { screen, queue: updatedQueue });
 		}
 	
 		// 3. Transition state to STARTING, then start the stream process after releasing the lock
@@ -1307,6 +1308,7 @@ export class StreamManager extends EventEmitter {
 			`Reordered queue for screen ${screen}: moved item from ${sourceIndex} to ${targetIndex}`,
 			'StreamManager'
 		);
+		this.emit('queueUpdate', { screen, queue });
 	}
 
 	getQueueForScreen(screen: number): StreamSource[] {
