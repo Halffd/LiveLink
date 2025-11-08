@@ -176,6 +176,7 @@ export class StreamManager extends EventEmitter {
 	private watchedStreams: Map<string, number> = new Map(); // URL -> timestamp
 	private readonly MAX_WATCHED_STREAMS = 50;
 	private readonly WATCHED_STREAM_RESET_TIME = 12 * 60 * 60 * 1000; // 12 hours
+	private currentlyPlayingUrls: Set<string> = new Set(); // Track currently playing streams to prevent duplicates
 
 	constructor(
 		config: Config,
@@ -711,6 +712,8 @@ export class StreamManager extends EventEmitter {
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
 			this.markStreamAsWatched(existingStream.url);
+			// Remove from currently playing set if it was playing
+			this.currentlyPlayingUrls.delete(existingStream.url);
 			this.streams.delete(screen);
 		}
 
@@ -749,6 +752,12 @@ export class StreamManager extends EventEmitter {
 				}
 			}
 			
+			// Skip if this stream is currently playing on any screen to prevent duplicates
+			if (this.currentlyPlayingUrls.has(potentialStream.url)) {
+				logger.debug(`Skipping currently playing stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
+				continue;
+			}
+			
 			nextStream = potentialStream;
 			streamIndex = i;
 			break;
@@ -760,10 +769,9 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 		
-		if (streamIndex !== -1) {
-			// Create a copy of the queue to prevent race conditions during manipulation
-			const updatedQueue = [...queue];
-			updatedQueue.splice(streamIndex, 1);
+		if (nextStream) {
+			// Create a copy of the queue and filter out the nextStream to prevent race conditions
+			const updatedQueue = queue.filter(stream => stream.url !== nextStream.url);
 			this.queues.set(screen, updatedQueue);
 			queueService.setQueue(screen, updatedQueue);
 			this.emit('queueUpdate', { screen, queue: updatedQueue });
@@ -918,10 +926,14 @@ export class StreamManager extends EventEmitter {
 					process: null,
 					id: Date.now()
 				});
+				// Track this URL as currently playing to prevent duplicates
+				this.currentlyPlayingUrls.add(options.url);
 				await this.setScreenState(screen, StreamState.PLAYING);
 				return { screen, success: true, message: 'Stream started' };
 			} else {
 				const error = result.error || 'Failed to start stream';
+				// Remove from currently playing set since it failed to start
+				this.currentlyPlayingUrls.delete(url);
 				const failRecord = this.failedStreamAttempts.get(url) || { timestamp: 0, count: 0 };
 				failRecord.count++;
 				failRecord.timestamp = Date.now();
@@ -947,6 +959,8 @@ export class StreamManager extends EventEmitter {
 			}
 		} catch (error) {
 			this.screenStartingTimestamps.delete(screen);
+			// Remove from currently playing set since it failed to start
+			this.currentlyPlayingUrls.delete(url);
 			const err = error instanceof Error ? error : new Error(String(error));
 			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
 			await this.setScreenState(screen, StreamState.ERROR, err);
@@ -972,7 +986,12 @@ export class StreamManager extends EventEmitter {
             }
         }
 			const success = await this.playerService.stopStream(screen, true, isManualStop);
+			const streamInstance = this.streams.get(screen);
 			this.streams.delete(screen);
+			// Remove from currently playing set if it was playing
+			if (streamInstance) {
+				this.currentlyPlayingUrls.delete(streamInstance.url);
+			}
 			await this.setScreenState(screen, StreamState.IDLE);
 			return success;
 	   }, 10000);
@@ -1382,6 +1401,9 @@ export class StreamManager extends EventEmitter {
 
 		// Add new entry
 		this.watchedStreams.set(url, Date.now());
+		
+		// Remove from currently playing set since it's now watched
+		this.currentlyPlayingUrls.delete(url);
 
 		// Sync with queueService
 		queueService.markStreamAsWatched(url);
@@ -1879,14 +1901,21 @@ export class StreamManager extends EventEmitter {
 
 		const filteredStreams = streams.filter((stream) => {
 			const isWatched = this.watchedStreams.has(stream.url);
+			const isCurrentlyPlaying = this.currentlyPlayingUrls.has(stream.url);
+			
 			if (isWatched) {
 				logger.debug(`Filtering out watched stream: ${stream.url}`, 'StreamManager');
 			}
-			return !isWatched;
+			
+			if (isCurrentlyPlaying) {
+				logger.debug(`Filtering out currently playing stream: ${stream.url}`, 'StreamManager');
+			}
+			
+			return !isWatched && !isCurrentlyPlaying;
 		});
 
 		logger.info(
-			`Filtered ${streams.length - filteredStreams.length} watched streams for screen ${screen}`,
+			`Filtered ${streams.length - filteredStreams.length} watched/playing streams for screen ${screen}`,
 			'StreamManager'
 		);
 		return filteredStreams;
