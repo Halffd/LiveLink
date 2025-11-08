@@ -124,6 +124,10 @@ export class PlayerService {
 		this.registerSignalHandlers();
 	}
 
+	public getStartupCooldown(): number {
+		return this.STARTUP_COOLDOWN;
+	}
+
 	private initializeDirectories(): void {
 		try {
 			// Create log directories

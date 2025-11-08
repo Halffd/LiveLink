@@ -695,6 +695,9 @@ export class StreamManager extends EventEmitter {
 	 * @param screen The screen number where the stream ended or should be started.
 	 */
 	private async _handleStreamEndInternal(screen: number): Promise<void> {
+		// Add a delay to respect the player's startup cooldown
+		await new Promise(resolve => setTimeout(resolve, this.playerService.getStartupCooldown()));
+
 		// Get screen config at the start of the function
 		const screenConfig = this.getScreenConfig(screen);
 

@@ -1,0 +1,18 @@
+[Unit]
+Description=LiveLink Server
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/half-arch/repos/LiveLink
+ExecStart=/usr/bin/env node dist/server/api.js
+Restart=always
+RestartSec=5
+EnvironmentFile=%h/.config/livelink.env
+# Logging — send everything to the journal instead of invalid STDOUT targets
+StandardOutput=journal
+StandardError=journal
+# Optional: make sure PATH and env are sane
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
