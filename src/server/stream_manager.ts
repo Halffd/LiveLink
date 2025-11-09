@@ -736,6 +736,8 @@ export class StreamManager extends EventEmitter {
 
 			if (isManuallyClosed) {
 				logger.debug(`Skipping manually closed stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
+				// Remove from currently playing set since it's no longer needed there
+				this.currentlyPlayingUrls.delete(potentialStream.url);
 				this.manuallyClosedStreams.delete(potentialStream.url); // Consume it
 				continue;
 			}
@@ -982,6 +984,8 @@ export class StreamManager extends EventEmitter {
             if (streamInstance) {
                 this.manuallyClosedScreens.add(screen);
                 this.manuallyClosedStreams.set(streamInstance.url, Date.now());
+                // Also add to currently playing URLs to prevent re-selection
+                this.currentlyPlayingUrls.add(streamInstance.url);
                 logger.info(`Marked stream ${streamInstance.url} on screen ${screen} as manually closed.`, 'StreamManager');
             }
         }
@@ -1404,6 +1408,9 @@ export class StreamManager extends EventEmitter {
 		
 		// Remove from currently playing set since it's now watched
 		this.currentlyPlayingUrls.delete(url);
+		
+		// Remove from manually closed set since it's now properly watched
+		this.manuallyClosedStreams.delete(url);
 
 		// Sync with queueService
 		queueService.markStreamAsWatched(url);
