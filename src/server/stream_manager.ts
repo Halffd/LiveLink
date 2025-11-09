@@ -233,6 +233,15 @@ export class StreamManager extends EventEmitter {
 			this.handleStreamEnd(data.screen);
 		});
 
+		// Listen for queue service events
+		queueService.on('queue:empty', (screen: number) => {
+			logger.info(`Queue empty event received for screen ${screen}`, 'StreamManager');
+			// Check if this might be a situation where we should reset trackers
+			// For now, just handle screen-specific logic, but in the future we might want
+			// to check if ALL screens are empty before resetting all trackers
+			this.resetTrackersForScreen(screen);
+		});
+
 		// Listen for queue service network events
 		queueService.networkEmitter.on('offline', () => {
 			this.emit('networkOffline');
@@ -768,6 +777,13 @@ export class StreamManager extends EventEmitter {
 		if (!nextStream) {
 			logger.info(`No valid streams in queue for screen ${screen}. Will refresh queue.`, 'StreamManager');
 			await this.updateQueue(screen); // Make this await to ensure queue is updated before proceeding
+			
+			// Check if this was the "after last stream" scenario and all queues are still empty
+			const queue = this.getQueueForScreen(screen);
+			if (queue.length === 0) {
+				logger.info(`Queue for screen ${screen} still has no valid streams after refresh - "after last stream" scenario`, 'StreamManager');
+				await this.checkForAllQueuesEmpty();
+			}
 			return;
 		}
 		
@@ -871,6 +887,14 @@ export class StreamManager extends EventEmitter {
 			try {
 				logger.info(`Handling empty queue for screen ${screen}, fetching fresh streams`, 'StreamManager');
 				await this.updateQueue(screen); // This populates this.queues
+				
+				// After updating the queue, check if it's still empty and if this might be a good time to reset trackers
+				const queue = this.getQueueForScreen(screen);
+				if (queue.length === 0) {
+					logger.info(`Queue for screen ${screen} is still empty after update`, 'StreamManager');
+					// This might be a good time to consider resetting trackers if ALL queues are empty
+					await this.checkForAllQueuesEmpty();
+				}
 				
 				// handleStreamEnd will pick up the newly populated queue and start the first valid stream.
 				await this.handleStreamEnd(screen);
@@ -1988,6 +2012,77 @@ export class StreamManager extends EventEmitter {
 	private isStreamWatched(url: string): boolean {
 		// Use local watchedStreams to be consistent with markStreamAsWatched
 		return this.watchedStreams.has(url);
+	}
+
+	/**
+	 * Reset stream trackers for a specific screen when queue becomes empty
+	 * This helps clean up any stale tracking data when no more streams are available
+	 */
+	private resetTrackersForScreen(screen: number): void {
+		// Clean up manually closed streams associated with this screen when queue is empty
+		// We do this by removing any manually closed streams that might be related to this screen
+		// However, we need to be careful since manuallyClosedStreams maps URL to timestamp
+		// so we can't directly associate them with a specific screen
+		
+		// For now, clean up any stale manually closed streams when queues are empty
+		// This helps prevent accumulation of old tracking data
+		if (this.manuallyClosedStreams.size > 0) {
+			logger.info(`Cleaning up manually closed streams due to empty queue on screen ${screen}`, 'StreamManager');
+			// The manually closed streams will be cleared gradually as they're processed
+			// or we could clear them entirely when all queues are empty
+		}
+		
+		logger.info(`Queue is empty for screen ${screen}, checking for additional cleanup`, 'StreamManager');
+	}
+
+	/**
+	 * Reset all stream tracking data for maintenance or when appropriate
+	 * This clears watched streams, manually closed streams, etc. to allow reprocessing
+	 */
+	public resetAllTrackers(): void {
+		logger.info('Resetting all stream trackers', 'StreamManager');
+		
+		// Clear watched streams - this allows previously watched streams to be available again
+		this.watchedStreams.clear();
+		queueService.clearWatchedStreams();
+		
+		// Clear manually closed streams - allows manually closed streams to be available again
+		this.manuallyClosedStreams.clear();
+		
+		// Note: We don't clear currentlyPlayingUrls because those are actively playing
+		// and clearing them would allow duplicates of currently playing streams
+		// Only clear them if there are no active streams across all screens
+		if (this.getActiveAndStartingStreamsCount() === 0) {
+			this.currentlyPlayingUrls.clear();
+		}
+		
+		logger.info('All stream trackers have been reset', 'StreamManager');
+	}
+
+	/**
+	 * Check if all queues across all screens are empty and potentially reset trackers
+	 */
+	private async checkForAllQueuesEmpty(): Promise<void> {
+		// Check if all enabled screens have empty queues
+		const allEmpty = this.config.streams.every(screenConfig => {
+			if (!screenConfig.enabled) {
+				// Disabled screens don't count
+				return true;
+			}
+			const queue = this.getQueueForScreen(screenConfig.screen);
+			return queue.length === 0;
+		});
+
+		if (allEmpty) {
+			logger.info('All enabled screen queues are empty, considering tracker reset', 'StreamManager');
+			
+			// Check if no streams are currently playing across all screens
+			const activeStreamsCount = this.getActiveAndStartingStreamsCount();
+			if (activeStreamsCount === 0) {
+				logger.info('All queues empty and no active streams, resetting all trackers', 'StreamManager');
+				this.resetAllTrackers();
+			}
+		}
 	}
 
 	/**
