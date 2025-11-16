@@ -1588,12 +1588,45 @@ export class StreamManager extends EventEmitter {
 	}
 
 	private sortStreams(streams: StreamSource[], screenConfig?: ScreenConfig): StreamSource[] {
-		const screenSortConfig = screenConfig?.sorting;
-		const screenSortFields = screenSortConfig ? [screenSortConfig] : undefined;
-		const globalSortFields = this.config.sorting?.fields;
-		const sortFields = screenSortFields || globalSortFields;
+		// Helper type guard functions
+		const hasFields = (sortConfig: any): sortConfig is { fields: Array<{ field: string; order: 'asc' | 'desc'; ignore?: string | string[] }> } => {
+			return sortConfig && Array.isArray(sortConfig.fields);
+		};
 
-		if (!sortFields || !Array.isArray(sortFields)) {
+		const isValidSimpleSort = (sortConfig: any): sortConfig is { field: string; order: 'asc' | 'desc'; ignore?: string | string[] } => {
+			return sortConfig &&
+				typeof sortConfig.field === 'string' &&
+				typeof sortConfig.order === 'string';
+		};
+
+		// Handle screen-specific sorting - handle both simple { field, order } and complex { fields: [...] } formats
+		let sortFields: Array<{ field: string; order: 'asc' | 'desc'; ignore?: string | string[] }> | undefined;
+
+		if (screenConfig?.sorting) {
+			if (hasFields(screenConfig.sorting)) {
+				// Complex format: { fields: [{ field, order, ignore? }, ...] }
+				sortFields = screenConfig.sorting.fields;
+			} else if (isValidSimpleSort(screenConfig.sorting)) {
+				// Simple format: { field, order, ignore? }
+				const screenSort = screenConfig.sorting;
+				const sortRule: { field: string; order: 'asc' | 'desc'; ignore?: string | string[] } = {
+					field: screenSort.field,
+					order: screenSort.order as 'asc' | 'desc'
+				};
+
+				// Add ignore property only if it exists in the screen config
+				if ('ignore' in screenSort && screenSort.ignore) {
+					sortRule.ignore = screenSort.ignore as string | string[];
+				}
+
+				sortFields = [sortRule];
+			}
+		} else if (this.config.sorting?.fields) {
+			// Use global sorting configuration
+			sortFields = this.config.sorting.fields;
+		}
+
+		if (!sortFields || !Array.isArray(sortFields) || sortFields.length === 0) {
 			// Fallback to a sensible default sort if config is not present
 			return streams.sort((a, b) => {
 				const priorityA = a.priority ?? 999;
@@ -1613,7 +1646,7 @@ export class StreamManager extends EventEmitter {
 		return streams.sort((a, b) => {
 			logger.debug(`Comparing streams: A=${a.title} (score: ${a.score}, priority: ${a.priority}, subtype: ${a.subtype}) vs B=${b.title} (score: ${b.score}, priority: ${b.priority}, subtype: ${b.subtype})`, 'StreamManager');
 			for (const rule of sortFields) {
-				const { field, order, ignore } = rule as { field: string; order: 'asc' | 'desc'; ignore?: string | string[]; };
+				const { field, order, ignore } = rule;
 				logger.debug(`  Applying rule: field=${field}, order=${order}, ignore=${ignore}`, 'StreamManager');
 
 				const aIsIgnored = ignore && ((Array.isArray(ignore) && a.subtype !== undefined && ignore.includes(a.subtype as string)) || (a.subtype !== undefined && a.subtype === ignore));

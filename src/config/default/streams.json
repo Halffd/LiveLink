@@ -15,11 +15,99 @@
 			"sources": [
 				{
 					"type": "holodex",
+					"subtype": "favorites",
+					"enabled": true,
+					"limit": 200,
+					"priority": 1
+				},
+				{
+					"type": "holodex",
 					"subtype": "organization",
 					"name": "Hololive",
 					"enabled": true,
 					"limit": 100,
 					"priority": 2
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Phase Connect",
+					"enabled": true,
+					"limit": 15,
+					"priority": 3
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "VSpo",
+					"enabled": true,
+					"limit": 30,
+					"priority": 4
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Nijisanji",
+					"enabled": true,
+					"limit": 10,
+					"priority": 5
+				},
+
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Varium",
+					"enabled": true,
+					"limit": 30,
+					"priority": 6
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "VEE",
+					"enabled": true,
+					"limit": 30,
+					"priority": 7
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "VOMS",
+					"enabled": true,
+					"limit": 50,
+					"priority": 8
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": ".LIVE",
+					"enabled": true,
+					"limit": 30,
+					"priority": 9
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "VReverie",
+					"enabled": true,
+					"limit": 30,
+					"priority": 10
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "V4Mirai",
+					"enabled": true,
+					"limit": 11,
+					"priority": 40
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Independents",
+					"enabled": true,
+					"limit": 50,
+					"priority": 12
 				}
 			],
 			"sorting": {
