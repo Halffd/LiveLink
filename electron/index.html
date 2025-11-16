@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LiveLink</title>
+  <script>
+    // Redirect API calls to the local server
+    // For Electron app, all API calls should go to the local server
+    const originalFetch = window.fetch;
+    window.fetch = async function(resource, options) {
+      // If this is an API request, redirect to the local server
+      if (typeof resource === 'string' && resource.startsWith('/api')) {
+        resource = 'http://localhost:3001' + resource;
+      } else if (typeof resource === 'string' && resource.startsWith('/')) {
+        // Handle other requests as needed
+      }
+      
+      return originalFetch(resource, options);
+    };
+  </script>
+</head>
+<body>
+  <div id="svelte-app"></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
