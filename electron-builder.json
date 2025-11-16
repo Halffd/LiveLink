@@ -1,0 +1,33 @@
+{
+  "productName": "LiveLink",
+  "appId": "com.livelink.app",
+  "directories": {
+    "output": "release"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "node_modules/**/*",
+    "package.json",
+    "config/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "config/",
+      "to": "config/"
+    }
+  ],
+  "win": {
+    "target": "nsis",
+    "icon": "build/icons/icon.png"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "build/icons/icon.icns"
+  },
+  "linux": {
+    "target": "AppImage",
+    "icon": "build/icons/icon.png",
+    "category": "Network"
+  }
+}
