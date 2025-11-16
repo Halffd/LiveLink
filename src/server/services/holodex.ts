@@ -62,11 +62,13 @@ export class HolodexService implements StreamService {
       if (channels.length > 0) {
         return this.getStreamsByChannels(channels);
       }
-      
+
       // Otherwise, fetch by organization or all streams
       if (organization) {
-        params.org = organization;
-        logger.debug(`Fetching streams for organization: ${organization}`, 'HolodexService');
+        // Map common organization aliases to actual Holodex organization names
+        const normalizedOrg = this.normalizeOrganizationName(organization);
+        params.org = normalizedOrg;
+        logger.debug(`Fetching streams for organization: ${organization} (normalized to: ${normalizedOrg})`, 'HolodexService');
       }
 
       logger.debug(`Fetching ${params.limit} live streams${organization ? ` for ${organization}` : ''}`, 'HolodexService');
@@ -281,14 +283,43 @@ export class HolodexService implements StreamService {
     return false;
   }
 
+  private normalizeOrganizationName(orgName: string): string {
+    // Create a mapping of common aliases to actual Holodex organization names
+    const orgMap: { [key: string]: string } = {
+      'Hololive EN': 'Hololive English',
+      'Hololive English': 'Hololive English',
+      'Hololive JP': 'Hololive',
+      'Hololive': 'Hololive',
+      'Nijisanji EN': 'Nijisanji English',
+      'Nijisanji English': 'Nijisanji English',
+      'Nijisanji': 'Nijisanji',
+      'HoloX': 'Hololive',
+      'HoloID': 'Hololive-ID',
+      'Hololive ID': 'Hololive-ID',
+      'Holo JP': 'Hololive',
+      'Holo EN': 'Hololive English',
+      'Holo ID': 'Hololive-ID',
+      'Holo CN': 'Hololive China'
+    };
+
+    // Normalize the input by removing extra spaces and converting to title case
+    const normalizedInput = orgName
+      .trim()
+      .split(' ')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
+
+    return orgMap[normalizedInput] || orgName;
+  }
+
   public updateFavorites(channels: string[]): void {
     if (!channels || !Array.isArray(channels)) {
       logger.warn('Invalid Holodex favorite channels provided, ignoring update', 'HolodexService');
       return;
     }
-    
+
     logger.info(`Updating Holodex favorites with ${channels.length} channels`, 'HolodexService');
     logger.debug(`New Holodex favorites: ${channels.join(', ')}`, 'HolodexService');
     this.favoriteChannels = channels;
   }
-} 
+}

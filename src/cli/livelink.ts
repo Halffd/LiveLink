@@ -92,6 +92,12 @@ async function handleStreamList() {
       console.log(`URL: ${stream.url}`);
       console.log(`Platform: ${stream.platform || 'unknown'}`);
       console.log(`Status: ${stream.status || 'unknown'}`);
+      if (stream.viewerCount !== undefined && stream.viewerCount !== null) {
+        console.log(`Viewers: ${stream.viewerCount}`);
+      }
+      if (stream.startTime) {
+        console.log(`Uptime: ${formatUptime(stream.startTime)}`);
+      }
       console.log('---');
     });
   } catch (error) {
@@ -109,7 +115,10 @@ async function handleQueueShow(screen: number) {
     const queue = await response.json() as StreamSource[];
     console.log(chalk.blue(`\nQueue for Screen ${screen} (${queue.length} items):`));
     queue.forEach((stream, index) => {
-      console.log(`${index + 1}. ${stream.title || stream.url}`);
+      const viewerCount = stream.viewerCount ? ` [${stream.viewerCount} viewers]` : '';
+      const priority = stream.priority ? ` [P: ${stream.priority}]` : '';
+      const score = stream.score ? ` [S: ${stream.score}]` : '';
+      console.log(`${index + 1}. ${stream.title || stream.url}${viewerCount}${priority}${score}`);
     });
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
@@ -258,7 +267,8 @@ streamCommands
       
       console.log(chalk.blue(`\nFound ${streams.length} VTuber Streams:`));
       streams.forEach((stream, index) => {
-        console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}`));
+        const viewerCount = stream.viewerCount ? ` [${stream.viewerCount} viewers]` : '';
+        console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}${viewerCount}`));
         console.log(`URL: ${stream.url}`);
         if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
       });
@@ -284,7 +294,8 @@ streamCommands
       
       console.log(chalk.blue(`\nFound ${streams.length} Japanese Streams:`));
       streams.forEach((stream, index) => {
-        console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}`));
+        const viewerCount = stream.viewerCount ? ` [${stream.viewerCount} viewers]` : '';
+        console.log(chalk.green(`\n${index + 1}. ${stream.title || 'Untitled'}${viewerCount}`));
         console.log(`URL: ${stream.url}`);
         if (stream.viewerCount) console.log(`Viewers: ${stream.viewerCount}`);
       });
