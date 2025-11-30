@@ -284,25 +284,18 @@ export class HolodexService implements StreamService {
   }
 
   private normalizeOrganizationName(orgName: string): string {
-    // Create a mapping of common aliases to actual Holodex organization names
     const orgMap: { [key: string]: string } = {
-      'Hololive EN': 'Hololive English',
-      'Hololive English': 'Hololive English',
+      'Hololive EN': 'Hololive',
+      'Hololive English': 'Hololive',
       'Hololive JP': 'Hololive',
-      'Hololive': 'Hololive',
-      'Nijisanji EN': 'Nijisanji English',
-      'Nijisanji English': 'Nijisanji English',
-      'Nijisanji': 'Nijisanji',
+      'Hololive ID': 'Hololive',
       'HoloX': 'Hololive',
-      'HoloID': 'Hololive-ID',
-      'Hololive ID': 'Hololive-ID',
+      'HoloID': 'Hololive',
       'Holo JP': 'Hololive',
-      'Holo EN': 'Hololive English',
-      'Holo ID': 'Hololive-ID',
-      'Holo CN': 'Hololive China'
+      'Holo EN': 'Hololive',
+      'Holo ID': 'Hololive'
     };
 
-    // Normalize the input by removing extra spaces and converting to title case
     const normalizedInput = orgName
       .trim()
       .split(' ')
