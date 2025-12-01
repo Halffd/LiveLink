@@ -3,6 +3,7 @@ import type {
 	FavoriteChannel,
 	FavoriteChannels,
 	PlayerSettings,
+	QueueStreamSource,
 	ScreenConfig,
 	StreamEnd,
 	StreamOptions,
@@ -128,8 +129,8 @@ export class StreamManager extends EventEmitter {
 	private manuallyClosedScreens: Set<number> = new Set();
 	private screenConfigs: Map<number, ScreenConfig> = new Map();
 
-	// Simplified queues management
-	private queues: Map<number, StreamSource[]> = new Map();
+	// Single source of truth: queues with enhanced state tracking
+	private queues: Map<number, QueueStreamSource[]> = new Map();
 
 	// Network state
 	private isOffline = false;
@@ -147,11 +148,9 @@ export class StreamManager extends EventEmitter {
 	// Simplified, single interval for queue management
 	private queueUpdateInterval: NodeJS.Timeout | null = null;
 
-	// Track streams that failed to start to avoid infinite retry loops
-	private failedStreamAttempts: Map<string, { timestamp: number; count: number }> = new Map();
+	// Single source of truth tracking - all state derived from queues
 	private readonly MAX_STREAM_ATTEMPTS = 3;
 	    private readonly STREAM_FAILURE_RESET_TIME = 10 * 60 * 1000; // 10 minutes in ms
-    private manuallyClosedStreams: Map<string, number> = new Map();
 	private lastUpdateTimestamp: Map<number, number> = new Map();
 	private minUpdateSeconds: number = 60;
 	// Add a map to track when screens entered the STARTING state
@@ -171,12 +170,6 @@ export class StreamManager extends EventEmitter {
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private networkRetries: Map<number, number> = new Map();
 	private lastNetworkError: Map<number, number> = new Map();
-
-	// Add new properties at the top of the class
-	private watchedStreams: Map<string, number> = new Map(); // URL -> timestamp
-	private readonly MAX_WATCHED_STREAMS = 50;
-	private readonly WATCHED_STREAM_RESET_TIME = 12 * 60 * 60 * 1000; // 12 hours
-	private currentlyPlayingUrls: Set<string> = new Set(); // Track currently playing streams to prevent duplicates
 
 	constructor(
 		config: Config,
@@ -720,9 +713,12 @@ export class StreamManager extends EventEmitter {
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
+			// Mark as watched if it was playing for a sufficient duration
+			// (for now, we'll mark all ended streams as watched, but could add logic to only watch if played long enough)
 			this.markStreamAsWatched(existingStream.url);
-			// Remove from currently playing set if it was playing
-			this.currentlyPlayingUrls.delete(existingStream.url);
+
+			// Mark as not playing in the queue
+			this.markStreamAsNotPlaying(screen, existingStream.url);
 			this.streams.delete(screen);
 		}
 
@@ -734,20 +730,19 @@ export class StreamManager extends EventEmitter {
 			await this.updateQueue(screen);
 		}
 
-		const queue = this.getQueueForScreen(screen);
-		let nextStream: StreamSource | undefined;
-		let streamIndex = -1;
+		const queue = this.queues.get(screen) || [];
+		let nextStream: QueueStreamSource | undefined;
 
 		// Find next valid stream
-		for (let i = 0; i < queue.length; i++) {
-			const potentialStream = queue[i];
-			const failRecord = this.failedStreamAttempts.get(potentialStream.url);
+		for (const potentialStream of queue) {
 			const isWatched = this.isStreamWatched(potentialStream.url);
-			const isManuallyClosed = this.manuallyClosedStreams.has(potentialStream.url);
+			const isManuallyClosed = this.isStreamManuallyClosed(potentialStream.url);
+			const hasTooManyFailures = this.hasStreamFailedTooManyTimes(potentialStream.url);
+			const isCurrentlyPlaying = this.isStreamCurrentlyPlaying(potentialStream.url);
 
 			if (isManuallyClosed) {
 				logger.debug(`Skipping manually closed stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
-				continue; // DON'T delete yet - let cleanup handle it
+				continue;
 			}
 
 			if (isWatched && (screenConfig?.skipWatchedStreams ?? true)) {
@@ -755,21 +750,20 @@ export class StreamManager extends EventEmitter {
 				continue;
 			}
 
-			if (failRecord && Date.now() - failRecord.timestamp < this.STREAM_FAILURE_RESET_TIME) {
-				if (failRecord.count >= this.MAX_STREAM_ATTEMPTS) {
-					logger.warn(`Skipping stream with multiple recent failures: ${potentialStream.url}`, 'StreamManager');
-					continue;
-				}
+			if (hasTooManyFailures) {
+				logger.warn(`Skipping stream with multiple recent failures: ${potentialStream.url}`, 'StreamManager');
+				continue;
 			}
 
 			// Skip if this stream is currently playing on any screen to prevent duplicates
-			if (this.currentlyPlayingUrls.has(potentialStream.url)) {
+			if (isCurrentlyPlaying) {
 				logger.debug(`Skipping currently playing stream on screen ${screen}: ${potentialStream.url}`, 'StreamManager');
 				continue;
 			}
 
-			nextStream = potentialStream;
-			streamIndex = i;
+			// Mark this stream as selected to prevent race conditions
+			potentialStream.shouldSkip = true;
+			nextStream = potentialStream as QueueStreamSource;
 			break;
 		}
 
@@ -778,7 +772,7 @@ export class StreamManager extends EventEmitter {
 			await this.updateQueue(screen);
 
 			// Check if queue is still empty after refresh
-			const queue = this.getQueueForScreen(screen);
+			const queue = this.queues.get(screen) || [];
 			if (queue.length === 0) {
 				logger.info(`Queue for screen ${screen} still empty after refresh`, 'StreamManager');
 				await this.checkForAllQueuesEmpty();
@@ -812,16 +806,26 @@ export class StreamManager extends EventEmitter {
 			const startResult = await this.startStream(streamOptions);
 
 			if (startResult.success) {
-				// NOW remove it from the queue
+				// NOW remove it from the queue after successful start
 				const updatedQueue = queue.filter(stream => stream.url !== nextStream!.url);
 				this.queues.set(screen, updatedQueue);
-				queueService.setQueue(screen, updatedQueue);
-				this.emit('queueUpdate', { screen, queue: updatedQueue });
+				queueService.setQueue(screen, updatedQueue as StreamSource[]);
+				this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
 
-				// Clean up manual close tracking
-				this.manuallyClosedStreams.delete(nextStream.url);
+				// Mark as playing in the context that we're tracking it
+				this.markStreamAsPlaying(screen, nextStream.url);
+			} else {
+				// If it failed, update the failure count and remove the "should skip" marker
+				// so it can be retried later
+				this.recordStreamFailure(nextStream.url);
+
+				// Remove the temporary "shouldSkip" marker since it will be retried
+				for (const stream of queue) {
+					if (stream.url === nextStream!.url) {
+						stream.shouldSkip = false;
+					}
+				}
 			}
-			// If it failed, startStream will handle retry via handleStreamEnd
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
@@ -862,11 +866,8 @@ export class StreamManager extends EventEmitter {
 			if (!startResult.success) {
 				logger.error(`Failed to start next stream on screen ${screen}: ${startResult.error}`, 'StreamManager');
 				
-				// Log the failure
-				const failRecord = this.failedStreamAttempts.get(nextStream.url) || { timestamp: 0, count: 0 };
-				failRecord.count++;
-				failRecord.timestamp = Date.now();
-				this.failedStreamAttempts.set(nextStream.url, failRecord);
+				// Record the failure in the queue (single source of truth)
+				this.recordStreamFailure(nextStream.url);
 	
 				// Mark as error and try the next one
 				await this.setScreenState(screen, StreamState.ERROR, new Error(startResult.error));
@@ -919,34 +920,34 @@ export class StreamManager extends EventEmitter {
 			logger.error(error, 'StreamManager');
 			return { screen: -1, success: false, error };
 		}
-		
+
 		const screen = options.screen;
 		const { url } = options;
-	
+
 		if (this.isShuttingDown) {
 			return { screen, success: false, error: 'Manager is shutting down' };
 		}
-		
+
 		logger.info(`Starting stream process for screen ${screen}: ${url}`, 'StreamManager');
 		this.screenStartingTimestamps.set(screen, Date.now());
-	
+
 		try {
 			const screenConfig = this.screenConfigs.get(screen);
 			if (!screenConfig) {
 				throw new Error(`Screen ${screen} not found in screenConfigs`);
 			}
-	
-			const result = await this.playerService.startStream({ 
-				...options, 
-				screen, 
+
+			const result = await this.playerService.startStream({
+				...options,
+				screen,
 				config: screenConfig,
-				startTime: options.startTime !== undefined 
+				startTime: options.startTime !== undefined
 					? (typeof options.startTime === 'string' ? parseInt(options.startTime, 10) : options.startTime)
 					: undefined
 			});
-	
+
 			this.screenStartingTimestamps.delete(screen);
-	
+
 			if (result.success) {
 				this.streams.set(screen, {
 					url: options.url,
@@ -958,18 +959,14 @@ export class StreamManager extends EventEmitter {
 					process: null,
 					id: Date.now()
 				});
-				// Track this URL as currently playing to prevent duplicates
-				this.currentlyPlayingUrls.add(options.url);
+				// Mark as playing in the queue (single source of truth)
+				this.markStreamAsPlaying(screen, options.url);
 				await this.setScreenState(screen, StreamState.PLAYING);
 				return { screen, success: true, message: 'Stream started' };
 			} else {
 				const error = result.error || 'Failed to start stream';
-				// Remove from currently playing set since it failed to start
-				this.currentlyPlayingUrls.delete(url);
-				const failRecord = this.failedStreamAttempts.get(url) || { timestamp: 0, count: 0 };
-				failRecord.count++;
-				failRecord.timestamp = Date.now();
-				this.failedStreamAttempts.set(url, failRecord);
+				// Record the failure in the queue (single source of truth)
+				this.recordStreamFailure(url);
 				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
 				// If the error is max streams, wait longer before retrying.
 				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
@@ -991,8 +988,8 @@ export class StreamManager extends EventEmitter {
 			}
 		} catch (error) {
 			this.screenStartingTimestamps.delete(screen);
-			// Remove from currently playing set since it failed to start
-			this.currentlyPlayingUrls.delete(url);
+			// Record the failure in the queue (single source of truth)
+			this.recordStreamFailure(url);
 			const err = error instanceof Error ? error : new Error(String(error));
 			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
 			await this.setScreenState(screen, StreamState.ERROR, err);
@@ -1013,16 +1010,17 @@ export class StreamManager extends EventEmitter {
             const streamInstance = this.streams.get(screen);
             if (streamInstance) {
                 this.manuallyClosedScreens.add(screen);
-                this.manuallyClosedStreams.set(streamInstance.url, Date.now());
+                // Mark in queue as manually closed (single source of truth)
+                this.markStreamAsManuallyClosed(streamInstance.url);
                 logger.info(`Marked stream ${streamInstance.url} on screen ${screen} as manually closed.`, 'StreamManager');
             }
         }
 			const success = await this.playerService.stopStream(screen, true, isManualStop);
 			const streamInstance = this.streams.get(screen);
 			this.streams.delete(screen);
-			// Remove from currently playing set if it was playing
+			// Mark as not playing in the queue
 			if (streamInstance) {
-				this.currentlyPlayingUrls.delete(streamInstance.url);
+				this.markStreamAsNotPlaying(screen, streamInstance.url);
 			}
 			await this.setScreenState(screen, StreamState.IDLE);
 			return success;
@@ -1269,7 +1267,7 @@ export class StreamManager extends EventEmitter {
 		if (!this.screenMutexes.has(screen)) {
 			return;
 		}
-		
+
 		const mutex = this.screenMutexes.get(screen)!;
 		try {
 			// Try to acquire and immediately release the lock
@@ -1282,6 +1280,205 @@ export class StreamManager extends EventEmitter {
 				'StreamManager'
 			);
 			this.screenMutexes.delete(screen);
+		}
+	}
+
+	// Helper methods for single source of truth architecture
+
+	/**
+	 * Get all streams that are currently playing across all screens
+	 * This is derived from the queue state, not a separate track
+	 */
+	private getCurrentlyPlayingUrls(): Set<string> {
+		const urls = new Set<string>();
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.isPlaying) {
+					urls.add(stream.url);
+				}
+			}
+		}
+		// Also include streams that are playing but not in queues (active streams)
+		for (const stream of this.streams.values()) {
+			urls.add(stream.url);
+		}
+		return urls;
+	}
+
+	/**
+	 * Check if a stream is currently playing
+	 */
+	private isStreamCurrentlyPlaying(url: string): boolean {
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.url === url && stream.isPlaying) {
+					return true;
+				}
+			}
+		}
+		return this.streams.has(Array.from(this.streams.entries()).find(([_, s]) => s.url === url)?.[0] ?? -1);
+	}
+
+	/**
+	 * Mark a stream as currently playing in the queue
+	 */
+	private markStreamAsPlaying(screen: number, url: string): void {
+		const queue = this.queues.get(screen) || [];
+		for (const stream of queue) {
+			if (stream.url === url) {
+				stream.isPlaying = true;
+			} else {
+				stream.isPlaying = false; // Ensure other streams are not marked as playing
+			}
+		}
+	}
+
+	/**
+	 * Mark a stream as no longer playing in the queue
+	 */
+	private markStreamAsNotPlaying(screen: number, url: string): void {
+		const queue = this.queues.get(screen) || [];
+		for (const stream of queue) {
+			if (stream.url === url) {
+				stream.isPlaying = false;
+			}
+		}
+	}
+
+	/**
+	 * Check if a stream has been watched
+	 */
+	private isStreamWatched(url: string): boolean {
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.url === url && stream.watchedAt !== undefined) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Mark a stream as watched in the queue
+	 */
+	private markStreamInQueueAsWatched(url: string): void {
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				if (stream.url === url) {
+					stream.watchedAt = Date.now();
+					stream.shouldSkip = true;
+					logger.info(`Marked stream as watched in queue: ${url}`, 'StreamManager');
+				}
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+	}
+
+	/**
+	 * Check if a stream was manually closed
+	 */
+	private isStreamManuallyClosed(url: string): boolean {
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.url === url && stream.manuallyClosedAt !== undefined) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Mark a stream as manually closed in the queue
+	 */
+	private markStreamAsManuallyClosed(url: string): void {
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				if (stream.url === url) {
+					stream.manuallyClosedAt = Date.now();
+					stream.shouldSkip = true;
+					logger.info(`Marked stream as manually closed in queue: ${url}`, 'StreamManager');
+				}
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+	}
+
+	/**
+	 * Check if a stream has failed too many times
+	 */
+	private hasStreamFailedTooManyTimes(url: string): boolean {
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.url === url) {
+					return stream.failureCount >= this.MAX_STREAM_ATTEMPTS &&
+					       Date.now() - (stream.lastAttemptedAt ?? 0) < this.STREAM_FAILURE_RESET_TIME;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Record a stream failure in the queue
+	 */
+	private recordStreamFailure(url: string): void {
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				if (stream.url === url) {
+					stream.failureCount++;
+					stream.lastAttemptedAt = Date.now();
+					logger.info(`Recorded stream failure in queue for ${url} (attempt ${stream.failureCount})`, 'StreamManager');
+				}
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+	}
+
+	/**
+	 * Clean up expired entries in queues (watched, manually closed, etc.)
+	 */
+	private cleanupExpiredQueueEntries(): void {
+		const now = Date.now();
+		const watchedExpiry = 12 * 60 * 60 * 1000; // 12 hours for watched streams
+		const manualCloseExpiry = 60 * 60 * 1000; // 1 hour for manual closes
+		const failureResetTime = this.STREAM_FAILURE_RESET_TIME; // 10 minutes for failures
+
+		for (const [screen, queue] of this.queues.entries()) {
+			const filteredQueue = queue.filter(stream => {
+				// Clean up expired watched entries
+				if (stream.watchedAt && now - stream.watchedAt > watchedExpiry) {
+					stream.watchedAt = undefined;
+					stream.shouldSkip = false;
+					logger.debug(`Expired watched status for ${stream.url}`, 'StreamManager');
+				}
+
+				// Clean up expired manual close entries
+				if (stream.manuallyClosedAt && now - stream.manuallyClosedAt > manualCloseExpiry) {
+					stream.manuallyClosedAt = undefined;
+					stream.shouldSkip = false;
+					logger.debug(`Expired manual close status for ${stream.url}`, 'StreamManager');
+				}
+
+				// Reset failure count if enough time has passed
+				if (stream.lastAttemptedAt && stream.failureCount > 0 &&
+				    now - stream.lastAttemptedAt > failureResetTime) {
+					stream.failureCount = 0;
+					stream.lastAttemptedAt = undefined;
+					logger.debug(`Reset failure count for ${stream.url}`, 'StreamManager');
+				}
+
+				// Keep the stream if it's not marked for skipping (unless it should be kept for other reasons)
+				return true; // Always keep streams in the queue, just update their state
+			});
+
+			// Update with cleaned queue
+			this.queues.set(screen, filteredQueue);
+			queueService.setQueue(screen, filteredQueue as StreamSource[]);
 		}
 	}
 	private async deferStartNextStream(screen: number) {
@@ -1366,7 +1563,10 @@ export class StreamManager extends EventEmitter {
 	}
 
 	getQueueForScreen(screen: number): StreamSource[] {
-		return queueService.getQueue(screen);
+		// Return the queue from our single source of truth, not from queueService
+		// This ensures consistency between our internal state and what's returned
+		const queue = this.queues.get(screen) || [];
+		return queue as StreamSource[];
 	}
 
 	async setPlayerPriority(priority: string, restartStreams: boolean = true): Promise<void> {
@@ -1409,81 +1609,54 @@ export class StreamManager extends EventEmitter {
 			if (stream.url === url) {
 				this.streams.delete(screen);
 				logger.info(`Cleared active stream reference for ${url} on screen ${screen}`);
-			}
-		}
-		// Only keep track of the most recent MAX_WATCHED_STREAMS
-		if (this.watchedStreams.size >= this.MAX_WATCHED_STREAMS) {
-			// Find the oldest entry
-			let oldestUrl = '';
-			let oldestTime = Date.now();
-
-			for (const [streamUrl, timestamp] of this.watchedStreams.entries()) {
-				if (timestamp < oldestTime) {
-					oldestTime = timestamp;
-					oldestUrl = streamUrl;
-				}
-			}
-
-			// Remove the oldest entry
-			if (oldestUrl) {
-				this.watchedStreams.delete(oldestUrl);
-				logger.debug(`Removed oldest watched entry: ${oldestUrl}`, 'StreamManager');
+				// Mark as not playing in the queue
+				this.markStreamAsNotPlaying(screen, url);
 			}
 		}
 
-		// Add new entry
-		this.watchedStreams.set(url, Date.now());
-		
-		// Remove from currently playing set since it's now watched
-		this.currentlyPlayingUrls.delete(url);
-		
-		// Remove from manually closed set since it's now properly watched
-		this.manuallyClosedStreams.delete(url);
+		// Mark in queue as watched (single source of truth)
+		this.markStreamInQueueAsWatched(url);
 
 		// Sync with queueService
 		queueService.markStreamAsWatched(url);
 
-		// Update all queues to remove this stream
+		// Update all queues for this URL to potentially remove them if they should be skipped
 		for (const [screen, queue] of this.queues.entries()) {
-			const index = queue.findIndex((stream) => stream.url === url);
-			if (index !== -1) {
-				// Remove from queue
-				queue.splice(index, 1);
-				this.queues.set(screen, queue);
-
-				// Update queueService
-				queueService.setQueue(screen, queue);
-
-				logger.info(
-					`Removed watched stream ${url} from queue for screen ${screen}`,
-					'StreamManager'
-				);
-				this.emit('queueUpdate', { screen, queue });
-			}
+			const queueAsStreamSource = queue as StreamSource[];
+			this.queues.set(screen, queue);
+			queueService.setQueue(screen, queueAsStreamSource);
+			this.emit('queueUpdate', { screen, queue: queueAsStreamSource });
 		}
 	}
 
 	public getWatchedStreams(): string[] {
-		// Clean up expired entries first
-		const now = Date.now();
-		for (const [url, timestamp] of this.watchedStreams.entries()) {
-			if (now - timestamp > this.WATCHED_STREAM_RESET_TIME) {
-				this.watchedStreams.delete(url);
-				logger.debug(
-					`Removed expired watched entry for ${url} during getWatchedStreams`,
-					'StreamManager'
-				);
+		// Clean up expired entries first using the single source of truth
+		this.cleanupExpiredQueueEntries();
+
+		// Get watched streams from the queue (single source of truth)
+		const watchedUrls = new Set<string>();
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.watchedAt !== undefined) {
+					watchedUrls.add(stream.url);
+				}
 			}
 		}
 
-		
-
-
-		return Array.from(this.watchedStreams.keys());
+		return Array.from(watchedUrls);
 	}
 
 	public clearWatchedStreams(): void {
-		this.watchedStreams.clear();
+		// Clear watched status in all queues (single source of truth)
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				stream.watchedAt = undefined;
+				stream.shouldSkip = false;
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+
 		queueService.clearWatchedStreams();
 		logger.info('Cleared watched streams history', 'StreamManager');
 
@@ -1571,14 +1744,23 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 
-		queue.push(source);
+		// Convert to QueueStreamSource with default state values
+		const queueStream: QueueStreamSource = {
+			...source,
+			addedAt: Date.now(),
+			failureCount: 0,
+			isPlaying: false,
+			shouldSkip: false
+		};
+
+		queue.push(queueStream);
 		this.queues.set(screen, queue);
 
 		// Also update the queue service to ensure consistency
-		queueService.setQueue(screen, queue);
+		queueService.setQueue(screen, queue as StreamSource[]);
 
 		logger.info(`Added stream ${source.url} to queue for screen ${screen}`, 'StreamManager');
-		this.emit('queueUpdate', { screen, queue });
+		this.emit('queueUpdate', { screen, queue: queue as StreamSource[] });
 	}
 
 	public async removeFromQueue(screen: number, index: number): Promise<void> {
@@ -1842,10 +2024,11 @@ export class StreamManager extends EventEmitter {
 				queueLength: queue.length,
 				nextStream: queue.length > 0 ? queue[0].url : null,
 			})),
-			watchedStreamsCount: this.watchedStreams.size,
-			failedStreamAttempts: Array.from(this.failedStreamAttempts.entries()).map(([url, data]) => ({
-				url,
-				...data,
+			watchedStreamsCount: Array.from(this.queues.values()).flat().filter(stream => stream.watchedAt !== undefined).length,
+			failedStreamAttempts: Array.from(this.queues.values()).flat().filter(stream => stream.failureCount > 0).map(stream => ({
+				url: stream.url,
+				count: stream.failureCount,
+				timestamp: stream.lastAttemptedAt || 0,
 			})),
 			isShuttingDown: this.isShuttingDown,
 			isOffline: this.isOffline,
@@ -1947,16 +2130,8 @@ export class StreamManager extends EventEmitter {
 	private filterUnwatchedStreams(streams: StreamSource[], screen: number): StreamSource[] {
 		const now = Date.now();
 
-		// Clean up old watched entries first
-		for (const [url, timestamp] of this.watchedStreams.entries()) {
-			if (now - timestamp > this.WATCHED_STREAM_RESET_TIME) {
-				this.watchedStreams.delete(url);
-				logger.debug(`Removed expired watched entry for ${url}`, 'StreamManager');
-			}
-		}
-
-		// Clean up expired manual close entries
-		this.cleanupExpiredManualCloses();
+		// Clean up expired entries using single source of truth
+		this.cleanupExpiredQueueEntries();
 
 		// Get screen config to check if we should skip watched streams
 		const screenConfig = this.getScreenConfig(screen);
@@ -1971,8 +2146,10 @@ export class StreamManager extends EventEmitter {
 		}
 
 		const filteredStreams = streams.filter((stream) => {
-			const isWatched = this.watchedStreams.has(stream.url);
-			const isCurrentlyPlaying = this.currentlyPlayingUrls.has(stream.url);
+			const isWatched = this.isStreamWatched(stream.url);
+			const isCurrentlyPlaying = this.isStreamCurrentlyPlaying(stream.url);
+			const isManuallyClosed = this.isStreamManuallyClosed(stream.url);
+			const hasTooManyFailures = this.hasStreamFailedTooManyTimes(stream.url);
 
 			if (isWatched) {
 				logger.debug(`Filtering out watched stream: ${stream.url}`, 'StreamManager');
@@ -1982,11 +2159,19 @@ export class StreamManager extends EventEmitter {
 				logger.debug(`Filtering out currently playing stream: ${stream.url}`, 'StreamManager');
 			}
 
-			return !isWatched && !isCurrentlyPlaying;
+			if (isManuallyClosed) {
+				logger.debug(`Filtering out manually closed stream: ${stream.url}`, 'StreamManager');
+			}
+
+			if (hasTooManyFailures) {
+				logger.debug(`Filtering out stream with too many failures: ${stream.url}`, 'StreamManager');
+			}
+
+			return !isWatched && !isCurrentlyPlaying && !isManuallyClosed && !hasTooManyFailures;
 		});
 
 		logger.info(
-			`Filtered ${streams.length - filteredStreams.length} watched/playing streams for screen ${screen}`,
+			`Filtered ${streams.length - filteredStreams.length} watched/playing/failed streams for screen ${screen}`,
 			'StreamManager'
 		);
 		return filteredStreams;
@@ -1998,7 +2183,7 @@ export class StreamManager extends EventEmitter {
 	 */
 	async updateQueue(screen: number): Promise<void> {
 		try {
-			this.cleanupExpiredManualCloses(); // Add this to clean up old manual close entries
+			this.cleanupExpiredQueueEntries(); // Clean up old entries
 			this.lastUpdateTimestamp.set(screen, Date.now());
 			const screenConfig = this.config.streams.find((s) => s.screen === screen);
 			if (!screenConfig || !screenConfig.enabled) {
@@ -2020,7 +2205,16 @@ export class StreamManager extends EventEmitter {
 				return;
 			}
 
-			const unwatchedStreams = this.filterUnwatchedStreams(allStreams, screen);
+			// Convert regular StreamSource objects to QueueStreamSource with state tracking
+			const queueStreams: QueueStreamSource[] = allStreams.map(stream => ({
+				...stream,
+				addedAt: Date.now(),
+				failureCount: 0,
+				isPlaying: false,
+				shouldSkip: false
+			}));
+
+			const unwatchedStreams = this.filterUnwatchedStreams(queueStreams as StreamSource[], screen);
 			const sortedStreams = this.sortStreams(unwatchedStreams, screenConfig);
 
 			// Assign score based on queue index
@@ -2030,17 +2224,35 @@ export class StreamManager extends EventEmitter {
 				}
 			});
 
+			// Update queue - cast back to QueueStreamSource since sortStreams return StreamSource
+			const finalQueue: QueueStreamSource[] = sortedStreams.map(stream => {
+				// Ensure it has all the QueueStreamSource properties
+				const existingQueue = this.queues.get(screen) || [];
+				const existingStream = existingQueue.find(s => s.url === stream.url);
+
+				return {
+					...stream,
+					addedAt: existingStream?.addedAt || Date.now(),
+					lastAttemptedAt: existingStream?.lastAttemptedAt,
+					failureCount: existingStream?.failureCount || 0,
+					manuallyClosedAt: existingStream?.manuallyClosedAt,
+					watchedAt: existingStream?.watchedAt,
+					isPlaying: existingStream?.isPlaying || false,
+					shouldSkip: existingStream?.shouldSkip || false
+				} as QueueStreamSource;
+			});
+
 			// Update queue
-			this.queues.set(screen, sortedStreams);
-			queueService.setQueue(screen, sortedStreams);
+			this.queues.set(screen, finalQueue);
+			queueService.setQueue(screen, finalQueue as StreamSource[]);
 
 			logger.info(
-				`Updated queue for screen ${screen}: ${sortedStreams.length} streams`,
+				`Updated queue for screen ${screen}: ${finalQueue.length} streams`,
 				'StreamManager'
 			);
 
 			// Emit queue update event
-			this.emit('queueUpdate', { screen, queue: sortedStreams });
+			this.emit('queueUpdate', { screen, queue: finalQueue as StreamSource[] });
 		} catch (error) {
 			logger.error(
 				`Error updating queue for screen ${screen}: ${error}`,
@@ -2050,44 +2262,14 @@ export class StreamManager extends EventEmitter {
 		}
 	}
 
-	private isStreamWatched(url: string): boolean {
-		// Use local watchedStreams to be consistent with markStreamAsWatched
-		return this.watchedStreams.has(url);
-	}
-
-	/**
-	 * Clean up expired manual close tracking to prevent accumulation of old entries
-	 */
-	private cleanupExpiredManualCloses(): void {
-		const now = Date.now();
-		const MANUAL_CLOSE_EXPIRY = 60 * 60 * 1000; // 1 hour
-
-		for (const [url, timestamp] of this.manuallyClosedStreams.entries()) {
-			if (now - timestamp > MANUAL_CLOSE_EXPIRY) {
-				this.manuallyClosedStreams.delete(url);
-				logger.debug(`Expired manual close tracking for ${url}`, 'StreamManager');
-			}
-		}
-	}
-
 	/**
 	 * Reset stream trackers for a specific screen when queue becomes empty
 	 * This helps clean up any stale tracking data when no more streams are available
 	 */
 	private resetTrackersForScreen(screen: number): void {
-		// Clean up manually closed streams associated with this screen when queue is empty
-		// We do this by removing any manually closed streams that might be related to this screen
-		// However, we need to be careful since manuallyClosedStreams maps URL to timestamp
-		// so we can't directly associate them with a specific screen
-		
-		// For now, clean up any stale manually closed streams when queues are empty
-		// This helps prevent accumulation of old tracking data
-		if (this.manuallyClosedStreams.size > 0) {
-			logger.info(`Cleaning up manually closed streams due to empty queue on screen ${screen}`, 'StreamManager');
-			// The manually closed streams will be cleared gradually as they're processed
-			// or we could clear them entirely when all queues are empty
-		}
-		
+		// Clean up expired entries for this screen
+		this.cleanupExpiredQueueEntries();
+
 		logger.info(`Queue is empty for screen ${screen}, checking for additional cleanup`, 'StreamManager');
 	}
 
@@ -2097,21 +2279,28 @@ export class StreamManager extends EventEmitter {
 	 */
 	public resetAllTrackers(): void {
 		logger.info('Resetting all stream trackers', 'StreamManager');
-		
-		// Clear watched streams - this allows previously watched streams to be available again
-		this.watchedStreams.clear();
-		queueService.clearWatchedStreams();
-		
-		// Clear manually closed streams - allows manually closed streams to be available again
-		this.manuallyClosedStreams.clear();
-		
-		// Note: We don't clear currentlyPlayingUrls because those are actively playing
-		// and clearing them would allow duplicates of currently playing streams
-		// Only clear them if there are no active streams across all screens
-		if (this.getActiveAndStartingStreamsCount() === 0) {
-			this.currentlyPlayingUrls.clear();
+
+		// Clear watched status in all queues - this allows previously watched streams to be available again
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				stream.watchedAt = undefined;
+				stream.shouldSkip = false;
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-		
+		queueService.clearWatchedStreams();
+
+		// Clear manually closed status in all queues - allows manually closed streams to be available again
+		for (const [screen, queue] of this.queues.entries()) {
+			for (const stream of queue) {
+				stream.manuallyClosedAt = undefined;
+				stream.shouldSkip = false;
+			}
+			// Update queue service
+			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+
 		logger.info('All stream trackers have been reset', 'StreamManager');
 	}
 
