@@ -77,6 +77,26 @@ export interface StreamSource {
 }
 
 /**
+ * Enhanced stream source with state tracking for queue management
+ */
+export interface QueueStreamSource extends StreamSource {
+  /** Timestamp when this stream was added to the queue */
+  addedAt: number;
+  /** Timestamp when this stream was last attempted to start */
+  lastAttemptedAt?: number;
+  /** Number of times this stream has failed to start */
+  failureCount: number;
+  /** Timestamp when this stream was manually closed */
+  manuallyClosedAt?: number;
+  /** Timestamp when this stream was marked as watched */
+  watchedAt?: number;
+  /** Whether this stream is currently playing */
+  isPlaying: boolean;
+  /** Whether this stream should be skipped */
+  shouldSkip: boolean;
+}
+
+/**
  * Represents an active stream with additional runtime information
  */
 export interface Stream extends StreamSource {
