@@ -132,9 +132,8 @@ export class StreamManager extends EventEmitter {
 	// Single source of truth: queues with enhanced state tracking
 	private queues: Map<number, QueueStreamSource[]> = new Map();
 
-	// Global cache of recently watched streams to handle cases where streams come back after being watched
-	private globalWatchedStreams: Map<string, number> = new Map(); // url -> timestamp
-	private readonly GLOBAL_WATCHED_EXPIRY = 12 * 60 * 60 * 1000; // 12 hours
+	// Cached set of watched URLs for efficient lookup
+	private watchedUrls: Set<string> = new Set();
 
 	// Network state
 	private isOffline = false;
@@ -1352,30 +1351,10 @@ export class StreamManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if a stream has been watched (both in queues and global cache)
+	 * Check if a stream has been watched (using cached set)
 	 */
 	private isStreamWatched(url: string): boolean {
-		// Check in queues
-		for (const queue of this.queues.values()) {
-			for (const stream of queue) {
-				if (stream.url === url && stream.watchedAt !== undefined) {
-					return true;
-				}
-			}
-		}
-
-		// Check in global cache
-		const globalWatchedTime = this.globalWatchedStreams.get(url);
-		if (globalWatchedTime !== undefined) {
-			const now = Date.now();
-			if (now - globalWatchedTime < this.GLOBAL_WATCHED_EXPIRY) {
-				return true;
-			} else {
-				// Expired, remove from cache
-				this.globalWatchedStreams.delete(url);
-			}
-		}
-		return false;
+		return this.watchedUrls.has(url);
 	}
 
 	/**
@@ -1393,6 +1372,8 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
+		// Also add to cached set
+		this.watchedUrls.add(url);
 	}
 
 	/**
@@ -1467,6 +1448,9 @@ export class StreamManager extends EventEmitter {
 		const manualCloseExpiry = 60 * 60 * 1000; // 1 hour for manual closes
 		const failureResetTime = this.STREAM_FAILURE_RESET_TIME; // 10 minutes for failures
 
+		// First, rebuild the watched URLs set to ensure consistency
+		this.watchedUrls.clear();
+
 		// Clean up queue entries
 		for (const [screen, queue] of this.queues.entries()) {
 			const filteredQueue = queue.filter(stream => {
@@ -1475,6 +1459,11 @@ export class StreamManager extends EventEmitter {
 					stream.watchedAt = undefined;
 					stream.shouldSkip = false;
 					logger.debug(`Expired watched status for ${stream.url}`, 'StreamManager');
+				}
+
+				// Add to cached set if still watched
+				if (stream.watchedAt !== undefined) {
+					this.watchedUrls.add(stream.url);
 				}
 
 				// Clean up expired manual close entries
@@ -1499,14 +1488,6 @@ export class StreamManager extends EventEmitter {
 			// Update with cleaned queue
 			this.queues.set(screen, filteredQueue);
 			queueService.setQueue(screen, filteredQueue as StreamSource[]);
-		}
-
-		// Clean up global watched cache
-		for (const [url, timestamp] of this.globalWatchedStreams.entries()) {
-			if (now - timestamp > this.GLOBAL_WATCHED_EXPIRY) {
-				this.globalWatchedStreams.delete(url);
-				logger.debug(`Expired global watched entry for ${url}`, 'StreamManager');
-			}
 		}
 	}
 	private async deferStartNextStream(screen: number) {
@@ -1645,9 +1626,6 @@ export class StreamManager extends EventEmitter {
 		// Mark in queue as watched (single source of truth)
 		this.markStreamInQueueAsWatched(url);
 
-		// Also mark globally to prevent re-adding during queue updates
-		this.globalWatchedStreams.set(url, Date.now());
-
 		// Sync with queueService
 		queueService.markStreamAsWatched(url);
 
@@ -1674,17 +1652,6 @@ export class StreamManager extends EventEmitter {
 			}
 		}
 
-		// Also include globally watched streams
-		for (const [url, timestamp] of this.globalWatchedStreams.entries()) {
-			const now = Date.now();
-			if (now - timestamp < this.GLOBAL_WATCHED_EXPIRY) {
-				watchedUrls.add(url);
-			} else {
-				// Clean up expired entry
-				this.globalWatchedStreams.delete(url);
-			}
-		}
-
 		return Array.from(watchedUrls);
 	}
 
@@ -1699,8 +1666,8 @@ export class StreamManager extends EventEmitter {
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
 
-		// Clear global watched cache
-		this.globalWatchedStreams.clear();
+		// Clear cached set
+		this.watchedUrls.clear();
 
 		queueService.clearWatchedStreams();
 		logger.info('Cleared watched streams history', 'StreamManager');
@@ -2275,16 +2242,13 @@ export class StreamManager extends EventEmitter {
 				const existingQueue = this.queues.get(screen) || [];
 				const existingStream = existingQueue.find(s => s.url === stream.url);
 
-				// Check if this stream is watched globally (across all screens) to preserve watched state
-				const isGloballyWatched = this.isStreamWatched(stream.url);
-
 				return {
 					...stream,
 					addedAt: existingStream?.addedAt || Date.now(),
 					lastAttemptedAt: existingStream?.lastAttemptedAt,
 					failureCount: existingStream?.failureCount || 0,
 					manuallyClosedAt: existingStream?.manuallyClosedAt,
-					watchedAt: existingStream?.watchedAt || (isGloballyWatched ? Date.now() : undefined),
+					watchedAt: existingStream?.watchedAt, // Preserve existing watched status
 					isPlaying: existingStream?.isPlaying || false,
 					shouldSkip: existingStream?.shouldSkip || false
 				} as QueueStreamSource;
@@ -2337,8 +2301,9 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-		// Clear global watched cache too
-		this.globalWatchedStreams.clear();
+
+		// Clear cached set
+		this.watchedUrls.clear();
 
 		queueService.clearWatchedStreams();
 
