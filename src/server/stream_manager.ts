@@ -818,18 +818,20 @@ export class StreamManager extends EventEmitter {
 				// Mark as playing in the context that we're tracking it
 				this.markStreamAsPlaying(screen, nextStream.url);
 			} else {
-				// If it failed, update the failure count and remove the "should skip" marker
-				// so it can be retried later
+				// If it failed, update the failure count and remove the failed stream from queue
+				// to prevent infinite retry loops
 				this.recordStreamFailure(nextStream.url);
 
-				// Remove the temporary "shouldSkip" marker since it will be retried
-				const queue = this.queues.get(screen) || [];
-				for (const stream of queue) {
-					if (stream.url === nextStream!.url) {
-						stream.shouldSkip = false;
-					}
-				}
-				queueService.setQueue(screen, queue as StreamSource[]);
+				// Remove the failed stream from queue so it won't be retried immediately
+				const updatedQueue = queue.filter(stream => stream.url !== nextStream!.url);
+				this.queues.set(screen, updatedQueue);
+				queueService.setQueue(screen, updatedQueue as StreamSource[]);
+				this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
+
+				logger.warn(`Removed failed stream ${nextStream.url} from queue, will retry next stream`, 'StreamManager');
+
+				// Now try the NEXT stream (not the same one) - use the internal method to avoid race conditions
+				await this._handleStreamEndInternal(screen);
 			}
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
@@ -1833,23 +1835,106 @@ export class StreamManager extends EventEmitter {
 		}
 
 		if (!sortFields || !Array.isArray(sortFields) || sortFields.length === 0) {
+			// Log distribution before sorting
+			const withScores = streams.filter(s => s.score !== undefined && s.score !== null);
+			const withoutScores = streams.filter(s => s.score === undefined || s.score === null);
+
+			logger.info(
+				`Sorting ${streams.length} streams with default sort: ${withScores.length} favorites with scores, ${withoutScores.length} without`,
+				'StreamManager'
+			);
+
+			if (withScores.length > 0) {
+				logger.debug(
+					`Favorites with scores: ${withScores.map(s => `${s.title} (score: ${s.score})`).join(', ')}`,
+					'StreamManager'
+				);
+			}
+
 			// Fallback to a sensible default sort if config is not present
 			return streams.sort((a, b) => {
+				// 🌟 NEW RULE: Favorites with scores ALWAYS come first
+				const aHasScore = a.score !== undefined && a.score !== null;
+				const bHasScore = b.score !== undefined && b.score !== null;
+
+				// If one has a score and the other doesn't, scored one wins
+				if (aHasScore && !bHasScore) {
+					return -1; // A comes first
+				}
+				if (!aHasScore && bHasScore) {
+					return 1; // B comes first
+				}
+
+				// If BOTH have scores, sort by score (higher score = better = comes first)
+				if (aHasScore && bHasScore) {
+					const scoreDiff = (b.score || 0) - (a.score || 0); // Descending order
+					if (scoreDiff !== 0) {
+						return scoreDiff;
+					}
+					// If scores are equal, fall through to other rules
+				}
+
+				// If neither has a score (or scores are equal), use priority and viewer count
 				const priorityA = a.priority ?? 999;
 				const priorityB = b.priority ?? 999;
 				if (priorityA !== priorityB) {
 					return priorityA - priorityB; // Lower priority number first
 				}
-				const scoreA = a.score ?? 0;
-				const scoreB = b.score ?? 0;
-				if (scoreA !== scoreB) {
-					return scoreB - scoreA; // Higher score first
-				}
 				return (b.viewerCount ?? 0) - (a.viewerCount ?? 0); // Higher viewers first
 			});
 		}
 
+		// Log distribution before sorting
+		const withScores = streams.filter(s => s.score !== undefined && s.score !== null);
+		const withoutScores = streams.filter(s => s.score === undefined || s.score === null);
+
+		logger.info(
+			`Sorting ${streams.length} streams: ${withScores.length} favorites with scores, ${withoutScores.length} without`,
+			'StreamManager'
+		);
+
+		if (withScores.length > 0) {
+			logger.debug(
+				`Favorites with scores: ${withScores.map(s => `${s.title} (score: ${s.score})`).join(', ')}`,
+				'StreamManager'
+			);
+		}
+
 		return streams.sort((a, b) => {
+			// 🌟 NEW RULE: Favorites with scores ALWAYS come first
+			const aHasScore = a.score !== undefined && a.score !== null;
+			const bHasScore = b.score !== undefined && b.score !== null;
+
+			// If one has a score and the other doesn't, scored one wins
+			if (aHasScore && !bHasScore) {
+				logger.debug(
+					`Stream A has score (${a.score}), B doesn't - A wins: ${a.title}`,
+					'StreamManager'
+				);
+				return -1; // A comes first
+			}
+			if (!aHasScore && bHasScore) {
+				logger.debug(
+					`Stream B has score (${b.score}), A doesn't - B wins: ${b.title}`,
+					'StreamManager'
+				);
+				return 1; // B comes first
+			}
+
+			// If BOTH have scores, sort by score (higher score = better = comes first)
+			if (aHasScore && bHasScore) {
+				const scoreDiff = (b.score || 0) - (a.score || 0); // Descending order
+				if (scoreDiff !== 0) {
+					logger.debug(
+						`Both have scores: A=${a.score} vs B=${b.score}, diff=${scoreDiff}: ${scoreDiff < 0 ? 'A' : 'B'} wins`,
+						'StreamManager'
+					);
+					return scoreDiff;
+				}
+				// If scores are equal, fall through to other rules
+			}
+
+			// If neither has a score (or scores are equal), apply normal sorting rules
 			logger.debug(`Comparing streams: A=${a.title} (score: ${a.score}, priority: ${a.priority}, subtype: ${a.subtype}) vs B=${b.title} (score: ${b.score}, priority: ${b.priority}, subtype: ${b.subtype})`, 'StreamManager');
 			for (const rule of sortFields) {
 				const { field, order, ignore } = rule;
