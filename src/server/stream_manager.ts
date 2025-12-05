@@ -1126,6 +1126,14 @@ export class StreamManager extends EventEmitter {
 					stream.subtype = source.subtype;
 				});
 
+				// Debug logging to see what we fetched before returning
+				if (source.type === 'holodex' && source.name && source.name.toLowerCase().includes('hololive')) {
+					logger.info(`DEBUG: Fetched ${sourceStreams.length} streams from Hololive source ${source.name}`, 'StreamManager');
+					sourceStreams.forEach(stream => {
+						logger.debug(`  - ${stream.title} | Channel: ${stream.channel} | Org: ${stream.organization}`, 'StreamManager');
+					});
+				}
+
 				return sourceStreams;
 			},
 			`StreamManager:fetchStreamsForSource:${source.type}:${source.subtype || 'other'}:${screenNumber}`,

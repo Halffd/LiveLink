@@ -95,13 +95,13 @@ export class HolodexService implements StreamService {
         platform: 'youtube' as const,
         viewerCount: video.liveViewers || 0,
         channelId: video.channel?.channelId || '',
-        channelName: video.channel?.name || 'Unknown Channel',
+        channel: video.channel?.name || 'Unknown Channel',
         organization: video.channel?.organization,
         sourceStatus: 'live' as const,
-        startTime: video.actualStart 
-          ? new Date(video.actualStart).getTime() 
-          : video.availableAt 
-            ? new Date(video.availableAt).getTime() 
+        startTime: video.actualStart
+          ? new Date(video.actualStart).getTime()
+          : video.availableAt
+            ? new Date(video.availableAt).getTime()
             : Date.now()
       }));
     } catch (error) {
@@ -170,12 +170,12 @@ export class HolodexService implements StreamService {
           platform: 'youtube' as const,
           viewerCount: video.liveViewers || 0,
           channelId: video.channel?.channelId || '',
-          channelName: video.channel?.name || 'Unknown Channel',
+          channel: video.channel?.name || 'Unknown Channel',
           organization: video.channel?.organization,
           sourceStatus: 'live' as const,
-          startTime: video.actualStart 
-            ? new Date(video.actualStart).getTime() 
-            : video.availableAt 
+          startTime: video.actualStart
+            ? new Date(video.actualStart).getTime()
+            : video.availableAt
               ? new Date(video.availableAt).getTime()
               : publishedDate
                 ? new Date(publishedDate).getTime()
@@ -234,11 +234,12 @@ export class HolodexService implements StreamService {
         platform: 'youtube' as const,
         viewerCount: video.liveViewers,
         channelId: video.channel?.channelId,
+        channel: video.channel?.name || 'Unknown Channel',
         organization: video.channel?.organization
       }));
     } catch (error) {
       logger.error(
-        'Failed to fetch favorite streams', 
+        'Failed to fetch favorite streams',
         'HolodexService',
         error instanceof Error ? error : new Error(String(error))
       );
@@ -251,13 +252,14 @@ export class HolodexService implements StreamService {
     const channelId = video.channel?.channelId;
     const channelName = video.channel?.name;
     const englishName = video.channel?.englishName;
-    
+    const organization = video.channel?.organization;
+
     // If channel is in favorites, don't filter it
     if (channelId && this.favoriteChannels.includes(channelId)) {
       logger.debug(`Channel ${channelName || englishName || channelId} is in favorites, not filtering`, 'HolodexService');
       return false;
     }
-    
+
     // If no channel names, don't filter
     if (!channelName && !englishName) {
       return false;
@@ -268,18 +270,41 @@ export class HolodexService implements StreamService {
       channelName?.toLowerCase().replace(/[\s\-_]+/g, ''),
       englishName?.toLowerCase().replace(/[\s\-_]+/g, '')
     ].filter(Boolean);
-    
+
     // Check if any of the normalized names are in the filters list
     const isFiltered = this.filters.some(filter => {
       const normalizedFilter = filter.toLowerCase().replace(/[\s\-_]+/g, '');
+
+      // More precise organization matching to prevent cross-filtering
+      // If the video belongs to Hololive organization, only apply Hololive-specific filters
+      if (organization && organization.toLowerCase().includes('hololive')) {
+        // Don't filter Hololive channels with Holostars-related filters
+        if (normalizedFilter.includes('holostar')) {
+          return false;
+        }
+        // For Hololive channels, apply the filter normally (but not Holostars filters)
+        return normalizedNames.some(name => name?.includes(normalizedFilter));
+      }
+
+      // If the video belongs to Holostars organization, only apply Holostars-specific filters
+      if (organization && organization.toLowerCase().includes('holostars')) {
+        // Don't filter Holostars channels with Hololive-related filters
+        if (normalizedFilter.includes('hololive')) {
+          return false;
+        }
+        // For Holostars channels, apply the filter normally (but not Hololive filters)
+        return normalizedNames.some(name => name?.includes(normalizedFilter));
+      }
+
+      // For other organizations, use default filtering
       return normalizedNames.some(name => name?.includes(normalizedFilter));
     });
-    
+
     if (isFiltered) {
       logger.debug(`Channel ${channelName || englishName || channelId} matched filter, excluding from results`, 'HolodexService');
       return true;
     }
-    
+
     return false;
   }
 
