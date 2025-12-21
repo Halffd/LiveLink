@@ -919,7 +919,7 @@ export class PlayerService {
 			`--log-file=${logFile}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--volume=${(options.volume || 0).toString()}`,
-			//			`--title="${this.getTitle(options)}"`,
+			`--title=${this.getTitle(options)}`,
 			'--msg-level=all=debug'
 		);
 
