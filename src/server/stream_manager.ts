@@ -1968,6 +1968,13 @@ export class StreamManager extends EventEmitter {
 				const valueA = a[field as keyof StreamSource] as number | undefined;
 				const valueB = b[field as keyof StreamSource] as number | undefined;
 
+				// Special handling for startTime field to prevent unwanted prioritization of long-running streams
+				// If sorting by startTime with 'asc' order, this would prioritize streams that started earliest (longest running)
+				// This behavior is often not desired, so we'll log when it happens to make it more transparent
+				if (field === 'startTime' && valueA !== undefined && valueB !== undefined) {
+					logger.debug(`    Sorting by startTime: A started at ${new Date(valueA).toISOString()}, B started at ${new Date(valueB).toISOString()}`, 'StreamManager');
+				}
+
 				const valA = valueA ?? (order === 'desc' ? -Infinity : Infinity);
 				const valB = valueB ?? (order === 'desc' ? -Infinity : Infinity);
 
