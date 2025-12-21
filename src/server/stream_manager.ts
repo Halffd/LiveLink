@@ -138,6 +138,9 @@ export class StreamManager extends EventEmitter {
 	// Network state
 	private isOffline = false;
 
+	// Timestamp tracking
+	private lastStreamActivityTimestamp: number = Date.now();
+
 	// Path storage
 	private fifoPaths: Map<number, string> = new Map();
 	private ipcPaths: Map<number, string> = new Map();
@@ -555,9 +558,9 @@ export class StreamManager extends EventEmitter {
 		// Get list of enabled screens that aren't currently being processed
 		const screensToProcess =
 			screens ??
-			this.config.streams
-				.filter((s) => s.enabled && !this.processingScreens.has(s.screen))
-				.map((s) => s.screen);
+			Array.from(this.screenConfigs.entries())
+				.filter(([screen, config]) => config.enabled && !this.processingScreens.has(screen))
+				.map(([screen, config]) => screen);
 
 		if (screensToProcess.length === 0) {
 			logger.debug('No screens to process for queue update', 'StreamManager');
@@ -1170,9 +1173,9 @@ export class StreamManager extends EventEmitter {
 		if (this.isShuttingDown) return;
 		logger.info('Auto-starting streams...', 'StreamManager');
 
-		const autoStartScreens = this.config.streams
-			.filter((s) => s.enabled && s.autoStart)
-			.map((s) => s.screen);
+		const autoStartScreens = Array.from(this.screenConfigs.entries())
+			.filter(([screen, config]) => config.enabled && config.autoStart)
+			.map(([screen, config]) => screen);
 
 		if (autoStartScreens.length === 0) {
 			logger.info('No screens configured for auto-start', 'StreamManager');
@@ -1224,6 +1227,9 @@ export class StreamManager extends EventEmitter {
 	
 			// Clear any retry timers
 			this.clearRetryTimers(screen);
+
+			// Update the last stream activity timestamp when disabling a screen
+			this.lastStreamActivityTimestamp = Date.now();
 		});
 	}
 
@@ -1646,6 +1652,9 @@ export class StreamManager extends EventEmitter {
 			queueService.setQueue(screen, queueAsStreamSource);
 			this.emit('queueUpdate', { screen, queue: queueAsStreamSource });
 		}
+
+		// Update the last stream activity timestamp
+		this.lastStreamActivityTimestamp = Date.now();
 	}
 
 	public getWatchedStreams(): string[] {
@@ -2222,8 +2231,10 @@ export class StreamManager extends EventEmitter {
 	 * Gets a list of all enabled screens
 	 */
 	getEnabledScreens(): number[] {
-		// Get all enabled screens from the config
-		return this.config.streams.filter((stream) => stream.enabled).map((stream) => stream.screen);
+		// Get all enabled screens from the runtime config
+		return Array.from(this.screenConfigs.entries())
+			.filter(([screen, config]) => config.enabled)
+			.map(([screen, config]) => screen);
 	}
 
 	/**
@@ -2290,7 +2301,7 @@ export class StreamManager extends EventEmitter {
 		try {
 			this.cleanupExpiredQueueEntries(); // Clean up old entries
 			this.lastUpdateTimestamp.set(screen, Date.now());
-			const screenConfig = this.config.streams.find((s) => s.screen === screen);
+			const screenConfig = this.screenConfigs.get(screen);
 			if (!screenConfig || !screenConfig.enabled) {
 				logger.debug(
 					`Screen ${screen} is disabled or has no config, skipping queue update`,
@@ -2418,23 +2429,38 @@ export class StreamManager extends EventEmitter {
 	 */
 	private async checkForAllQueuesEmpty(): Promise<void> {
 		// Check if all enabled screens have empty queues
-		const allEmpty = this.config.streams.every(screenConfig => {
+		const allEmpty = Array.from(this.screenConfigs.entries()).every(([screen, screenConfig]) => {
 			if (!screenConfig.enabled) {
 				// Disabled screens don't count
 				return true;
 			}
-			const queue = this.getQueueForScreen(screenConfig.screen);
+			const queue = this.getQueueForScreen(screen);
 			return queue.length === 0;
 		});
 
 		if (allEmpty) {
 			logger.info('All enabled screen queues are empty, considering tracker reset', 'StreamManager');
-			
+
 			// Check if no streams are currently playing across all screens
 			const activeStreamsCount = this.getActiveAndStartingStreamsCount();
 			if (activeStreamsCount === 0) {
-				logger.info('All queues empty and no active streams, resetting all trackers', 'StreamManager');
-				this.resetAllTrackers();
+				// Only reset trackers if sufficient time has passed since the last stream activity
+				// This prevents resetting when all streams end/close simultaneously (e.g. user closes all)
+				const timeSinceLastActivity = Date.now() - this.lastStreamActivityTimestamp;
+				const activityResetThreshold = 30 * 60 * 1000; // 30 minutes threshold
+
+				if (timeSinceLastActivity > activityResetThreshold) {
+					logger.info(
+						`All queues empty and no active streams for ${Math.round(timeSinceLastActivity / 60000)} minutes, resetting all trackers`,
+						'StreamManager'
+					);
+					this.resetAllTrackers();
+				} else {
+					logger.info(
+						`All queues empty but streams were recently active (${Math.round(timeSinceLastActivity / 60000)} mins ago), skipping tracker reset`,
+						'StreamManager'
+					);
+				}
 			}
 		}
 	}
@@ -2477,7 +2503,7 @@ export class StreamManager extends EventEmitter {
 			this.isOffline = true;
 			// Don't force screens to IDLE - let them maintain their current state
 			// The streams might still be buffering and could recover
-			this.config.streams.forEach(s => this.setScreenState(s.screen, StreamState.NETWORK_RECOVERY));
+			this.screenConfigs.forEach((config, screen) => this.setScreenState(screen, StreamState.NETWORK_RECOVERY));
 		});
 	
 		// Listen for network online event
@@ -2637,7 +2663,7 @@ export class StreamManager extends EventEmitter {
 		}
 	}
 	public async getAllStreamsForScreen(screen: number): Promise<StreamSource[]> {
-		const screenConfig = this.config.streams.find((s) => s.screen === screen);
+		const screenConfig = this.screenConfigs.get(screen);
 		if (!screenConfig || !screenConfig.sources?.length) {
 			return [];
 		}
