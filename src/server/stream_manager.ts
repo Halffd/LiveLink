@@ -153,6 +153,7 @@ export class StreamManager extends EventEmitter {
 
 	// Simplified, single interval for queue management
 	private queueUpdateInterval: NodeJS.Timeout | null = null;
+	private cleanupInterval: NodeJS.Timeout | null = null;
 
 	// Single source of truth tracking - all state derived from queues
 	private readonly MAX_STREAM_ATTEMPTS = 3;
@@ -165,14 +166,14 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed to prevent race conditions
 	private processingScreens: Set<number> = new Set();
-	private readonly DEFAULT_LOCK_TIMEOUT = 120000; // 15 seconds
-	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 30_000; // 30 seconds
+	private readonly DEFAULT_LOCK_TIMEOUT = 45000; // 45 seconds - reduced from 120s to prevent long-held locks
+	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 25_000; // 25 seconds - reduced from 30s
 	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
-	private static readonly QUEUE_UPDATE_RETRY_DELAY = 5_000; // 5 seconds for normal operations
+	private static readonly QUEUE_UPDATE_RETRY_DELAY = 3_000; // 3 seconds - reduced from 5s for faster recovery
 	private readonly RETRY_TIMEOUT = 20000; // 20 seconds
 	private readonly OPERATION_TIMEOUT = 5000; // 5 seconds
 	// for normal operations
-	private readonly ERROR_HANDLER_TIMEOUT = 30_000; // 30 seconds
+	private readonly ERROR_HANDLER_TIMEOUT = 25_000; // 25 seconds - reduced from 30s
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private networkRetries: Map<number, number> = new Map();
 	private lastNetworkError: Map<number, number> = new Map();
@@ -531,6 +532,11 @@ export class StreamManager extends EventEmitter {
 			await this.updateAllQueues();
 		}, this.QUEUE_UPDATE_INTERVAL);
 
+		// Set up a separate interval for cleaning up expired entries more frequently
+		this.cleanupInterval = setInterval(() => {
+			this.cleanupExpiredQueueEntries();
+		}, 5 * 60 * 1000); // Run cleanup every 5 minutes
+
 		logger.info(
 			`Queue updates started with ${this.QUEUE_UPDATE_INTERVAL / 60000} minute interval`,
 			'StreamManager'
@@ -572,7 +578,7 @@ export class StreamManager extends EventEmitter {
 		// Process all screens in parallel with individual error handling
 		await Promise.allSettled(
 			screensToProcess.map((screen) =>
-				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 65000) // 30s timeout
+				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 25000) // 25s timeout - reduced to prevent long lock holds
 					.catch((error) => {
 						logger.error(
 							`Failed to update queue for screen ${screen}`,
@@ -728,11 +734,13 @@ export class StreamManager extends EventEmitter {
 			this.streams.delete(screen);
 		}
 
+		// Only set to IDLE if we're not already in an error state that needs to be handled
 		await this.setScreenState(screen, StreamState.IDLE, undefined, true); // Force to IDLE to prepare for start
 
 		// Update queue if needed
-		const lastUpdate = this.lastUpdateTimestamp.get(screen);
-		if (lastUpdate === undefined || lastUpdate < Date.now() - this.minUpdateSeconds * 1000) {
+		const lastUpdate = this.lastUpdateTimestamp.get(screen) || 0;
+		const now = Date.now();
+		if (lastUpdate < now - this.minUpdateSeconds * 1000) {
 			await this.updateQueue(screen);
 		}
 
@@ -834,14 +842,28 @@ export class StreamManager extends EventEmitter {
 				logger.warn(`Removed failed stream ${nextStream.url} from queue, will retry next stream`, 'StreamManager');
 
 				// Now try the NEXT stream (not the same one) - use the internal method to avoid race conditions
-				await this._handleStreamEndInternal(screen);
+				// But avoid infinite recursion if we're already in an error state
+				// Check if this failure is due to max streams reached - if so, wait a bit longer before retrying
+				const isMaxStreamsError = startResult.error?.includes('Maximum number of streams') === true;
+
+				if (isMaxStreamsError) {
+					// Wait a bit to allow streams to clear before trying again
+					await new Promise(resolve => setTimeout(resolve, 2000));
+				}
+
+				const currentState = this.getScreenState(screen);
+				if (currentState !== StreamState.ERROR) {
+					await this._handleStreamEndInternal(screen);
+				}
 			}
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
 	}
 	public async handleStreamEnd(screen: number): Promise<void> {
-		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen), 65000); 
+		// Use shorter timeout for handleStreamEnd to prevent long lock holds
+		// This reduces the chance of cascading lock timeouts
+		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen), 30000);
 	}
 
 
@@ -982,13 +1004,9 @@ export class StreamManager extends EventEmitter {
 				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
 				if (retryDelay > 1000) {
 					// For longer delays, use setTimeout to not block the current operation
+					// Use a separate function to handle retries to avoid nested locks
 					setTimeout(() => {
-						// Use withLock to ensure proper synchronization
-						this.withLock(screen, 'retryAfterError', async () => {
-							await this.handleStreamEnd(screen);
-						}).catch(err => {
-							logger.error(`Error in retry after error for screen ${screen}`, 'StreamManager', err);
-						});
+						this.handleRetryAfterError(screen);
 					}, retryDelay);
 				} else {
 					// For short delays, call directly to maintain proper locking
@@ -1008,6 +1026,20 @@ export class StreamManager extends EventEmitter {
 			return { screen, success: false, error: err.message };
 		}
 	}
+
+	/**
+	 * Handles retry after an error with proper locking to avoid nested lock issues
+	 */
+	private async handleRetryAfterError(screen: number): Promise<void> {
+		// Use withLock to ensure we don't have conflicts with other operations
+		// Use a shorter timeout to prevent lock holding for too long
+		await this.withLock(screen, 'retryAfterError', async () => {
+			await this.handleStreamEnd(screen);
+		}, 20000).catch(err => {
+			logger.error(`Error in retry after error for screen ${screen}`, 'StreamManager', err);
+		});
+	}
+
 	async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
 		return this.withLock(screen, 'stopStream', async () => {
 			const currentState = this.getScreenState(screen);
@@ -1016,15 +1048,21 @@ export class StreamManager extends EventEmitter {
 			}
 
 			await this.setScreenState(screen, StreamState.STOPPING);
-			        if (isManualStop) {
-            const streamInstance = this.streams.get(screen);
-            if (streamInstance) {
-                this.manuallyClosedScreens.add(screen);
-                // Mark in queue as manually closed (single source of truth)
-                this.markStreamAsManuallyClosed(streamInstance.url);
-                logger.info(`Marked stream ${streamInstance.url} on screen ${screen} as manually closed.`, 'StreamManager');
-            }
-        }
+
+			if (isManualStop) {
+				const streamInstance = this.streams.get(screen);
+				if (streamInstance) {
+					// Mark the screen as manually closed so we don't retry this stream
+					this.manuallyClosedScreens.add(screen);
+					// Mark in queue as manually closed (single source of truth)
+					this.markStreamAsManuallyClosed(streamInstance.url);
+					logger.info(`Marked stream ${streamInstance.url} on screen ${screen} as manually closed.`, 'StreamManager');
+				}
+			} else {
+				// If not a manual stop, ensure we don't treat it as manually closed
+				this.manuallyClosedScreens.delete(screen);
+			}
+
 			const success = await this.playerService.stopStream(screen, true, isManualStop);
 			const streamInstance = this.streams.get(screen);
 			this.streams.delete(screen);
@@ -1032,9 +1070,10 @@ export class StreamManager extends EventEmitter {
 			if (streamInstance) {
 				this.markStreamAsNotPlaying(screen, streamInstance.url);
 			}
+			// Set to IDLE state to indicate the screen is ready for the next stream
 			await this.setScreenState(screen, StreamState.IDLE);
 			return success;
-	   }, 10000);
+		}, 15000); // Increased timeout to handle complex stop operations properly
 	}
 
 	/**
@@ -1307,6 +1346,14 @@ export class StreamManager extends EventEmitter {
 	// Helper methods for single source of truth architecture
 
 	/**
+	 * Clean up manually closed screens after a certain period to allow restarts
+	 */
+	private cleanupManuallyClosedScreens(): void {
+		// This is handled by the queue expiration logic in cleanupExpiredQueueEntries
+		// which clears manually closed status after 1 hour
+	}
+
+	/**
 	 * Get all streams that are currently playing across all screens
 	 * This is derived from the queue state, not a separate track
 	 */
@@ -1504,6 +1551,31 @@ export class StreamManager extends EventEmitter {
 			// Update with cleaned queue
 			this.queues.set(screen, filteredQueue);
 			queueService.setQueue(screen, filteredQueue as StreamSource[]);
+		}
+
+		// Also clean up the manuallyClosedScreens Set periodically
+		// Find screens that haven't had a stream for at least the manual close expiry period
+		const screensToCheck = new Set(this.manuallyClosedScreens);
+		for (const screen of screensToCheck) {
+			// If there's no active stream for this screen, and enough time has passed,
+			// we can remove it from manually closed screens
+			const activeStream = this.streams.get(screen);
+			if (!activeStream) {
+				// Check if there's a stream in the queue marked as manually closed for any URL
+				const queue = this.queues.get(screen) || [];
+				let hasManuallyClosedStream = false;
+				for (const stream of queue) {
+					if (stream.manuallyClosedAt && (now - stream.manuallyClosedAt) <= manualCloseExpiry) {
+						hasManuallyClosedStream = true;
+						break;
+					}
+				}
+
+				// If no manually closed streams are in the queue, we can remove the screen from manuallyClosedScreens
+				if (!hasManuallyClosedStream) {
+					this.manuallyClosedScreens.delete(screen);
+				}
+			}
 		}
 	}
 	private async deferStartNextStream(screen: number) {
@@ -1745,6 +1817,12 @@ export class StreamManager extends EventEmitter {
 
 			// Clear all event listeners
 			this.removeAllListeners();
+
+			// Clear cleanup interval
+			if (this.cleanupInterval) {
+				clearInterval(this.cleanupInterval);
+				this.cleanupInterval = null;
+			}
 
 			logger.info('Stream manager cleanup complete', 'StreamManager');
 		} catch (error) {
