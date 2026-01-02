@@ -134,6 +134,9 @@ export class StreamManager extends EventEmitter {
 
 	// Cached set of watched URLs for efficient lookup
 	private watchedUrls: Set<string> = new Set();
+	// Add a short-term cache to track recently watched streams to prevent race conditions
+	private recentlyWatched: Map<string, number> = new Map();
+	private readonly RECENTLY_WATCHED_EXPIRY = 5000; // 5 seconds
 
 	// Network state
 	private isOffline = false;
@@ -1429,10 +1432,23 @@ export class StreamManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if a stream has been watched (using cached set with fallback to queue check)
+	 * Check if a stream has been watched (using multiple caches with fallback to queue check)
 	 */
 	private isStreamWatched(url: string): boolean {
-		// First check the cached set for performance
+		const now = Date.now();
+
+		// Check recently watched cache first - this handles race conditions
+		if (this.recentlyWatched.has(url)) {
+			const timestamp = this.recentlyWatched.get(url)!;
+			if (now - timestamp <= this.RECENTLY_WATCHED_EXPIRY) {
+				return true;
+			} else {
+				// Clean up expired entry
+				this.recentlyWatched.delete(url);
+			}
+		}
+
+		// Check the main cached set for performance
 		if (this.watchedUrls.has(url)) {
 			return true;
 		}
@@ -1447,6 +1463,24 @@ export class StreamManager extends EventEmitter {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Clean up expired entries from the recently watched cache
+	 */
+	private cleanupRecentlyWatched(): void {
+		const now = Date.now();
+		const expired: string[] = [];
+
+		for (const [url, timestamp] of this.recentlyWatched.entries()) {
+			if (now - timestamp > this.RECENTLY_WATCHED_EXPIRY) {
+				expired.push(url);
+			}
+		}
+
+		for (const url of expired) {
+			this.recentlyWatched.delete(url);
+		}
 	}
 
 	/**
@@ -1609,6 +1643,9 @@ export class StreamManager extends EventEmitter {
 
 		// Rebuild the watched URLs cache to ensure it's in sync with queue data
 		this.rebuildWatchedUrlsCache();
+
+		// Clean up expired entries from recently watched cache
+		this.cleanupRecentlyWatched();
 	}
 	private async deferStartNextStream(screen: number) {
 		setTimeout(async () => {
@@ -1733,6 +1770,8 @@ export class StreamManager extends EventEmitter {
 
 	public markStreamAsWatched(url: string): void {
 		logger.info(`Marking stream as watched: ${url}`, 'StreamManager');
+		const timestamp = Date.now();
+
 		// Find any screens playing this URL and clear them
 		for (const [screen, stream] of this.streams.entries()) {
 			if (stream.url === url) {
@@ -1745,6 +1784,12 @@ export class StreamManager extends EventEmitter {
 
 		// Mark in queue as watched (single source of truth)
 		this.markStreamInQueueAsWatched(url);
+
+		// Add to recently watched cache to prevent immediate re-adding to queue
+		this.recentlyWatched.set(url, timestamp);
+
+		// Clean up expired entries from recently watched cache
+		this.cleanupRecentlyWatched();
 
 		// Sync with queueService
 		queueService.markStreamAsWatched(url);
