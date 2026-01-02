@@ -490,10 +490,11 @@ export class PlayerService {
 			logger.info(`Process for screen ${screen} (${url}) exited with code ${code}`, 'PlayerService');
 	
 			const normalExit = code === 0;
-			const shouldRestart = !normalExit && !this.manuallyClosedScreens.has(screen) && !this.isShuttingDown;
+			const isManualClose = this.manuallyClosedScreens.has(screen);
+			const shouldRestart = !normalExit && !isManualClose && !this.isShuttingDown;
 
 			this.endCallback?.({ screen, code: code ?? undefined });
-			
+
 			if (!normalExit) {
 				this.errorCallback?.({
 					screen,
@@ -501,7 +502,7 @@ export class PlayerService {
 					code: code ?? 1,
 					url,
 					moveToNext: true,
-					shouldRestart,
+					shouldRestart: !isManualClose, // Don't restart if manually closed
 				});
 			}
 		};
@@ -681,10 +682,11 @@ export class PlayerService {
 
 		// Calculate whether to move to next or restart
 		const normalExit = code === 0;
+		const isManualClose = this.manuallyClosedScreens.has(screen);
 		const missingUrl = !url || url.trim() === '';
 		const externalKill = code === null;
 		const moveToNext = normalExit || missingUrl || externalKill;
-		const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown;
+		const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown && !isManualClose;
 		logger.info(`Stream on screen ${screen} ended with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
 		logger.info(`Move to next: ${moveToNext}, should restart: ${shouldRestart} is shutting down: ${this.isShuttingDown} normal exit: ${normalExit} missing url: ${missingUrl} external kill: ${externalKill} code: ${code}`, 'PlayerService');
 		// Emit stream error with URL if we have it
@@ -694,7 +696,7 @@ export class PlayerService {
 			code: code || 0,
 			url,
 			moveToNext,
-			shouldRestart
+			shouldRestart: !isManualClose // Don't restart if manually closed
 		});
 	}
 
@@ -856,9 +858,46 @@ export class PlayerService {
 	}
 
 	private getTitle(options: StreamOptions & { screen: number }): string {
+		// Format startTime to ISO string if it's provided as a Unix timestamp
+		let formattedStartTime: string | number | undefined = options.startTime;
+		if (options.startTime && typeof options.startTime === 'number') {
+			// Check if it looks like a Unix timestamp (in milliseconds, typically 13+ digits)
+			// Modern timestamps are 13+ digits (milliseconds) or 10 digits (seconds), older ones might be shorter
+			const isUnixTimestamp = options.startTime > 1000000000; // Rough check for timestamps after year 2001
+			if (isUnixTimestamp) {
+				try {
+					const date = new Date(options.startTime);
+					formattedStartTime = date.toISOString();
+				} catch (error) {
+					// If conversion fails, keep the original value
+					formattedStartTime = options.startTime;
+				}
+			}
+		} else if (typeof options.startTime === 'string') {
+			// If it's already a string, check if it's a timestamp-like string
+			const numericStartTime = Number(options.startTime);
+			if (!isNaN(numericStartTime)) {
+				const isUnixTimestamp = numericStartTime > 1000000000;
+				if (isUnixTimestamp) {
+					try {
+						const date = new Date(numericStartTime);
+						formattedStartTime = date.toISOString();
+					} catch (error) {
+						formattedStartTime = options.startTime;
+					}
+				} else {
+					// If it's a string that isn't a timestamp, keep it as is
+					formattedStartTime = options.startTime;
+				}
+			} else {
+				// Not a numeric string, keep as is
+				formattedStartTime = options.startTime;
+			}
+		}
+
 		// Simplify the escaping - just replace double quotes with single quotes
 		const title =
-			`Screen ${options.screen}: ${options.url} - ${options.title} - Viewers: ${options.viewerCount} - start time: ${options.startTime}`.replace(
+			`Screen ${options.screen}: ${options.url} - ${options.title} - Viewers: ${options.viewerCount} - start time: ${formattedStartTime}`.replace(
 				/"/g,
 				"'"
 			);
@@ -967,6 +1006,13 @@ export class PlayerService {
 				streamlinkArgs.push('--http-header', `${key}=${value}`);
 			});
 		}
+
+		// Add player title option to streamlink to override the default media title
+		// This prevents streamlink from using the stream URL as the forced media title
+		streamlinkArgs.push(
+			'--title',
+			this.getTitle(options)  // Use the same title we want to display
+		);
 
 		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
 		const mpvArgs = this.getMpvArgs(options, false);
