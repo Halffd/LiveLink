@@ -1354,6 +1354,21 @@ export class StreamManager extends EventEmitter {
 	}
 
 	/**
+	 * Rebuild the watched URLs cache from all queues to ensure it's in sync
+	 */
+	private rebuildWatchedUrlsCache(): void {
+		this.watchedUrls.clear();
+
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.watchedAt !== undefined) {
+					this.watchedUrls.add(stream.url);
+				}
+			}
+		}
+	}
+
+	/**
 	 * Get all streams that are currently playing across all screens
 	 * This is derived from the queue state, not a separate track
 	 */
@@ -1414,10 +1429,24 @@ export class StreamManager extends EventEmitter {
 	}
 
 	/**
-	 * Check if a stream has been watched (using cached set)
+	 * Check if a stream has been watched (using cached set with fallback to queue check)
 	 */
 	private isStreamWatched(url: string): boolean {
-		return this.watchedUrls.has(url);
+		// First check the cached set for performance
+		if (this.watchedUrls.has(url)) {
+			return true;
+		}
+
+		// If not in cache, check the queues directly as a fallback
+		// This handles cases where the cache might not be fully synchronized
+		for (const queue of this.queues.values()) {
+			for (const stream of queue) {
+				if (stream.url === url && stream.watchedAt !== undefined) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -1430,13 +1459,13 @@ export class StreamManager extends EventEmitter {
 					stream.watchedAt = Date.now();
 					stream.shouldSkip = true;
 					logger.info(`Marked stream as watched in queue: ${url}`, 'StreamManager');
+					// Add to cached set for fast lookups immediately
+					this.watchedUrls.add(url);
 				}
 			}
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-		// Also add to cached set
-		this.watchedUrls.add(url);
 	}
 
 	/**
@@ -1577,6 +1606,9 @@ export class StreamManager extends EventEmitter {
 				}
 			}
 		}
+
+		// Rebuild the watched URLs cache to ensure it's in sync with queue data
+		this.rebuildWatchedUrlsCache();
 	}
 	private async deferStartNextStream(screen: number) {
 		setTimeout(async () => {
