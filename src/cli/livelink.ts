@@ -62,6 +62,22 @@ program
   .description('LiveLink CLI - Control and manage LiveLink streams')
   .option('-d, --debug', 'Enable debug output');
 
+// Main start command - this provides the expected "livelink start" functionality
+program
+  .command('start')
+  .description('Start the LiveLink server (equivalent to "server start")')
+  .action(async () => {
+    try {
+      console.log(chalk.blue('Starting LiveLink server...'));
+      // Import and start the server
+      await import('../server/api.js');
+      console.log(chalk.green('LiveLink server started'));
+    } catch (error) {
+      console.error(chalk.red('Failed to start server:'), error);
+      process.exit(1);
+    }
+  });
+
 // Create command categories for better organization
 const streamCommands = program.command('stream').description('Stream management commands');
 const queueCommands = program.command('queue').description('Queue management commands');
