@@ -6,8 +6,9 @@
  */
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { StreamManager } from '../../server/stream_manager';
-import { QueueService } from '../../server/services/queue_service';
+import { queueService } from '../../server/services/queue_service';
 import { PlayerService } from '../../server/services/player';
+import type { StreamSource } from '../../types/stream';
 import { 
   createMockConfig, 
   createMockServices,
@@ -18,26 +19,25 @@ import { TimerMock } from '../helpers/timer-mock';
 
 // Mock the queue service
 jest.mock('../../server/services/queue_service', () => {
-  // Create a real instance for testing
-  const QueueService = jest.requireActual('../../server/services/queue_service').QueueService;
-  const queueService = new QueueService();
+  // Use the actual module directly for spying
+  const actualQueueService = (jest.requireActual('../../server/services/queue_service') as any).queueService as typeof import('../../server/services/queue_service').queueService;
   
   // Spy on methods
-  jest.spyOn(queueService, 'setQueue');
-  jest.spyOn(queueService, 'getQueue');
-  jest.spyOn(queueService, 'addToQueue');
-  jest.spyOn(queueService, 'clearQueue');
-  jest.spyOn(queueService, 'clearAllQueues');
-  jest.spyOn(queueService, 'getNextStream');
-  jest.spyOn(queueService, 'removeFromQueue');
-  jest.spyOn(queueService, 'markStreamAsWatched');
-  jest.spyOn(queueService, 'isStreamWatched');
-  jest.spyOn(queueService, 'getWatchedStreams');
-  jest.spyOn(queueService, 'clearWatchedStreams');
-  jest.spyOn(queueService, 'hasUnwatchedStreams');
-  jest.spyOn(queueService, 'filterUnwatchedStreams');
+  jest.spyOn(actualQueueService, 'setQueue');
+  jest.spyOn(actualQueueService, 'getQueue');
+  jest.spyOn(actualQueueService, 'addToQueue');
+  jest.spyOn(actualQueueService, 'clearQueue');
+  jest.spyOn(actualQueueService, 'clearAllQueues');
+  jest.spyOn(actualQueueService, 'getNextStream');
+  jest.spyOn(actualQueueService, 'removeFromQueue');
+  jest.spyOn(actualQueueService, 'markStreamAsWatched');
+  jest.spyOn(actualQueueService, 'isStreamWatched');
+  jest.spyOn(actualQueueService, 'getWatchedStreams');
+  jest.spyOn(actualQueueService, 'clearWatchedStreams');
+  jest.spyOn(actualQueueService, 'hasUnwatchedStreams');
+  jest.spyOn(actualQueueService, 'filterUnwatchedStreams');
   
-  return { queueService, QueueService };
+  return { queueService: actualQueueService };
 });
 
 // Mock the logger to reduce noise
@@ -75,7 +75,7 @@ describe('skipWatchedStreams Integration Tests', () => {
     jest.clearAllMocks();
     
     // Get the real queue service instance
-    queueService = require('../../server/services/queue_service').queueService;
+    
     queueService.clearAllQueues();
     queueService.clearWatchedStreams();
     
@@ -323,7 +323,7 @@ describe('skipWatchedStreams Integration Tests', () => {
     ]);
     
     // Update queues for both screens
-    await streamManager.updateAllQueues(true);
+    await streamManager.updateAllQueues();
     
     // Get the queues
     const queue1 = queueService.getQueue(1);
@@ -335,8 +335,8 @@ describe('skipWatchedStreams Integration Tests', () => {
     
     // Screen 2 (skipWatchedStreams: false) should have all streams
     expect(queue2).toHaveLength(2);
-    expect(queue2.map(s => s.url)).toContain(stream3.url);
-    expect(queue2.map(s => s.url)).toContain(stream4.url);
+    expect(queue2.map((s: StreamSource) => s.url)).toContain(stream3.url);
+    expect(queue2.map((s: StreamSource) => s.url)).toContain(stream4.url);
   });
   
   /**

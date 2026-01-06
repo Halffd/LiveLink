@@ -1,5 +1,31 @@
 import { logger } from '../services/logger.js';
 
+export class TimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TimeoutError';
+  }
+}
+
+export async function withPromiseTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string = `Promise timed out after ${ms} ms`): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new TimeoutError(errorMessage));
+    }, ms);
+
+    promise.then(
+      (res) => {
+        clearTimeout(timeoutId);
+        resolve(res);
+      },
+      (err) => {
+        clearTimeout(timeoutId);
+        reject(err);
+      }
+    );
+  });
+}
+
 /**
  * Helper function to safely execute async operations with consistent error handling
  * @param operation The async operation to execute

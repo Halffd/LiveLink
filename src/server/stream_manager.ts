@@ -127,6 +127,7 @@ export class StreamManager extends EventEmitter {
 	// User preferences
 	readonly favoriteChannels: FavoriteChannels;
 	private manuallyClosedScreens: Set<number> = new Set();
+	private manualIdleScreens: Set<number> = new Set();
 	private screenConfigs: Map<number, ScreenConfig> = new Map();
 
 	// Single source of truth: queues with enhanced state tracking
@@ -233,7 +234,7 @@ export class StreamManager extends EventEmitter {
 
 		this.playerService.onStreamEnd((data) => {
 			this.emit('streamEnd', data);
-			this.handleStreamEnd(data.screen);
+			this.handleStreamEnd(data.screen, data.manual, data.playbackTime);
 		});
 
 		// Listen for queue service events
@@ -627,6 +628,10 @@ export class StreamManager extends EventEmitter {
 			}
 
 			// Only proceed if in IDLE state
+			if (this.manualIdleScreens.has(screen)) {
+				logger.debug(`Screen ${screen} is in manual idle, skipping auto-start.`, 'StreamManager');
+				return;
+			}
 			if (this.getScreenState(screen) !== StreamState.IDLE) {
 				logger.debug(
 					`Screen ${screen} is not in IDLE state (current: ${this.getScreenState(screen)}), skipping update`,
@@ -712,7 +717,7 @@ export class StreamManager extends EventEmitter {
 	 * This is a central part of the stream lifecycle.
 	 * @param screen The screen number where the stream ended or should be started.
 	 */
-	private async _handleStreamEndInternal(screen: number): Promise<void> {
+	private async _handleStreamEndInternal(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Add a delay to respect the player's startup cooldown
 		await new Promise(resolve => setTimeout(resolve, this.playerService.getStartupCooldown()));
 
@@ -728,13 +733,33 @@ export class StreamManager extends EventEmitter {
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
-			// Mark as watched if it was playing for a sufficient duration
-			// (for now, we'll mark all ended streams as watched, but could add logic to only watch if played long enough)
-			this.markStreamAsWatched(existingStream.url);
+			if (!isManual) {
+				const WATCH_THRESHOLD_SECONDS = 120; // 2 minutes
+				if (playbackTime >= WATCH_THRESHOLD_SECONDS) {
+					this.markStreamAsWatched(existingStream.url);
+				} else {
+					logger.info(
+						`Stream on screen ${screen} ended but did not meet watch threshold of ${WATCH_THRESHOLD_SECONDS}s (played for ${playbackTime.toFixed(
+							0
+						)}s). Not marking as watched.`,
+						'StreamManager'
+					);
+				}
+			} else {
+				logger.info(`Stream on screen ${screen} was manually stopped. Not marking as watched.`, 'StreamManager');
+			}
 
 			// Mark as not playing in the queue
 			this.markStreamAsNotPlaying(screen, existingStream.url);
 			this.streams.delete(screen);
+		}
+		
+		if (isManual) {
+			// User closed it. The screen should go idle and wait for new instructions.
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+			this.manualIdleScreens.add(screen); // Flag screen as manually idled
+			logger.info(`Screen ${screen} set to IDLE after manual stop.`, 'StreamManager');
+			return; // Stop processing for this screen.
 		}
 
 		// Only set to IDLE if we're not already in an error state that needs to be handled
@@ -863,10 +888,10 @@ export class StreamManager extends EventEmitter {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
 	}
-	public async handleStreamEnd(screen: number): Promise<void> {
+	public async handleStreamEnd(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Use shorter timeout for handleStreamEnd to prevent long lock holds
 		// This reduces the chance of cascading lock timeouts
-		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen), 30000);
+		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen, isManual, playbackTime), 30000);
 	}
 
 
@@ -958,6 +983,7 @@ export class StreamManager extends EventEmitter {
 
 		const screen = options.screen;
 		const { url } = options;
+		this.manualIdleScreens.delete(screen); // Clear manual idle flag
 
 		if (this.isShuttingDown) {
 			return { screen, success: false, error: 'Manager is shutting down' };
@@ -1291,6 +1317,7 @@ export class StreamManager extends EventEmitter {
 		
 			try {
 				// First update state and services
+				this.manualIdleScreens.delete(screen); // Clear manual idle flag
 				await this.setScreenState(screen, StreamState.IDLE);
 				this.playerService.enableScreen(screen);
 		
@@ -1693,6 +1720,7 @@ export class StreamManager extends EventEmitter {
 	async restartStreams(screen?: number): Promise<void> {
 		const restart = async (s: number) => {
 			logger.info(`Restarting stream on screen ${s}`, 'StreamManager');
+			this.manualIdleScreens.delete(s); // Clear manual idle flag
 			await this.handleStreamEnd(s);
 		};
 		if (screen) {

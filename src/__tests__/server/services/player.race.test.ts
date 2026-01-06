@@ -54,7 +54,7 @@ jest.mock('child_process', () => {
 
 // Mock path module
 jest.mock('path', () => {
-  const originalPath = jest.requireActual('path');
+  const originalPath = jest.requireActual('path') as any;
   return {
     ...originalPath,
     join: jest.fn().mockImplementation((...args) => args.join('/'))
@@ -118,7 +118,7 @@ describe('PlayerService Race Condition Tests', () => {
     playerService = new PlayerService(mockConfig);
     
     // Mock the testConnection method to control network availability
-    (playerService as any).testConnection = jest.fn().mockResolvedValue(true);
+    (playerService as any).testConnection = jest.fn<() => Promise<boolean>>().mockResolvedValue(true);
   });
   
   afterEach(() => {
@@ -137,17 +137,18 @@ describe('PlayerService Race Condition Tests', () => {
     const startDeferred1 = createDeferred<void>();
     const startDeferred2 = createDeferred<void>();
     
-    // Set up stream options
     const streamOptions1 = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     const streamOptions2 = {
       url: 'https://youtube.com/watch?v=2',
       screen: 1, // Same screen
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start first stream (don't await)
@@ -171,7 +172,7 @@ describe('PlayerService Race Condition Tests', () => {
     expect(processes.length).toBe(1);
     
     // Emit 'data' event to indicate stream started
-    processes[0].stdout.emit('data', 'Stream started successfully');
+    processes[0].stdout!.emit('data', 'Stream started successfully');
     
     // Resolve the first stream start
     startDeferred1.resolve();
@@ -188,7 +189,7 @@ describe('PlayerService Race Condition Tests', () => {
     
     // Emit 'data' event for the second process
     const processes2 = Array.from(mockProcesses.values());
-    processes2[1].stdout.emit('data', 'Stream started successfully');
+    processes2[1].stdout!.emit('data', 'Stream started successfully');
     
     // Resolve the second stream start
     startDeferred2.resolve();
@@ -207,7 +208,7 @@ describe('PlayerService Race Condition Tests', () => {
    */
   test('should retry streams with exponential backoff when network errors occur', async () => {
     // Mock testConnection to simulate network outage and recovery
-    (playerService as any).testConnection = jest.fn()
+    (playerService as any).testConnection = jest.fn<() => Promise<boolean>>()
       .mockResolvedValueOnce(false)  // First check: network down
       .mockResolvedValueOnce(false)  // Second check: still down
       .mockResolvedValueOnce(true);  // Third check: network back
@@ -216,7 +217,8 @@ describe('PlayerService Race Condition Tests', () => {
     const streamOptions = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start stream
@@ -230,7 +232,7 @@ describe('PlayerService Race Condition Tests', () => {
     expect(processes.length).toBe(1);
     
     // Emit 'data' event to indicate stream started
-    processes[0].stdout.emit('data', 'Stream started successfully');
+    processes[0].stdout!.emit('data', 'Stream started successfully');
     
     // Complete the start promise
     await startPromise;
@@ -259,20 +261,22 @@ describe('PlayerService Race Condition Tests', () => {
    */
   test('should handle multiple concurrent network errors without race conditions', async () => {
     // Mock testConnection to simulate network outage and recovery
-    (playerService as any).testConnection = jest.fn()
+    (playerService as any).testConnection = jest.fn<() => Promise<boolean>>()
       .mockResolvedValue(true); // Network is up
     
     // Set up stream options for multiple screens
     const streamOptions1 = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     const streamOptions2 = {
       url: 'https://youtube.com/watch?v=2',
       screen: 2,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start both streams
@@ -314,7 +318,8 @@ describe('PlayerService Race Condition Tests', () => {
     const streamOptions = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start stream
@@ -327,7 +332,7 @@ describe('PlayerService Race Condition Tests', () => {
     const process = Array.from(mockProcesses.values())[0];
     
     // Emit some initial output
-    process.stdout.emit('data', 'Stream started successfully');
+    process.stdout!.emit('data', 'Stream started successfully');
     
     // Advance time past the output silence threshold (15s)
     timerMock.advanceTime(20000);
@@ -355,22 +360,24 @@ describe('PlayerService Race Condition Tests', () => {
   test('should respect skipWatchedStreams setting during network retries', async () => {
     // Mock handleProcessExit to track calls
     const originalHandleProcessExit = (playerService as any).handleProcessExit;
-    (playerService as any).handleProcessExit = jest.fn().mockImplementation(async function(screen: number, code: number) {
+    (playerService as any).handleProcessExit = jest.fn().mockImplementation(async function(this: PlayerService, screen: number, code: number) {
       executionTracker.record(`handleProcessExit:${screen}:${code}`);
       return originalHandleProcessExit.call(this, screen, code);
-    });
+    } as any);
     
     // Set up stream options for two screens with different skipWatchedStreams settings
     const streamOptions1 = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1, // Screen 1 has skipWatchedStreams: true
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     const streamOptions2 = {
       url: 'https://youtube.com/watch?v=2',
       screen: 2, // Screen 2 has skipWatchedStreams: false
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start both streams
@@ -418,7 +425,8 @@ describe('PlayerService Race Condition Tests', () => {
     const streamOptions = {
       url: 'https://youtube.com/watch?v=1',
       screen: 1,
-      quality: 'best'
+      quality: 'best',
+      config: mockConfig.player.screens[0] // Add config
     };
     
     // Start stream
@@ -436,7 +444,7 @@ describe('PlayerService Race Condition Tests', () => {
     
     // Verify clearMonitoring and clearRetryTimer were called
     expect(clearMonitoringSpy).toHaveBeenCalledWith(1);
-    expect(clearRetryTimersSpy).toHaveBeenCalledWith(1);
+    expect(clearRetryTimerSpy).toHaveBeenCalledWith(1);
     
     // Verify that all maps are cleared for this screen
     expect((playerService as any).streams.has(1)).toBe(false);

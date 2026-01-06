@@ -21,7 +21,7 @@ interface MockTimer {
 }
 
 export class TimerMock {
-  private timers: Map<number> = new Map();
+  private timers: Map<number, MockTimer> = new Map();
   private timerCounter: number = 1;
   private currentTime: number = 0;
   private originalSetTimeout: typeof setTimeout;
@@ -44,10 +44,10 @@ export class TimerMock {
    */
   install(): void {
     // Replace global timer functions with mocks
-    global.setTimeout = this.mockSetTimeout.bind(this);
-    global.clearTimeout = this.mockClearTimeout.bind(this);
-    global.setInterval = this.mockSetInterval.bind(this);
-    global.clearInterval = this.mockClearInterval.bind(this);
+    global.setTimeout = this.mockSetTimeout.bind(this) as unknown as typeof setTimeout;
+    global.clearTimeout = this.mockClearTimeout.bind(this) as unknown as typeof clearTimeout;
+    global.setInterval = this.mockSetInterval.bind(this) as unknown as typeof setInterval;
+    global.clearInterval = this.mockClearInterval.bind(this) as unknown as typeof clearInterval;
     Date.now = () => this.currentTime;
   }
 
@@ -74,7 +74,7 @@ export class TimerMock {
   /**
    * Mock implementation of setTimeout
    */
-  private mockSetTimeout(callback: TimerFunction, delay: number, ...args: any[]): NodeJS.Timeout {
+  private mockSetTimeout(callback: TimerFunction, delay: number, ...args: any[]): number {
     const id = this.timerCounter++;
     
     this.timers.set(id, {
@@ -88,15 +88,14 @@ export class TimerMock {
       isCleared: false
     });
     
-    return id as unknown as NodeJS.Timeout;
+    return id;
   }
 
   /**
    * Mock implementation of clearTimeout
    */
-  private mockClearTimeout(id: NodeJS.Timeout): void {
-    const numericId = id as unknown as number;
-    const timer = this.timers.get(numericId);
+  private mockClearTimeout(id: number): void {
+    const timer = this.timers.get(id);
     
     if (timer) {
       timer.isCleared = true;
@@ -106,7 +105,7 @@ export class TimerMock {
   /**
    * Mock implementation of setInterval
    */
-  private mockSetInterval(callback: TimerFunction, delay: number, ...args: any[]): NodeJS.Timeout {
+  private mockSetInterval(callback: TimerFunction, delay: number, ...args: any[]): number {
     const id = this.timerCounter++;
     
     this.timers.set(id, {
@@ -120,13 +119,13 @@ export class TimerMock {
       isCleared: false
     });
     
-    return id as unknown as NodeJS.Timeout;
+    return id;
   }
 
   /**
    * Mock implementation of clearInterval
    */
-  private mockClearInterval(id: NodeJS.Timeout): void {
+  private mockClearInterval(id: number): void {
     this.mockClearTimeout(id);
   }
 
@@ -147,8 +146,8 @@ export class TimerMock {
   private runTimersToTime(targetTime: number): void {
     // Get all timers sorted by scheduled time
     const sortedTimers = Array.from(this.timers.values())
-      .filter(timer => !timer.isCleared)
-      .sort((a, b) => a.scheduledTime - b.scheduledTime);
+      .filter((timer: MockTimer) => !timer.isCleared)
+      .sort((a: MockTimer, b: MockTimer) => a.scheduledTime - b.scheduledTime);
     
     for (const timer of sortedTimers) {
       if (timer.isCleared || timer.scheduledTime > targetTime) {
@@ -177,8 +176,8 @@ export class TimerMock {
   runAllTimers(): void {
     // Find the latest scheduled timer
     const latestTimer = Array.from(this.timers.values())
-      .filter(timer => !timer.isCleared)
-      .reduce((latest, timer) => {
+      .filter((timer: MockTimer) => !timer.isCleared)
+      .reduce((latest: number, timer: MockTimer) => {
         return timer.scheduledTime > latest ? timer.scheduledTime : latest;
       }, this.currentTime);
     
@@ -191,9 +190,9 @@ export class TimerMock {
    */
   runOnlyPendingTimers(): void {
     const pendingTimers = Array.from(this.timers.values())
-      .filter(timer => !timer.isCleared && timer.scheduledTime > this.currentTime);
+      .filter((timer: MockTimer) => !timer.isCleared && timer.scheduledTime > this.currentTime);
     
-    const timerIds = new Set(pendingTimers.map(timer => timer.id));
+    const timerIds = new Set(pendingTimers.map((timer: MockTimer) => timer.id));
     
     let timer: MockTimer | undefined;
     while ((timer = this.getNextTimer()) !== undefined) {
