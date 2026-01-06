@@ -12,6 +12,7 @@ import {
   createMockServices, 
   createMockStreamSource 
 } from '../helpers/mock-factory';
+import type { StreamOptions } from '../../types/stream';
 import { 
   delay, 
   executeStaggered,
@@ -94,7 +95,6 @@ describe('StreamManager Race Condition Tests', () => {
       mockConfig,
       mockServices.holodexService,
       mockServices.twitchService,
-      mockServices.youtubeService,
       mockServices.playerService
     );
   });
@@ -123,7 +123,7 @@ describe('StreamManager Race Condition Tests', () => {
     
     // Mock the startStream method to track calls and add delay
     const originalStartStream = streamManager.startStream.bind(streamManager);
-    streamManager.startStream = jest.fn().mockImplementation(async (options) => {
+    streamManager.startStream = jest.fn<typeof streamManager.startStream>().mockImplementation(async (options) => {
       executionTracker.record(`startStream:${options.url}`);
       startedStreams.push(options.url);
       // Add delay to simulate stream starting
@@ -206,9 +206,9 @@ describe('StreamManager Race Condition Tests', () => {
     
     // Mock the startStream method to track calls
     const originalStartStream = streamManager.startStream.bind(streamManager);
-    streamManager.startStream = jest.fn().mockImplementation(async (options) => {
+    streamManager.startStream = jest.fn<typeof streamManager.startStream>().mockImplementation(async (options) => {
       executionTracker.record(`startStream:${options.screen}:${options.url}`);
-      startedStreams.push({screen: options.screen, url: options.url});
+      startedStreams.push({screen: options.screen!, url: options.url});
       await delay(50); // Add delay to simulate stream starting
       return originalStartStream(options);
     });
@@ -251,7 +251,7 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Second call takes longer but returns a different stream
-    mockServices.twitchService.getLiveStreams.mockImplementationOnce(async () => {
+    mockServices.twitchService.getStreams.mockImplementationOnce(async () => {
       executionTracker.record('twitch:slow');
       await delay(100);
       return [slowStream];
@@ -265,7 +265,7 @@ describe('StreamManager Race Condition Tests', () => {
     });
     
     // Call getLiveStreams
-    const streams = await streamManager.getLiveStreams();
+    const streams = await streamManager.getActiveStreams();
     
     // Verify that both successful responses were combined
     expect(streams).toHaveLength(2);
@@ -298,7 +298,7 @@ describe('StreamManager Race Condition Tests', () => {
     
     // Mock startStream to add delay for screen 1
     const originalStartStream = streamManager.startStream.bind(streamManager);
-    streamManager.startStream = jest.fn().mockImplementation(async (options) => {
+    streamManager.startStream = jest.fn<typeof streamManager.startStream>().mockImplementation(async (options) => {
       executionTracker.record(`startStream:${options.screen}`);
       
       // Add significant delay for screen 1 to ensure overlap
@@ -354,7 +354,7 @@ describe('StreamManager Race Condition Tests', () => {
     
     // Mock startStream to fail for screen 1
     const originalStartStream = streamManager.startStream.bind(streamManager);
-    streamManager.startStream = jest.fn().mockImplementation(async (options) => {
+    streamManager.startStream = jest.fn<typeof streamManager.startStream>().mockImplementation(async (options) => {
       executionTracker.record(`startStream:${options.screen}`);
       
       if (options.screen === 1) {

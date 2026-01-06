@@ -513,4 +513,6 @@ export interface StreamEnd {
   screen: number;
   code?: number;
   url?: string; // Keep url as optional for backward compatibility
-} 
+  manual?: boolean;
+  playbackTime?: number;
+}

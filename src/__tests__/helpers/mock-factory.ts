@@ -1,9 +1,10 @@
 /**
  * Mock factory for creating test dependencies
  */
-import { mock, MockProxy } from 'jest-mock-extended';
+import { mock, type MockProxy } from 'jest-mock-extended';
 import { EventEmitter } from 'events';
 import type { ChildProcess } from 'child_process';
+import { Readable } from 'stream';
 import type { StreamSource, Stream } from '../../types/stream';
 import type { Config } from '../../types/stream';
 import type { HolodexService } from '../../server/services/holodex';
@@ -14,23 +15,21 @@ import type { PlayerService } from '../../server/services/player';
 /**
  * Creates a mock child process for testing
  */
-export function createMockChildProcess(): MockProxy<ChildProcess> & { 
-  stdout: EventEmitter;
-  stderr: EventEmitter;
-} {
-  const stdout = new EventEmitter();
-  const stderr = new EventEmitter();
+export function createMockChildProcess(): MockProxy<ChildProcess> {
+  const mockProcess = mock<ChildProcess>();
   
-  const mockProcess = mock<ChildProcess>({
+  // Mock stdout and stderr as Readable streams
+  const stdout = mock<Readable>();
+  const stderr = mock<Readable>();
+
+  Object.assign(mockProcess, {
     stdout,
     stderr,
-    pid: 12345
+    pid: 12345,
+    kill: jest.fn(() => true) // Mock kill here
   });
   
-  // Mock kill method to return true by default
-  mockProcess.kill.mockImplementation(() => true);
-  
-  return Object.assign(mockProcess, { stdout, stderr });
+  return mockProcess;
 }
 
 /**
@@ -175,9 +174,15 @@ export function createMockConfig(overrides: Partial<Config> = {}): Config {
     },
     organizations: ['Hololive', 'Nijisanji'],
     favoriteChannels: {
-      holodex: [{ id: 'channel1', name: 'Channel 1', score: 100 }, { id: 'channel2', name: 'Channel 2', score: 90 }],
-      twitch: [{ id: 'channel3', name: 'Channel 3', score: 120 }, { id: 'channel4', name: 'Channel 4', score: 80 }],
-      youtube: [{ id: 'channel5', name: 'Channel 5', score: 110 }, { id: 'channel6', name: 'Channel 6', score: 70 }]
+      holodex: {
+        default: [{ id: 'channel1', name: 'Channel 1', score: 100 }, { id: 'channel2', name: 'Channel 2', score: 90 }]
+      },
+      twitch: {
+        default: [{ id: 'channel3', name: 'Channel 3', score: 120 }, { id: 'channel4', name: 'Channel 4', score: 80 }]
+      },
+      youtube: {
+        default: [{ id: 'channel5', name: 'Channel 5', score: 110 }, { id: 'channel6', name: 'Channel 6', score: 70 }]
+      }
     },
     ...overrides
   };

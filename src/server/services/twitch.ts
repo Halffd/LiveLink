@@ -3,6 +3,7 @@ import { RefreshingAuthProvider } from '@twurple/auth';
 import type { TwitchAuth } from '../db/database.js';
 import type { StreamSource, StreamService } from '../../types/stream.js';
 import { logger } from './logger.js';
+import { withPromiseTimeout, TimeoutError } from '../utils/async_helpers.js';
 
 interface GetTwitchStreamsOptions {
   channels?: string[];
@@ -58,22 +59,26 @@ export class TwitchService implements StreamService {
         // Fetch all batches in parallel
         const batchResults = await Promise.all(
           batches.map(batchChannels =>
-            this.client!.streams.getStreams({
+            withPromiseTimeout(this.client!.streams.getStreams({
               userName: batchChannels,
               ...(options.language ? { language: options.language } : {})
-            }).catch(error => {
-              logger.error(
-                `Failed to fetch batch of streams: ${error instanceof Error ? error.message : String(error)}`,
-                'TwitchService'
-              );
+            }), 10000, `Twitch getStreams batch timed out for channels: ${batchChannels.join(', ')}`).catch((error: any) => {
+              if (error instanceof TimeoutError) {
+                logger.warn(`Twitch getStreams batch timed out for channels: ${batchChannels.join(', ')}`, 'TwitchService');
+              } else {
+                logger.error(
+                  `Failed to fetch batch of streams: ${error instanceof Error ? error.message : String(error)}`,
+                  'TwitchService'
+                );
+              }
               return { data: [] };
             })
           )
         );
 
         // Combine all batch results
-        results = batchResults.flatMap(batch => 
-          batch.data.map(stream => ({
+        results = batchResults.flatMap((batch: any) => 
+          batch.data.map((stream: any) => ({
             url: `https://twitch.tv/${stream.userName}`,
             title: stream.title,
             platform: 'twitch' as const,
@@ -101,15 +106,15 @@ export class TwitchService implements StreamService {
           logger.info(`Fetching Twitch streams with tags: ${options.tags.join(', ')}`, 'TwitchService');
           
           // First search for streams by tag
-          const taggedStreams = await this.client.streams.getStreams({
+          const taggedStreams = await withPromiseTimeout(this.client.streams.getStreams({
             ...apiOptions,
             // The Twitch API only supports filtering by a single tag at a time
             // So we use the first tag and filter the rest in-memory
             type: 'live'
-          });
+          }), 10000, `Twitch getStreams by tag timed out`);
           
           // Convert to StreamSource format
-          results = taggedStreams.data.map(stream => ({
+          results = taggedStreams.data.map((stream: any) => ({
             url: `https://twitch.tv/${stream.userName}`,
             title: stream.title,
             platform: 'twitch' as const,
@@ -132,10 +137,10 @@ export class TwitchService implements StreamService {
           }
         } else {
           // No tags specified, just get popular streams
-          const streams = await this.client.streams.getStreams(apiOptions);
+          const streams = await withPromiseTimeout(this.client.streams.getStreams(apiOptions), 10000, `Twitch getStreams by popular timed out`);
           
           // Convert to StreamSource format
-          results = streams.data.map(stream => ({
+          results = streams.data.map((stream: any) => ({
             url: `https://twitch.tv/${stream.userName}`,
             title: stream.title,
             platform: 'twitch' as const,
@@ -171,11 +176,15 @@ export class TwitchService implements StreamService {
       logger.info(`Found ${results.length} Twitch streams`, 'TwitchService');
       return results;
     } catch (error) {
-      logger.error(
-        'Failed to get Twitch streams',
-        'TwitchService',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      if (error instanceof TimeoutError) {
+        logger.warn('Twitch getStreams timed out', 'TwitchService');
+      } else {
+        logger.error(
+          'Failed to get Twitch streams',
+          'TwitchService',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
       return [];
     }
   }
@@ -185,13 +194,13 @@ export class TwitchService implements StreamService {
 
     try {
       // First, search for channels with VTuber tag
-      const channels = await this.client.search.searchChannels('vtuber', {
+      const channels = await withPromiseTimeout(this.client.search.searchChannels('vtuber', {
         liveOnly: true,
         limit
-      });
+      }), 10000, `Twitch getVTuberStreams search timed out`);
 
       // Convert to StreamSource format
-      const results = channels.data.map(channel => ({
+      const results = channels.data.map((channel: any) => ({
         url: `https://twitch.tv/${channel.name}`,
         title: channel.displayName,
         platform: 'twitch' as const,
@@ -203,22 +212,22 @@ export class TwitchService implements StreamService {
       }));
 
       // Filter to only live streams with VTuber tag
-      const vtuberStreams = results.filter(stream => 
+      const vtuberStreams = results.filter((stream: any) => 
         stream.sourceStatus === 'live' && 
-        stream.tags?.some(tag => tag.toLowerCase() === 'vtuber')
+        stream.tags?.some((tag: any) => tag.toLowerCase() === 'vtuber')
       );
 
       // Get actual stream data for live channels to get viewer counts
       if (vtuberStreams.length > 0) {
-        const streamData = await this.client.streams.getStreams({
-          userName: vtuberStreams.map(s => s.channelId),
+        const streamData = await withPromiseTimeout(this.client.streams.getStreams({
+          userName: vtuberStreams.map((s: any) => s.channelId),
           limit: vtuberStreams.length
-        });
+        }), 10000, `Twitch getVTuberStreams data fetch timed out`);
 
         // Update viewer counts and start times
         for (const stream of streamData.data) {
           const matchingStream = vtuberStreams.find(
-            s => s.channelId === stream.userName.toLowerCase()
+            (s: any) => s.channelId === stream.userName.toLowerCase()
           );
           if (matchingStream) {
             matchingStream.viewerCount = stream.viewers;
@@ -233,11 +242,15 @@ export class TwitchService implements StreamService {
       logger.info(`Found ${vtuberStreams.length} VTuber streams on Twitch`, 'TwitchService');
       return vtuberStreams;
     } catch (error) {
-      logger.error(
-        'Failed to get VTuber streams',
-        'TwitchService',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      if (error instanceof TimeoutError) {
+        logger.warn('Twitch getVTuberStreams timed out', 'TwitchService');
+      } else {
+        logger.error(
+          'Failed to get VTuber streams',
+          'TwitchService',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
       return [];
     }
   }
@@ -252,10 +265,14 @@ export class TwitchService implements StreamService {
   async getChannel(channelId: string): Promise<HelixUser | undefined> {
     if (!this.client) return undefined;
     try {
-      const user = await this.client.users.getUserById(channelId);
+      const user = await withPromiseTimeout(this.client.users.getUserById(channelId), 10000, `Twitch getChannel for ${channelId} timed out`);
       return user ?? undefined;
     } catch (error) {
-      logger.error(`Failed to get user ${channelId}`, 'TwitchService', error);
+      if (error instanceof TimeoutError) {
+        logger.warn(`Twitch getChannel for ${channelId} timed out`, 'TwitchService');
+      } else {
+        logger.error(`Failed to get user ${channelId}`, 'TwitchService', error);
+      }
       return undefined;
     }
   }
@@ -269,10 +286,10 @@ export class TwitchService implements StreamService {
     try {
       const userClient = new ApiClient({ authProvider: this.authProvider });
       // @ts-expect-error - Twitch API types are incomplete
-      const follows = await userClient.users.getFollows({ userId });
-      const channelIds = follows.data.map((follow: { followedUserId: string }) => follow.followedUserId);
+      const follows = await withPromiseTimeout(userClient.users.getFollows({ userId }), 10000, `Twitch getFollowedStreams for user ${userId} timed out`);
+      const channelIds = (follows as any).data.map((follow: { followedUserId: string }) => follow.followedUserId);
       
-      const streams = await this.client.streams.getStreamsByUserIds(channelIds);
+      const streams = await withPromiseTimeout(this.client.streams.getStreamsByUserIds(channelIds), 10000, `Twitch getFollowedStreams by user IDs timed out`);
       const streamData = (streams as unknown as { data: HelixStream[] }).data;
       
       return streamData.map(stream => ({
@@ -282,11 +299,15 @@ export class TwitchService implements StreamService {
         viewerCount: stream.viewers
       }));
     } catch (error) {
-      logger.error(
-        'Failed to fetch followed streams', 
-        'TwitchService',
-        error instanceof Error ? error : new Error(String(error))
-      );
+      if (error instanceof TimeoutError) {
+        logger.warn(`Twitch getFollowedStreams for user ${userId} timed out`, 'TwitchService');
+      } else {
+        logger.error(
+          'Failed to fetch followed streams', 
+          'TwitchService',
+          error instanceof Error ? error : new Error(String(error))
+        );
+      }
       return [];
     }
   }

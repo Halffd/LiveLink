@@ -5,7 +5,7 @@
  * particularly around handling watched streams and the skipWatchedStreams option.
  */
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { QueueService } from '../../../server/services/queue_service';
+import { queueService as queueServiceInstance } from '../../../server/services/queue_service';
 import { createMockStreamSource } from '../../helpers/mock-factory';
 import { ExecutionTracker } from '../../helpers/async-utils';
 
@@ -22,12 +22,15 @@ jest.mock('../../../server/services/logger', () => {
 });
 
 describe('QueueService Tests', () => {
-  let queueService: QueueService;
+  let queueService: typeof queueServiceInstance;
   let executionTracker: ExecutionTracker;
   
   beforeEach(() => {
     // Reset all mocks
     jest.clearAllMocks();
+    
+    // Assign the imported instance
+    queueService = queueServiceInstance;
     
     // Create execution tracker for tracking operations
     executionTracker = new ExecutionTracker();

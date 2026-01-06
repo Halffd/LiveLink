@@ -27,6 +27,8 @@ interface LocalStreamInstance {
 	title?: string;
 	startTime?: number;
 	options: StreamOptions & { screen: number };
+	playbackTime: number;
+	playbackTimer?: NodeJS.Timeout;
 }
 
 export interface StreamOptions {
@@ -239,6 +241,38 @@ export class PlayerService {
 		});
 	}
 
+	private startPlaybackTimer(screen: number): void {
+		const stream = this.streams.get(screen);
+		if (!stream) return;
+	
+		// Clear any existing timer
+		if (stream.playbackTimer) {
+			clearInterval(stream.playbackTimer);
+		}
+	
+		stream.playbackTimer = setInterval(async () => {
+			if (!this.streams.has(screen)) {
+				// Stream is gone, clear timer
+				if (stream.playbackTimer) clearInterval(stream.playbackTimer);
+				return;
+			}
+			try {
+				const response = await this.sendMpvCommand(screen, ['get_property', 'playback-time']);
+				if (response && typeof response.data === 'number') {
+					const stream = this.streams.get(screen);
+					if(stream) stream.playbackTime = response.data;
+				}
+			} catch (error) {
+				// It might fail if the stream is closing, that's okay.
+				logger.debug(`Could not get playback time for screen ${screen}`, 'PlayerService');
+				const stream = this.streams.get(screen);
+				if (stream && stream.playbackTimer) {
+					 clearInterval(stream.playbackTimer); // Stop polling if it errors
+				}
+			}
+		}, 5000); // every 5 seconds
+	}
+
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen, url } = options;
 	
@@ -300,10 +334,12 @@ export class PlayerService {
 				platform: url.includes('twitch.tv') ? 'twitch' : 'youtube',
 				title: options.title,
 				startTime: typeof options.startTime === 'string' ? new Date(options.startTime).getTime() : options.startTime,
-				options
+				options,
+				playbackTime: 0
 			};
 	
 			this.streams.set(screen, streamInstance);
+			this.startPlaybackTimer(screen);
 			this.setupProcessHandlers(playerProcess, screen);
 			this.manuallyClosedScreens.delete(screen);
 			this.streamRetries.set(screen, 0);
@@ -487,13 +523,14 @@ export class PlayerService {
 
 			const stream = this.streams.get(screen);
 			const url = stream?.url || 'unknown';
+			const playbackTime = stream?.playbackTime || 0;
 			logger.info(`Process for screen ${screen} (${url}) exited with code ${code}`, 'PlayerService');
 	
 			const normalExit = code === 0;
 			const isManualClose = this.manuallyClosedScreens.has(screen);
 			const shouldRestart = !normalExit && !isManualClose && !this.isShuttingDown;
 
-			this.endCallback?.({ screen, code: code ?? undefined });
+			this.endCallback?.({ screen, code: code ?? undefined, manual: isManualClose, playbackTime });
 
 			if (!normalExit) {
 				this.errorCallback?.({
@@ -822,6 +859,9 @@ export class PlayerService {
 	 */
 	cleanup_after_stop(screen: number): void {
 		const stream = this.streams.get(screen);
+		if (stream && stream.playbackTimer) {
+			clearInterval(stream.playbackTimer);
+		}
 		logger.info(`Running cleanup for screen ${screen}, stream URL: ${stream?.url ?? 'N/A'}`, 'PlayerService');
 		if (stream?.process?.pid) {
 			this.killChildProcesses(stream.process.pid);

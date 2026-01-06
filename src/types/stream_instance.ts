@@ -47,6 +47,8 @@ export interface StreamError {
 export interface StreamEnd {
   screen: number;
   code?: number;
+  manual?: boolean;
+  playbackTime?: number;
 }
 
 export interface StreamResponse {
