@@ -51,10 +51,10 @@ export class WebSocketService {
     });
 
     // Listen for screen config updates
-    this.streamManager.on('screenUpdate', (screen: number, config: any) => {
+    this.streamManager.on('screenConfigChanged', (data: { screen: number, config: any }) => {
       this.broadcast({
         type: 'screenUpdate',
-        data: { screen, config }
+        data: { screen: data.screen, config: data.config }
       });
     });
 

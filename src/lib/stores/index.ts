@@ -7,7 +7,7 @@ export const activeStreams = writable<Stream[]>([]);
 // Queue store for each screen
 export const streamQueues = writable<Map<number, StreamSource[]>>(new Map());
 
-// Screen configuration store
+// Screen configuration store - maps screen number to config
 export const screenConfigs = writable<Map<number, {
   enabled: boolean;
   width: number;
@@ -47,7 +47,7 @@ export async function initializeStores() {
     const screens = await screensResponse.json();
     const screenConfigMap = new Map();
     screens.forEach((screen: any) => {
-      screenConfigMap.set(screen.id, {
+      screenConfigMap.set(screen.screen, {  // Use screen number, not config ID
         enabled: screen.enabled,
         width: screen.width,
         height: screen.height,
@@ -103,15 +103,15 @@ if (typeof window !== 'undefined') {
         
       case 'screenUpdate':
         screenConfigs.update(configs => {
-          configs.set(data.screen.id, {
-            enabled: data.screen.enabled,
-            width: data.screen.width,
-            height: data.screen.height,
-            x: data.screen.x,
-            y: data.screen.y,
-            volume: data.screen.volume,
-            quality: data.screen.quality,
-            windowMaximized: data.screen.windowMaximized
+          configs.set(data.screen, {
+            enabled: data.config.enabled,
+            width: data.config.width,
+            height: data.config.height,
+            x: data.config.x,
+            y: data.config.y,
+            volume: data.config.volume,
+            quality: data.config.quality,
+            windowMaximized: data.config.windowMaximized
           });
           return configs;
         });
