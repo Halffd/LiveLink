@@ -128,7 +128,8 @@ export class StreamManager extends EventEmitter {
 	readonly favoriteChannels: FavoriteChannels;
 	private manuallyClosedScreens: Set<number> = new Set();
 	private manualIdleScreens: Set<number> = new Set();
-	private screenConfigs: Map<number, ScreenConfig> = new Map();
+	private allConfigsById: Map<number, ScreenConfig> = new Map(); // Store all configs by ID
+	private screenConfigs: Map<number, ScreenConfig> = new Map(); // Store active configs by screen
 
 	// Single source of truth: queues with enhanced state tracking
 	private queues: Map<number, QueueStreamSource[]> = new Map();
@@ -216,9 +217,14 @@ export class StreamManager extends EventEmitter {
 	}
 
 	private initializeScreenConfigs(): void {
-		this.config.streams.forEach(screenConfig => {
-			this.screenConfigs.set(screenConfig.screen, screenConfig);
-		});
+		// Store all configurations by ID
+		for (const screenConfig of this.config.streams) {
+			this.allConfigsById.set(screenConfig.id, screenConfig);
+		}
+
+		// Refresh the active configs to ensure proper selection per screen
+		this.refreshActiveConfigsForScreens();
+
 		logger.info('Screen configurations initialized', 'StreamManager');
 	}
 
@@ -283,12 +289,71 @@ export class StreamManager extends EventEmitter {
 
 	// Initialize state machines for all screens
 	private initializeStateMachines(): void {
-		this.config.streams.forEach((streamConfig) => {
-			const screen = streamConfig.screen;
-			const initialState = streamConfig.enabled ? StreamState.IDLE : StreamState.DISABLED;
+		// Use the active configs per screen to initialize state machines
+		for (const [screen, screenConfig] of this.screenConfigs.entries()) {
+			const initialState = screenConfig.enabled ? StreamState.IDLE : StreamState.DISABLED;
 			this.stateMachines.set(screen, new StreamStateMachine(screen, initialState));
-		});
+		}
 		logger.info('Stream state machines initialized', 'StreamManager');
+	}
+
+	/**
+	 * Gets the active (enabled) configuration for a screen
+	 * If multiple configs exist for a screen, returns the enabled one, or the first one if none are enabled
+	 */
+	private getActiveConfigForScreen(screen: number): ScreenConfig | undefined {
+		// First try to get from the active configs map
+		const activeConfig = this.screenConfigs.get(screen);
+		if (activeConfig) {
+			return activeConfig;
+		}
+
+		// If not found, look for any config for this screen in the all configs map
+		for (const config of this.allConfigsById.values()) {
+			if (config.screen === screen) {
+				return config;
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Refreshes the active screen configurations based on enabled status
+	 * This should be called when configs are updated to ensure the right config is active for each screen
+	 */
+	private refreshActiveConfigsForScreens(): void {
+		// Clear the current screenConfigs map
+		this.screenConfigs.clear();
+
+		// Group all configs by screen
+		const configsByScreen = new Map<number, ScreenConfig[]>();
+		for (const config of this.allConfigsById.values()) {
+			if (!configsByScreen.has(config.screen)) {
+				configsByScreen.set(config.screen, []);
+			}
+			configsByScreen.get(config.screen)!.push(config);
+		}
+
+		// For each screen, select the active config (enabled takes priority)
+		for (const [screen, configs] of configsByScreen.entries()) {
+			// Find the best config: prioritize enabled over disabled
+			let bestConfig = configs[0]; // Default to first
+			for (const config of configs) {
+				// If current best is disabled but this one is enabled, prefer the enabled one
+				if (!bestConfig.enabled && config.enabled) {
+					bestConfig = config;
+				} else if (bestConfig.enabled && config.enabled) {
+					// If both are enabled, use the one with higher ID (assuming later configs are more recent)
+					if (config.id > bestConfig.id) {
+						bestConfig = config;
+					}
+				}
+				// If both are disabled, keep the current best
+			}
+
+			this.screenConfigs.set(screen, bestConfig);
+		}
 	}
 
 
@@ -758,6 +823,13 @@ export class StreamManager extends EventEmitter {
 			// User closed it. The screen should go idle and wait for new instructions.
 			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			this.manualIdleScreens.add(screen); // Flag screen as manually idled
+
+			// Mark the stream as manually closed so it won't be reselected immediately
+			if (existingStream) {
+				this.markStreamAsManuallyClosed(existingStream.url);
+				logger.info(`Stream ${existingStream.url} marked as manually closed after user stop.`, 'StreamManager');
+			}
+
 			logger.info(`Screen ${screen} set to IDLE after manual stop.`, 'StreamManager');
 			return; // Stop processing for this screen.
 		}
@@ -1533,10 +1605,20 @@ export class StreamManager extends EventEmitter {
 	 * Check if a stream was manually closed
 	 */
 	private isStreamManuallyClosed(url: string): boolean {
+		const now = Date.now();
+		const manualCloseExpiry = 60 * 60 * 1000; // 1 hour for manual closes
+
 		for (const queue of this.queues.values()) {
 			for (const stream of queue) {
 				if (stream.url === url && stream.manuallyClosedAt !== undefined) {
-					return true;
+					// Check if the manual close is still within the expiry time
+					if (now - stream.manuallyClosedAt <= manualCloseExpiry) {
+						return true;
+					} else {
+						// Clear the manually closed flag if it's expired
+						stream.manuallyClosedAt = undefined;
+						stream.shouldSkip = false;
+					}
 				}
 			}
 		}
@@ -2214,10 +2296,11 @@ export class StreamManager extends EventEmitter {
 	}
 
 	public getScreenConfig(screen: number): ScreenConfig | undefined {
-		return this.screenConfigs.get(screen);
+		return this.getActiveConfigForScreen(screen);
 	}
 
 	public updateScreenConfig(screen: number, config: Partial<ScreenConfig>): void {
+		// Find the active config for this screen
 		const screenConfig = this.getScreenConfig(screen);
 		if (!screenConfig) {
 			throw new Error(`Screen ${screen} not found`);
@@ -2226,7 +2309,14 @@ export class StreamManager extends EventEmitter {
 		// Update the config
 		Object.assign(screenConfig, config);
 
-		this.screenConfigs.set(screen, screenConfig);
+		// Update in the allConfigsById map - by ID
+		if (screenConfig.id !== undefined) {
+			this.allConfigsById.set(screenConfig.id, screenConfig);
+		}
+
+		// Refresh the active configs to ensure proper selection per screen
+		this.refreshActiveConfigsForScreens();
+
 		this.emit('screenConfigChanged', { screen, config });
 	}
 
@@ -2260,8 +2350,8 @@ export class StreamManager extends EventEmitter {
 	 * - Status
 	 */
 	public getScreenInfo(screen: number) {
-		// Get screen configuration
-		const screenConfig = this.config.player.screens.find((s) => s.screen === screen);
+		// Get screen configuration using our new method
+		const screenConfig = this.getActiveConfigForScreen(screen);
 		if (!screenConfig) {
 			throw new Error(`Screen ${screen} not found`);
 		}
@@ -2362,8 +2452,8 @@ export class StreamManager extends EventEmitter {
 		if (!stream && playlist.length > 0) {
 			const currentItem = playlist.find((item) => item.current);
 			if (currentItem) {
-				// Get screen configuration
-				const screenConfig = this.config.player.screens.find((s) => s.screen === screen);
+				// Get screen configuration using our new method
+				const screenConfig = this.getActiveConfigForScreen(screen);
 				if (!screenConfig) {
 					logger.warn(`No screen configuration found for screen ${screen}`, 'StreamManager');
 					return;
@@ -2659,14 +2749,12 @@ export class StreamManager extends EventEmitter {
 	 * Synchronize disabled screens from config to PlayerService
 	 */
 	private synchronizeDisabledScreens(): void {
-		if (!this.config.player.screens) return;
-
-		// Mark all disabled screens in the PlayerService
-		for (const screenConfig of this.config.player.screens) {
+		// Use the active configs per screen to synchronize disabled screens
+		for (const [screen, screenConfig] of this.screenConfigs.entries()) {
 			if (!screenConfig.enabled) {
-				this.playerService.disableScreen(screenConfig.screen);
+				this.playerService.disableScreen(screen);
 				logger.info(
-					`Screen ${screenConfig.screen} marked as disabled during initialization`,
+					`Screen ${screen} marked as disabled during initialization`,
 					'StreamManager'
 				);
 			}
