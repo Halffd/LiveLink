@@ -42,6 +42,8 @@ export interface StreamError {
   moveToNext?: boolean;
   /** Whether the stream crashed and should be restarted (true) or ended normally (false) */
   shouldRestart?: boolean;
+  /** Playback time in seconds before the error occurred */
+  playbackTime?: number;
 }
 
 export interface StreamEnd {
