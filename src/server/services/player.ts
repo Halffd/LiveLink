@@ -519,13 +519,11 @@ export class PlayerService {
 			if (hasEnded) return;
 			hasEnded = true;
 
-			this.cleanup_after_stop(screen);
-
 			const stream = this.streams.get(screen);
 			const url = stream?.url || 'unknown';
 			const playbackTime = stream?.playbackTime || 0;
 			logger.info(`Process for screen ${screen} (${url}) exited with code ${code}`, 'PlayerService');
-	
+
 			const normalExit = code === 0;
 			const isManualClose = this.manuallyClosedScreens.has(screen);
 			const shouldRestart = !normalExit && !isManualClose && !this.isShuttingDown;
@@ -542,6 +540,8 @@ export class PlayerService {
 					shouldRestart: !isManualClose, // Don't restart if manually closed
 				});
 			}
+
+			this.cleanup_after_stop(screen);
 		};
 	
 		process.on('exit', onExit);
@@ -602,8 +602,9 @@ export class PlayerService {
 					`Persistent network issues detected for screen ${screen}, skipping retry`,
 					'PlayerService'
 				);
-				this.cleanup_after_stop(screen);
-				this.clearMonitoring(screen);
+
+				// Get playback time before cleanup
+				const playbackTime = stream?.playbackTime || 0;
 
 				// Emit error to trigger external recovery
 				this.errorCallback?.({
@@ -611,8 +612,12 @@ export class PlayerService {
 					error: 'Persistent network issues detected',
 					code: code || 0,
 					url,
-					moveToNext: true // Signal to move to next stream
+					moveToNext: true, // Signal to move to next stream
+					playbackTime
 				});
+
+				this.cleanup_after_stop(screen);
+				this.clearMonitoring(screen);
 				return;
 			}
 
@@ -648,10 +653,6 @@ export class PlayerService {
 					`Incremented retry count for screen ${screen} to ${this.networkRetries.get(screen)}`,
 					'PlayerService'
 				);
-				// Clean up but don't emit error yet
-				this.cleanup_after_stop(screen);
-				this.clearMonitoring(screen);
-
 				// Set up retry timer with timeout protection
 				const retryTimer = setTimeout(async () => {
 					try {
@@ -679,13 +680,17 @@ export class PlayerService {
 							error instanceof Error ? error : new Error(String(error))
 						);
 
+						// Get playback time before cleanup in the error callback
+						const playbackTime = stream?.playbackTime || 0;
+
 						// Now emit the error since retry failed
 						this.errorCallback?.({
 							screen,
 							error: `Failed to restart stream after network error: ${error instanceof Error ? error.message : String(error)}`,
 							code: code || 0,
 							url,
-							moveToNext: true
+							moveToNext: true,
+							playbackTime
 						});
 					}
 				}, backoffTime);
@@ -713,10 +718,6 @@ export class PlayerService {
 			);
 		}
 
-		// For non-network errors or if max retries reached, clean up and emit error
-		this.cleanup_after_stop(screen);
-		this.clearMonitoring(screen);
-
 		// Calculate whether to move to next or restart
 		const normalExit = code === 0;
 		const isManualClose = this.manuallyClosedScreens.has(screen);
@@ -726,6 +727,10 @@ export class PlayerService {
 		const shouldRestart = !normalExit && !missingUrl && !externalKill && !this.isShuttingDown && !isManualClose;
 		logger.info(`Stream on screen ${screen} ended with code ${code}${url ? ` (${url})` : ''}`, 'PlayerService');
 		logger.info(`Move to next: ${moveToNext}, should restart: ${shouldRestart} is shutting down: ${this.isShuttingDown} normal exit: ${normalExit} missing url: ${missingUrl} external kill: ${externalKill} code: ${code}`, 'PlayerService');
+
+		// Get playback time before cleanup
+		const playbackTime = stream?.playbackTime || 0;
+
 		// Emit stream error with URL if we have it
 		this.errorCallback?.({
 			screen,
@@ -733,8 +738,13 @@ export class PlayerService {
 			code: code || 0,
 			url,
 			moveToNext,
-			shouldRestart: !isManualClose // Don't restart if manually closed
+			shouldRestart: !isManualClose, // Don't restart if manually closed
+			playbackTime
 		});
+
+		// Perform cleanup after emitting the callback
+		this.cleanup_after_stop(screen);
+		this.clearMonitoring(screen);
 	}
 
 	    public clearMonitoring(screen: number): void {
