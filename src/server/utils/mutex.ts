@@ -64,8 +64,9 @@ export class SimpleMutex {
 		this.locked = false;
 		this.owner = null;
 		this.acquireTime = 0;
+		const previousOperation = this.lastOperation;
 		this.lastOperation = '';
-		this.logger.warn(`[MUTEX] Force releasing stale lock`, this.context);
+		this.logger.warn(`[MUTEX] Force releasing stale lock from ${previousOperation}`, this.context);
 		this.wakeNext();
 	}
 
@@ -97,7 +98,8 @@ export class SimpleMutex {
 					);
 					this.forceRelease();
 				}
-				reject(new Error(`Mutex acquire timeout after ${timeout}ms - lock held by ${this.owner}`));
+				const heldBy = this.locked ? this.owner : 'none';
+				reject(new Error(`Mutex acquire timeout after ${timeout}ms - lock held by ${heldBy}`));
 			}, timeout);
 
 			this.waitQueue.push({ owner, resolve, reject, timeout: timer });

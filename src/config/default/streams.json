@@ -1,5 +1,5 @@
 {
-	"skipWatchedStreams": false,
+	"skipWatchedStreams": true,
 	"sorting": {
 		"fields": [
 			{ "field": "score", "order": "desc" },
@@ -11,7 +11,91 @@
 			"id": 1,
 			"enabled": true,
 			"screen": 1,
-			"skipWatchedStreams": false,
+			"skipWatchedStreams": true,
+			"sources": [
+				{
+					"type": "holodex",
+					"subtype": "favorites",
+					"enabled": true,
+					"limit": 200,
+					"priority": 1
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Hololive",
+					"enabled": true,
+					"limit": 40,
+					"priority": 2
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Phase Connect",
+					"enabled": true,
+					"limit": 15,
+					"priority": 3
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "VSpo",
+					"enabled": true,
+					"limit": 30,
+					"priority": 4
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Nijisanji",
+					"enabled": true,
+					"limit": 10,
+					"priority": 5
+				}
+			],
+			"sorting": {
+				"field": "viewerCount",
+				"order": "desc"
+			},
+			"refresh": 300,
+			"autoStart": true
+		},
+		{
+			"id": 2,
+			"enabled": true,
+			"screen": 2,
+			"skipWatchedStreams": true,
+			"sources": [
+				{
+					"type": "twitch",
+					"subtype": "favorites",
+					"enabled": true,
+					"limit": 500,
+					"priority": 1
+				},
+				{
+					"type": "holodex",
+					"subtype": "organization",
+					"name": "Twitch Independents",
+					"enabled": true,
+					"limit": 50,
+					"priority": 2
+				}
+			],
+			"sorting": {
+				"fields": [
+					{ "field": "priority", "order": "asc" },
+					{ "field": "viewerCount", "order": "desc" }
+				]
+			},
+			"refresh": 300,
+			"autoStart": true
+		}, 		
+        {
+			"id": 3,
+			"enabled": false,
+			"screen": 1,
+			"skipWatchedStreams": true,
 			"sources": [
 				{
 					"type": "holodex",
@@ -52,7 +136,6 @@
 					"limit": 10,
 					"priority": 5
 				},
-
 				{
 					"type": "holodex",
 					"subtype": "organization",
@@ -113,37 +196,6 @@
 			"sorting": {
 				"field": "viewerCount",
 				"order": "desc"
-			},
-			"refresh": 300,
-			"autoStart": true
-		},
-		{
-			"id": 2,
-			"enabled": true,
-			"screen": 2,
-			"skipWatchedStreams": false,
-			"sources": [
-				{
-					"type": "twitch",
-					"subtype": "favorites",
-					"enabled": true,
-					"limit": 500,
-					"priority": 1
-				},
-				{
-					"type": "holodex",
-					"subtype": "organization",
-					"name": "Twitch Independents",
-					"enabled": true,
-					"limit": 50,
-					"priority": 2
-				}
-			],
-			"sorting": {
-				"fields": [
-					{ "field": "priority", "order": "asc" },
-					{ "field": "viewerCount", "order": "desc" }
-				]
 			},
 			"refresh": 300,
 			"autoStart": true
