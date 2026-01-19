@@ -171,14 +171,14 @@ export class StreamManager extends EventEmitter {
 
 	// Add a set to track screens that are currently being processed to prevent race conditions
 	private processingScreens: Set<number> = new Set();
-	private readonly DEFAULT_LOCK_TIMEOUT = 45000; // 45 seconds - reduced from 120s to prevent long-held locks
-	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 25_000; // 25 seconds - reduced from 30s
+	private readonly DEFAULT_LOCK_TIMEOUT = 15000; // 15 seconds - reduced from 45s to prevent long-held locks
+	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 15_000; // 15 seconds - reduced from 25s
 	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
-	private static readonly QUEUE_UPDATE_RETRY_DELAY = 3_000; // 3 seconds - reduced from 5s for faster recovery
-	private readonly RETRY_TIMEOUT = 20000; // 20 seconds
+	private static readonly QUEUE_UPDATE_RETRY_DELAY = 2_000; // 2 seconds - reduced from 3s for faster recovery
+	private readonly RETRY_TIMEOUT = 15000; // 15 seconds - reduced from 20s
 	private readonly OPERATION_TIMEOUT = 5000; // 5 seconds
 	// for normal operations
-	private readonly ERROR_HANDLER_TIMEOUT = 25_000; // 25 seconds - reduced from 30s
+	private readonly ERROR_HANDLER_TIMEOUT = 15_000; // 15 seconds - reduced from 25s
 	private retryTimers: Map<number, NodeJS.Timeout> = new Map();
 	private networkRetries: Map<number, number> = new Map();
 	private lastNetworkError: Map<number, number> = new Map();
@@ -483,11 +483,15 @@ export class StreamManager extends EventEmitter {
 
 				// Timeout handler
 				new Promise<T>((_, reject) => {
-					const timeout = customTimeout || this.DEFAULT_LOCK_TIMEOUT;
-					setTimeout(() => {
+					const timeoutDuration = customTimeout || this.DEFAULT_LOCK_TIMEOUT;
+					const timeoutId = setTimeout(() => {
 						abortController.abort();
-						reject(new Error(`Operation ${operation} timed out after ${timeout}ms`));
-					}, timeout).unref?.(); // Use unref to prevent keeping the process alive
+						reject(new Error(`Operation ${operation} timed out after ${timeoutDuration}ms`));
+					}, timeoutDuration);
+					// Use unref to prevent keeping the process alive if available
+					if (typeof timeoutId.unref === 'function') {
+						timeoutId.unref();
+					}
 				})
 			]);
 		} catch (error) {
@@ -578,10 +582,14 @@ export class StreamManager extends EventEmitter {
 
 	public getActiveAndStartingStreamsCount(): number {
 		let count = 0;
-		for (const stateMachine of this.stateMachines.values()) {
+		for (const [screen, stateMachine] of this.stateMachines.entries()) {
 			const state = stateMachine.getState();
 			if (state === StreamState.PLAYING || state === StreamState.STARTING) {
-				count++;
+				// Double-check that the stream is actually running in the player service
+				const isActiveInPlayer = this.playerService.isStreamHealthy(screen);
+				if (isActiveInPlayer) {
+					count++;
+				}
 			}
 		}
 		return count;
@@ -647,7 +655,7 @@ export class StreamManager extends EventEmitter {
 		// Process all screens in parallel with individual error handling
 		await Promise.allSettled(
 			screensToProcess.map((screen) =>
-				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 25000) // 25s timeout - reduced to prevent long lock holds
+				this.withLock(screen, 'updateSingleScreen', () => this.updateSingleScreen(screen), 15000) // 15s timeout - reduced from 25s to prevent long lock holds
 					.catch((error) => {
 						logger.error(
 							`Failed to update queue for screen ${screen}`,
@@ -745,35 +753,49 @@ export class StreamManager extends EventEmitter {
 	 * @param timeoutMs Maximum allowed time in 'starting' state before considering it stuck
 	 */
 	private async handleStuckStarting(screen: number, timeoutMs: number = this.MAX_STARTING_TIME): Promise<void> {
-		await this.withLock(screen, 'handleStuckStarting', async () => {
-			const state = this.getScreenState(screen);
+		try {
+			await this.withLock(screen, 'handleStuckStarting', async () => {
+				const state = this.getScreenState(screen);
 
-			// Only proceed if the screen is in 'starting' state
-			if (state !== StreamState.STARTING) {
-				return;
+				// Only proceed if the screen is in 'starting' state
+				if (state !== StreamState.STARTING) {
+					return;
+				}
+
+				const startTime = this.screenStartingTimestamps.get(screen);
+
+				if (!startTime) {
+					this.screenStartingTimestamps.set(screen, Date.now());
+					return;
+				}
+
+				const elapsed = Date.now() - startTime;
+
+				if (elapsed >= timeoutMs) {
+					logger.warn(
+						`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(
+							timeoutMs / 1000
+						)}s). Resetting.`,
+						'StreamManager'
+					);
+					this.screenStartingTimestamps.delete(screen);
+
+					// Stop any existing stream process for this screen to clean up
+					await this.playerService.stopStream(screen, true, false);
+
+					await this.setScreenState(screen, StreamState.ERROR, new Error('Stuck in starting state'));
+					await this._handleStreamEndInternal(screen); // Trigger recovery
+				}
+			}, 10000); // Use shorter timeout for stuck handling
+		} catch (error) {
+			logger.error(`Error in handleStuckStarting for screen ${screen}`, 'StreamManager', error);
+			// If we can't handle the stuck state due to lock issues, at least try to reset the screen state
+			try {
+				await this.setScreenState(screen, StreamState.ERROR, new Error('Failed to handle stuck starting state'));
+			} catch (resetError) {
+				logger.error(`Failed to reset screen state after handleStuckStarting error for screen ${screen}`, 'StreamManager', resetError);
 			}
-
-			const startTime = this.screenStartingTimestamps.get(screen);
-
-			if (!startTime) {
-				this.screenStartingTimestamps.set(screen, Date.now());
-				return;
-			}
-
-			const elapsed = Date.now() - startTime;
-
-			if (elapsed >= timeoutMs) {
-				logger.warn(
-					`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(
-						timeoutMs / 1000
-					)}s). Resetting.`,
-					'StreamManager'
-				);
-				this.screenStartingTimestamps.delete(screen);
-				await this.setScreenState(screen, StreamState.ERROR, new Error('Stuck in starting state'));
-				await this._handleStreamEndInternal(screen); // Trigger recovery
-			}
-		});
+		}
 	}
 
 
@@ -844,11 +866,16 @@ export class StreamManager extends EventEmitter {
 			await this.updateQueue(screen);
 		}
 
+		// Get the next stream from the queue and immediately consume it to prevent re-selection
 		const queue = this.queues.get(screen) || [];
-		let nextStream: QueueStreamSource | undefined;
 
-		// Find next valid stream
-		for (const potentialStream of queue) {
+		// Find and consume the next valid stream from the queue
+		let nextStream: QueueStreamSource | undefined = undefined;
+		let nextStreamIndex: number = -1;
+
+		// Find next valid stream in the queue
+		for (let i = 0; i < queue.length; i++) {
+			const potentialStream = queue[i];
 			const isWatched = this.isStreamWatched(potentialStream.url);
 			const isManuallyClosed = this.isStreamManuallyClosed(potentialStream.url);
 			const hasTooManyFailures = this.hasStreamFailedTooManyTimes(potentialStream.url);
@@ -875,9 +902,9 @@ export class StreamManager extends EventEmitter {
 				continue;
 			}
 
-			// Mark this stream as selected to prevent race conditions
-			potentialStream.shouldSkip = true;
+			// Found a valid stream - consume it immediately by removing from queue
 			nextStream = potentialStream as QueueStreamSource;
+			nextStreamIndex = i;
 			break;
 		}
 
@@ -886,16 +913,22 @@ export class StreamManager extends EventEmitter {
 			await this.updateQueue(screen);
 
 			// Check if queue is still empty after refresh
-			const queue = this.queues.get(screen) || [];
-			if (queue.length === 0) {
+			const refreshedQueue = this.queues.get(screen) || [];
+			if (refreshedQueue.length === 0) {
 				logger.info(`Queue for screen ${screen} still empty after refresh`, 'StreamManager');
 				await this.checkForAllQueuesEmpty();
 			}
 			return;
 		}
 
-		// DON'T remove from queue yet - only mark it for removal after successful start
-		logger.info(`Found next stream for screen ${screen}: ${nextStream.url}. Preparing to start.`, 'StreamManager');
+		// IMMEDIATELY consume the stream from the queue to prevent re-selection
+		const updatedQueue = [...queue];
+		updatedQueue.splice(nextStreamIndex, 1); // Remove the selected stream
+		this.queues.set(screen, updatedQueue);
+		queueService.setQueue(screen, updatedQueue as StreamSource[]);
+		this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
+
+		logger.info(`Consumed and starting next stream for screen ${screen}: ${nextStream.url}`, 'StreamManager');
 
 		if (!screenConfig) {
 			logger.error(`Cannot start stream, no config for screen ${screen}`, 'StreamManager');
@@ -916,33 +949,17 @@ export class StreamManager extends EventEmitter {
 				windowMaximized: screenConfig.windowMaximized,
 			};
 
-			// Only remove from queue after successful start
 			const startResult = await this.startStream(streamOptions);
 
 			if (startResult.success) {
-				// NOW remove it from the queue after successful start
-				const updatedQueue = queue.filter(stream => stream.url !== nextStream!.url);
-				this.queues.set(screen, updatedQueue);
-				queueService.setQueue(screen, updatedQueue as StreamSource[]);
-				this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
-
-				// Mark as playing in the context that we're tracking it
+				// Stream started successfully - mark as playing
 				this.markStreamAsPlaying(screen, nextStream.url);
 			} else {
-				// If it failed, update the failure count and remove the failed stream from queue
-				// to prevent infinite retry loops
+				// If it failed, update the failure count
 				this.recordStreamFailure(nextStream.url);
 
-				// Remove the failed stream from queue so it won't be retried immediately
-				const updatedQueue = queue.filter(stream => stream.url !== nextStream!.url);
-				this.queues.set(screen, updatedQueue);
-				queueService.setQueue(screen, updatedQueue as StreamSource[]);
-				this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
+				logger.warn(`Failed to start stream ${nextStream.url}, will try next stream`, 'StreamManager');
 
-				logger.warn(`Removed failed stream ${nextStream.url} from queue, will retry next stream`, 'StreamManager');
-
-				// Now try the NEXT stream (not the same one) - use the internal method to avoid race conditions
-				// But avoid infinite recursion if we're already in an error state
 				// Check if this failure is due to max streams reached - if so, wait a bit longer before retrying
 				const isMaxStreamsError = startResult.error?.includes('Maximum number of streams') === true;
 
@@ -963,7 +980,7 @@ export class StreamManager extends EventEmitter {
 	public async handleStreamEnd(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Use shorter timeout for handleStreamEnd to prevent long lock holds
 		// This reduces the chance of cascading lock timeouts
-		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen, isManual, playbackTime), 30000);
+		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen, isManual, playbackTime), 15000); // Reduced from 30s to 15s
 	}
 
 
@@ -1102,7 +1119,7 @@ export class StreamManager extends EventEmitter {
 				this.recordStreamFailure(url);
 				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
 				// If the error is max streams, wait longer before retrying.
-				const retryDelay = error.includes('Maximum number of streams') ? 30000 : 1000;
+				const retryDelay = error.includes('Maximum number of streams') ? 5000 : 1000; // Reduced from 30s to 5s
 				if (retryDelay > 1000) {
 					// For longer delays, use setTimeout to not block the current operation
 					// Use a separate function to handle retries to avoid nested locks
@@ -1134,11 +1151,21 @@ export class StreamManager extends EventEmitter {
 	private async handleRetryAfterError(screen: number): Promise<void> {
 		// Use withLock to ensure we don't have conflicts with other operations
 		// Use a shorter timeout to prevent lock holding for too long
-		await this.withLock(screen, 'retryAfterError', async () => {
-			await this.handleStreamEnd(screen);
-		}, 20000).catch(err => {
+		try {
+			await this.withLock(screen, 'retryAfterError', async () => {
+				// Check if screen is still in error state before proceeding
+				const currentState = this.getScreenState(screen);
+				if (currentState !== StreamState.ERROR) {
+					logger.debug(`Screen ${screen} no longer in ERROR state, skipping retry`, 'StreamManager');
+					return;
+				}
+
+				await this.handleStreamEnd(screen);
+			}, 15000); // Reduced timeout from 20s to 15s
+		} catch (err) {
 			logger.error(`Error in retry after error for screen ${screen}`, 'StreamManager', err);
-		});
+			// Don't retry on lock failure to prevent infinite loops
+		}
 	}
 
 	async stopStream(screen: number, isManualStop: boolean = false): Promise<boolean> {
@@ -1759,9 +1786,19 @@ export class StreamManager extends EventEmitter {
 	private async deferStartNextStream(screen: number) {
 		setTimeout(async () => {
 			try {
-				const nextStream = queueService.getNextStream(screen);
-	
-				if (nextStream) {
+				// Use our internal queue to get and consume the next stream
+				const queue = this.queues.get(screen) || [];
+
+				if (queue.length > 0) {
+					// Get the first stream and immediately consume it
+					const nextStream = queue[0] as QueueStreamSource;
+
+					// Consume the stream from the queue immediately to prevent re-selection
+					const updatedQueue = queue.slice(1); // Remove the first element
+					this.queues.set(screen, updatedQueue);
+					queueService.setQueue(screen, updatedQueue as StreamSource[]);
+					this.emit('queueUpdate', { screen, queue: updatedQueue as StreamSource[] });
+
 					const streamOptions: StreamOptions = {
 						url: nextStream.url,
 						title: nextStream.title,
@@ -1771,7 +1808,7 @@ export class StreamManager extends EventEmitter {
 						screen: screen,
 						volume: this.config.player.defaultVolume
 					};
-	
+
 					await this.startStream(streamOptions);
 				} else {
 					logger.info(`Queue empty for screen ${screen}, setting to IDLE state`, 'StreamManager');

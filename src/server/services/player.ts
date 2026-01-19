@@ -300,7 +300,13 @@ export class PlayerService {
 	
 		try {
 			// Check max streams before attempting to start
-			const activeStreamsCount = Array.from(this.streams.values()).filter(s => s.process && this.isProcessRunning(s.process.pid)).length;
+			// Only count streams that are actually running (not in stopping state)
+			const activeStreamsCount = Array.from(this.streams.values()).filter(s =>
+				s.process &&
+				this.isProcessRunning(s.process.pid) &&
+				s.status !== 'stopping'
+			).length;
+
 			if (activeStreamsCount >= this.config.player.maxStreams) {
 				return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
 			} 
