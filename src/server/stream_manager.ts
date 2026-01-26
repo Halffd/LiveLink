@@ -272,19 +272,10 @@ export class StreamManager extends EventEmitter {
 	): Promise<void> {
 		logger.error(`Stream error on screen ${screen}: ${error}`, 'StreamManager', { code, url });
 
-		// If the error indicates a need to move to the next stream, or if it's a non-recoverable error
-		if (moveToNext) {
-			await this.setScreenState(screen, StreamState.ERROR, new Error(error));
-			await this._handleStreamEndInternal(screen); // This will attempt to start the next stream
-		} else if (shouldRestart) {
-			// If the error suggests a restart might fix it (e.g., temporary network glitch)
-			logger.info(`Attempting to restart stream on screen ${screen} due to error`, 'StreamManager');
-			await this.setScreenState(screen, StreamState.ERROR, new Error(error));
-			await this.restartStreams(screen);
-		} else {
-			// For other errors, just set the state to ERROR
-			await this.setScreenState(screen, StreamState.ERROR, new Error(error));
-		}
+		// For livestreams, treat all exits the same - consume the stream and move to the next one
+		// This prevents the inconsistent state transitions and eliminates the ERROR state for livestreams
+		logger.info(`Stream on screen ${screen} ended, consuming and moving to next stream`, 'StreamManager');
+		await this._handleStreamEndInternal(screen); // This will consume the current stream and start the next one
 	}
 
 	// Initialize state machines for all screens
@@ -694,9 +685,9 @@ export class StreamManager extends EventEmitter {
 				return;
 			}
 
-			// Reset ERROR state to IDLE to allow retries
+			// For livestreams, if we're in ERROR state, move directly to IDLE to continue rotation
 			if (currentState === StreamState.ERROR) {
-				logger.info(`Resetting screen ${screen} from ERROR to IDLE state`, 'StreamManager');
+				logger.info(`Moving screen ${screen} from ERROR to IDLE state for livestream rotation`, 'StreamManager');
 				await this.setScreenState(screen, StreamState.IDLE);
 			}
 
@@ -783,15 +774,17 @@ export class StreamManager extends EventEmitter {
 					// Stop any existing stream process for this screen to clean up
 					await this.playerService.stopStream(screen, true, false);
 
-					await this.setScreenState(screen, StreamState.ERROR, new Error('Stuck in starting state'));
-					await this._handleStreamEndInternal(screen); // Trigger recovery
+					// For livestreams, don't set ERROR state - just move to IDLE and continue
+					await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+					await this._handleStreamEndInternal(screen); // Trigger recovery by moving to next stream
 				}
 			}, 10000); // Use shorter timeout for stuck handling
 		} catch (error) {
 			logger.error(`Error in handleStuckStarting for screen ${screen}`, 'StreamManager', error);
 			// If we can't handle the stuck state due to lock issues, at least try to reset the screen state
 			try {
-				await this.setScreenState(screen, StreamState.ERROR, new Error('Failed to handle stuck starting state'));
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			} catch (resetError) {
 				logger.error(`Failed to reset screen state after handleStuckStarting error for screen ${screen}`, 'StreamManager', resetError);
 			}
@@ -812,26 +805,31 @@ export class StreamManager extends EventEmitter {
 		const screenConfig = this.getScreenConfig(screen);
 
 		const currentState = this.getScreenState(screen);
-		if (![StreamState.IDLE, StreamState.ERROR, StreamState.PLAYING, StreamState.STOPPING].includes(currentState)) {
-			logger.debug(`handleStreamEnd called on screen ${screen} in state ${currentState}, skipping.`, 'StreamManager');
-			return;
+		if (![StreamState.IDLE, StreamState.PLAYING, StreamState.STOPPING].includes(currentState)) {
+			// We no longer include ERROR state here since livestreams should not enter error state
+			// Instead, they should transition directly to IDLE and continue with the next stream
+			if (currentState === StreamState.ERROR) {
+				// If we're coming from an error state, reset to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+			} else {
+				logger.debug(`handleStreamEnd called on screen ${screen} in state ${currentState}, skipping.`, 'StreamManager');
+				return;
+			}
 		}
 
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
 			if (!isManual) {
-				const WATCH_THRESHOLD_SECONDS = 120; // 2 minutes
-				if (playbackTime >= WATCH_THRESHOLD_SECONDS) {
-					this.markStreamAsWatched(existingStream.url);
-				} else {
-					logger.info(
-						`Stream on screen ${screen} ended but did not meet watch threshold of ${WATCH_THRESHOLD_SECONDS}s (played for ${playbackTime.toFixed(
-							0
-						)}s). Not marking as watched.`,
-						'StreamManager'
-					);
-				}
+				// For livestreams, we don't care about watch time - consume the stream immediately
+				// regardless of how long it played. This prevents the inconsistent "watched" marking
+				// that was causing issues with stream rotation.
+				// Still mark as watched to prevent re-selection in the queue.
+				logger.info(
+					`Stream on screen ${screen} ended after ${playbackTime.toFixed(0)}s. Consuming stream.`,
+					'StreamManager'
+				);
+				this.markStreamAsWatched(existingStream.url);
 			} else {
 				logger.info(`Stream on screen ${screen} was manually stopped. Not marking as watched.`, 'StreamManager');
 			}
@@ -932,7 +930,8 @@ export class StreamManager extends EventEmitter {
 
 		if (!screenConfig) {
 			logger.error(`Cannot start stream, no config for screen ${screen}`, 'StreamManager');
-			await this.setScreenState(screen, StreamState.ERROR, new Error(`No config for screen ${screen}`));
+			// For livestreams, don't set ERROR state - just move to IDLE and continue
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			return;
 		}
 
@@ -968,10 +967,16 @@ export class StreamManager extends EventEmitter {
 					await new Promise(resolve => setTimeout(resolve, 2000));
 				}
 
-				const currentState = this.getScreenState(screen);
-				if (currentState !== StreamState.ERROR) {
-					await this._handleStreamEndInternal(screen);
-				}
+				// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+				// Use queueMicrotask to ensure it runs after the current lock is released
+				queueMicrotask(() => {
+					setImmediate(async () => {
+						// Acquire lock separately for the next attempt
+						await this.withLock(screen, 'handleStreamEnd-startNextStream', async () => {
+							await this._handleStreamEndInternal(screen);
+						}, 15000);
+					});
+				});
 			}
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
@@ -980,7 +985,9 @@ export class StreamManager extends EventEmitter {
 	public async handleStreamEnd(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Use shorter timeout for handleStreamEnd to prevent long lock holds
 		// This reduces the chance of cascading lock timeouts
-		await this.withLock(screen, `handleStreamEnd`, () => this._handleStreamEndInternal(screen, isManual, playbackTime), 15000); // Reduced from 30s to 15s
+		await this.withLock(screen, `handleStreamEnd`, async () => {
+			await this._handleStreamEndInternal(screen, isManual, playbackTime);
+		}, 15000); // Reduced from 30s to 15s
 	}
 
 
@@ -994,7 +1001,8 @@ export class StreamManager extends EventEmitter {
 		if (!screenConfig) {
 			const err = new Error(`Cannot start next stream, no config for screen ${screen}`);
 			logger.error(err.message, 'StreamManager');
-			await this.setScreenState(screen, StreamState.ERROR, err);
+			// For livestreams, don't set ERROR state - just move to IDLE and continue
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			return;
 		}
 	
@@ -1018,16 +1026,35 @@ export class StreamManager extends EventEmitter {
 				// Record the failure in the queue (single source of truth)
 				this.recordStreamFailure(nextStream.url);
 	
-				// Mark as error and try the next one
-				await this.setScreenState(screen, StreamState.ERROR, new Error(startResult.error));
-				// Use handleStreamEnd which has proper locking
-				await this.handleStreamEnd(screen);
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+
+				// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+				// Use queueMicrotask to ensure it runs after the current lock is released
+				queueMicrotask(() => {
+					setImmediate(async () => {
+						// Acquire lock separately for the next attempt
+						await this.withLock(screen, 'handleStreamEnd-startNextStream-fail', async () => {
+							await this._handleStreamEndInternal(screen);
+						}, 15000);
+					});
+				});
 			}
 		} catch (error) {
 			logger.error(`Error starting next stream on screen ${screen}`, 'StreamManager', error);
-			await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
-			// Use handleStreamEnd which has proper locking
-			await this.handleStreamEnd(screen);
+			// For livestreams, don't set ERROR state - just move to IDLE and continue
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+
+			// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+			// Use queueMicrotask to ensure it runs after the current lock is released
+			queueMicrotask(() => {
+				setImmediate(async () => {
+					// Acquire lock separately for the next attempt
+					await this.withLock(screen, 'handleStreamEnd-startNextStream-catch', async () => {
+						await this._handleStreamEndInternal(screen);
+					}, 15000);
+				});
+			});
 		}
 	}
 
@@ -1052,12 +1079,20 @@ export class StreamManager extends EventEmitter {
 					await this.checkForAllQueuesEmpty();
 				}
 				
-				// handleStreamEnd will pick up the newly populated queue and start the first valid stream.
-				await this.handleStreamEnd(screen);
+				// Schedule handleStreamEnd to run after the current lock is released to avoid recursive lock acquisition
+				queueMicrotask(() => {
+					setImmediate(async () => {
+						// Acquire lock separately for the next attempt
+						await this.withLock(screen, 'handleStreamEnd-handleEmptyQueue', async () => {
+							await this._handleStreamEndInternal(screen);
+						}, 15000);
+					});
+				});
 
 			} catch (error) {
 				logger.error(`Error handling empty queue for screen ${screen}`, 'StreamManager', error);
-				await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			}
 		});
 	}
@@ -1117,19 +1152,20 @@ export class StreamManager extends EventEmitter {
 				const error = result.error || 'Failed to start stream';
 				// Record the failure in the queue (single source of truth)
 				this.recordStreamFailure(url);
-				await this.setScreenState(screen, StreamState.ERROR, new Error(error));
-				// If the error is max streams, wait longer before retrying.
-				const retryDelay = error.includes('Maximum number of streams') ? 5000 : 1000; // Reduced from 30s to 5s
-				if (retryDelay > 1000) {
-					// For longer delays, use setTimeout to not block the current operation
-					// Use a separate function to handle retries to avoid nested locks
-					setTimeout(() => {
-						this.handleRetryAfterError(screen);
-					}, retryDelay);
-				} else {
-					// For short delays, call directly to maintain proper locking
-					await this.handleStreamEnd(screen);
-				}
+
+				// For livestreams, don't set ERROR state - just move to IDLE and continue with next stream
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+
+				// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+				// Use queueMicrotask to ensure it runs after the current lock is released
+				queueMicrotask(() => {
+					setImmediate(async () => {
+						// Acquire lock separately for the next attempt
+						await this.withLock(screen, 'handleStreamEnd-after-failure', async () => {
+							await this._handleStreamEndInternal(screen);
+						}, 15000);
+					});
+				});
 				return { screen, success: false, error: error };
 			}
 		} catch (error) {
@@ -1138,9 +1174,20 @@ export class StreamManager extends EventEmitter {
 			this.recordStreamFailure(url);
 			const err = error instanceof Error ? error : new Error(String(error));
 			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
-			await this.setScreenState(screen, StreamState.ERROR, err);
-			// Use handleStreamEnd which has proper locking
-			await this.handleStreamEnd(screen);
+
+			// For livestreams, don't set ERROR state - just move to IDLE and continue with next stream
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+
+			// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+			// Use queueMicrotask to ensure it runs after the current lock is released
+			queueMicrotask(() => {
+				setImmediate(async () => {
+					// Acquire lock separately for the next attempt
+					await this.withLock(screen, 'handleStreamEnd-catch', async () => {
+						await this._handleStreamEndInternal(screen);
+					}, 15000);
+				});
+			});
 			return { screen, success: false, error: err.message };
 		}
 	}
@@ -1152,16 +1199,16 @@ export class StreamManager extends EventEmitter {
 		// Use withLock to ensure we don't have conflicts with other operations
 		// Use a shorter timeout to prevent lock holding for too long
 		try {
-			await this.withLock(screen, 'retryAfterError', async () => {
-				// Check if screen is still in error state before proceeding
-				const currentState = this.getScreenState(screen);
-				if (currentState !== StreamState.ERROR) {
-					logger.debug(`Screen ${screen} no longer in ERROR state, skipping retry`, 'StreamManager');
-					return;
-				}
-
-				await this.handleStreamEnd(screen);
-			}, 15000); // Reduced timeout from 20s to 15s
+			// For livestreams, we don't use ERROR state, so just continue with stream end handling
+			// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+			queueMicrotask(() => {
+				setImmediate(async () => {
+					// Acquire lock separately for the next attempt
+					await this.withLock(screen, 'handleStreamEnd-retryAfterError', async () => {
+						await this._handleStreamEndInternal(screen);
+					}, 15000);
+				});
+			});
 		} catch (err) {
 			logger.error(`Error in retry after error for screen ${screen}`, 'StreamManager', err);
 			// Don't retry on lock failure to prevent infinite loops
@@ -1441,8 +1488,8 @@ export class StreamManager extends EventEmitter {
 					'StreamManager',
 					error instanceof Error ? error : new Error(String(error))
 				);
-				// Ensure we don't get stuck in an error state
-				await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 				throw error; // Re-throw to ensure the lock is released correctly
 			}
 		
@@ -1613,18 +1660,24 @@ export class StreamManager extends EventEmitter {
 	 * Mark a stream as watched in the queue
 	 */
 	private markStreamInQueueAsWatched(url: string): void {
+		let foundInQueue = false;
 		for (const [screen, queue] of this.queues.entries()) {
 			for (const stream of queue) {
 				if (stream.url === url) {
 					stream.watchedAt = Date.now();
 					stream.shouldSkip = true;
 					logger.info(`Marked stream as watched in queue: ${url}`, 'StreamManager');
-					// Add to cached set for fast lookups immediately
-					this.watchedUrls.add(url);
+					foundInQueue = true;
 				}
 			}
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
+		}
+		// Always add to cached set for fast lookups, even if not found in current queues
+		// This handles the case where a stream was consumed (removed from queue) but still needs to be watched
+		this.watchedUrls.add(url);
+		if (!foundInQueue) {
+			logger.info(`Stream marked as watched but not found in current queues: ${url}`, 'StreamManager');
 		}
 	}
 
@@ -1820,7 +1873,8 @@ export class StreamManager extends EventEmitter {
 					'StreamManager',
 					error instanceof Error ? error : new Error(String(error))
 				);
-				await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			}
 		}, 500); // Short delay
 	}
@@ -1840,7 +1894,16 @@ export class StreamManager extends EventEmitter {
 		const restart = async (s: number) => {
 			logger.info(`Restarting stream on screen ${s}`, 'StreamManager');
 			this.manualIdleScreens.delete(s); // Clear manual idle flag
-			await this.handleStreamEnd(s);
+
+			// Schedule the restart outside the current lock to avoid recursive lock acquisition
+			queueMicrotask(() => {
+				setImmediate(async () => {
+					// Acquire lock separately for the restart attempt
+					await this.withLock(s, 'handleStreamEnd-restart', async () => {
+						await this._handleStreamEndInternal(s);
+					}, 15000);
+				});
+			});
 		};
 		if (screen) {
 			await this.withLock(screen, 'restartStream', () => restart(screen));
@@ -2854,10 +2917,20 @@ export class StreamManager extends EventEmitter {
 		
 							logger.info(`Processing screen ${screen} (state: ${currentState}) for network recovery`, 'StreamManager');
 		
-							// Only intervene if the screen is in a problematic state
-							if (currentState === StreamState.NETWORK_RECOVERY || currentState === StreamState.ERROR || currentState === StreamState.IDLE) {
+							// Only intervene if the screen is in a state that needs attention
+							if (currentState === StreamState.NETWORK_RECOVERY || currentState === StreamState.IDLE) {
+								// For livestreams, we don't use ERROR state anymore
 								await this.setScreenState(screen, StreamState.IDLE);
-								await this.handleStreamEnd(screen); // This will try to find a new stream
+
+								// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+								queueMicrotask(() => {
+									setImmediate(async () => {
+										// Acquire lock separately for the next attempt
+										await this.withLock(screen, 'handleStreamEnd-networkRecovery', async () => {
+											await this._handleStreamEndInternal(screen);
+										}, 15000);
+									});
+								});
 							} else if (currentState === StreamState.PLAYING && activeStream) {
 								// Check if stream is actually working, restart if needed
 								await this.handlePlayingScreenRecovery(screen, activeStream);
@@ -2869,7 +2942,8 @@ export class StreamManager extends EventEmitter {
 								'StreamManager',
 								error instanceof Error ? error : new Error(String(error))
 							);
-							await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(String(error)));
+							// For livestreams, don't set ERROR state - just move to IDLE and continue
+							await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 						}
 					});
 				});
@@ -2896,14 +2970,25 @@ export class StreamManager extends EventEmitter {
 				
 				if (queue.length > 0) {
 					logger.info(`Found ${queue.length} streams for screen ${screen} after recovery.`, 'StreamManager');
-					await this.handleStreamEnd(screen); // Let it find the next stream from the new queue
+
+					// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+					queueMicrotask(() => {
+						setImmediate(async () => {
+							// Acquire lock separately for the next attempt
+							await this.withLock(screen, 'handleStreamEnd-idleRecovery', async () => {
+								await this._handleStreamEndInternal(screen);
+							}, 15000);
+						});
+					});
 				} else {
 					logger.info(`No streams in queue for screen ${screen} after recovery.`, 'StreamManager');
 				}
 			} catch (error) {
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				logger.error(`Failed to start stream on screen ${screen}: ${errorMessage}`, 'StreamManager');
-				await this.setScreenState(screen, StreamState.ERROR, error instanceof Error ? error : new Error(errorMessage));
+
+				// For livestreams, don't set ERROR state - just move to IDLE and continue
+				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
 			}
 		});
 	}
@@ -2960,7 +3045,7 @@ export class StreamManager extends EventEmitter {
 					await this.withLock(screen, `forceRestart`, async () => {
 						try {
 							const currentState = this.getScreenState(screen);
-							if (currentState === StreamState.PLAYING || currentState === StreamState.ERROR) {
+							if (currentState === StreamState.PLAYING) {
 								await this.restartStreams(screen);
 							}
 						} catch (error) {
