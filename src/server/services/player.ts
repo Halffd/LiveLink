@@ -287,17 +287,17 @@ export class PlayerService {
 		this.streamStartCooldowns.set(screen, now);
 	
 		logger.info(`Attempting to start stream on screen ${screen}: ${url}`, 'PlayerService');
-	
+
 		if (this.disabledScreens.has(screen)) {
 			return { screen, success: false, error: 'Screen is disabled' };
 		}
-	
+
 		// Check if startup is already in progress for this screen
 		if (this.startupLocks.get(screen)) {
 			return { screen, success: false, error: 'Stream startup already in progress' };
 		}
 		this.startupLocks.set(screen, true);
-	
+
 		try {
 			// Check max streams before attempting to start
 			// Only count streams that are actually running (not in stopping state)
@@ -309,9 +309,20 @@ export class PlayerService {
 
 			if (activeStreamsCount >= this.config.player.maxStreams) {
 				return { screen, success: false, error: `Maximum number of streams (${this.config.player.maxStreams}) reached` };
-			} 
-	
-			await this.stopStream(screen, true, false); 
+			}
+
+			// Only stop existing stream if there's an active stream running on this screen
+			const existingStream = this.streams.get(screen);
+			if (existingStream) {
+				// Check if the existing stream is actually running before stopping it
+				const isActuallyRunning = existingStream.status === 'playing' ||
+					existingStream.status === 'stopping' ||
+					(existingStream.process && existingStream.process.pid && this.isProcessRunning(existingStream.process.pid));
+
+				if (isActuallyRunning) {
+					await this.stopStream(screen, true, false);
+				}
+			}
 	
 			const ipcPath = this.initializeIpcPath(screen);
 			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
@@ -334,7 +345,7 @@ export class PlayerService {
 				screen,
 				url,
 				quality: options.quality || this.config.player.defaultQuality,
-				status: 'playing',
+				status: 'playing',  // Set to playing only after process is confirmed running
 				volume: options.volume || 0,
 				process: playerProcess,
 				platform: url.includes('twitch.tv') ? 'twitch' : 'youtube',
@@ -536,7 +547,9 @@ export class PlayerService {
 
 			this.endCallback?.({ screen, code: code ?? undefined, manual: isManualClose, playbackTime });
 
-			if (!normalExit) {
+			// Only send error callback if it's not a manual close
+			// Manual closes should not trigger error handling in StreamManager
+			if (!normalExit && !isManualClose) {
 				this.errorCallback?.({
 					screen,
 					error: `Stream ended with code ${code}`,
@@ -545,11 +558,15 @@ export class PlayerService {
 					moveToNext: true,
 					shouldRestart: !isManualClose, // Don't restart if manually closed
 				});
+			} else if (isManualClose) {
+				// For manual closes, we still want to notify that the stream ended
+				// but without triggering error handling
+				logger.info(`Manual close detected for screen ${screen}, not sending error callback`, 'PlayerService');
 			}
 
 			this.cleanup_after_stop(screen);
 		};
-	
+
 		process.on('exit', onExit);
 		process.on('error', (err) => {
 			logger.error(`Process error on screen ${screen}`, 'PlayerService', err);
@@ -737,16 +754,22 @@ export class PlayerService {
 		// Get playback time before cleanup
 		const playbackTime = stream?.playbackTime || 0;
 
-		// Emit stream error with URL if we have it
-		this.errorCallback?.({
-			screen,
-			error: normalExit ? 'Stream ended normally' : `Stream ended with code ${code}`,
-			code: code || 0,
-			url,
-			moveToNext,
-			shouldRestart: !isManualClose, // Don't restart if manually closed
-			playbackTime
-		});
+		// Only emit error callback if it's not a manual close
+		// For manual closes, we don't want to trigger error handling in StreamManager
+		if (!isManualClose) {
+			// Emit stream error with URL if we have it
+			this.errorCallback?.({
+				screen,
+				error: normalExit ? 'Stream ended normally' : `Stream ended with code ${code}`,
+				code: code || 0,
+				url,
+				moveToNext,
+				shouldRestart: !isManualClose, // Don't restart if manually closed
+				playbackTime
+			});
+		} else {
+			logger.info(`Manual close detected for screen ${screen}, not sending error callback`, 'PlayerService');
+		}
 
 		// Perform cleanup after emitting the callback
 		this.cleanup_after_stop(screen);
@@ -875,6 +898,35 @@ export class PlayerService {
 	 */
 	cleanup_after_stop(screen: number): void {
 		const stream = this.streams.get(screen);
+
+		// Only perform cleanup if the stream was actually running (playing or stopping state)
+		// or if there's a process PID that needs to be cleaned up
+		// Never cleanup during starting state to avoid race conditions
+		const shouldCleanup = stream &&
+			(stream.status === 'playing' || stream.status === 'stopping' ||
+			 (stream.process && stream.process.pid && this.isProcessRunning(stream.process.pid)));
+
+		if (!shouldCleanup) {
+			// If we're in starting state, don't perform cleanup to avoid race conditions
+			if (stream && stream.status === 'starting') {
+				logger.debug(`Skipping cleanup for screen ${screen} during starting state to avoid race condition`, 'PlayerService');
+				return;
+			}
+
+			// If no stream exists but we still have IPC path, we might need to clean that up
+			const ipcPath = this.ipcPaths.get(screen);
+			if (ipcPath && fs.existsSync(ipcPath)) {
+				try {
+					fs.unlinkSync(ipcPath);
+					logger.debug(`Cleaned up orphaned IPC socket ${ipcPath} for screen ${screen}`, 'PlayerService');
+				} catch (error) {
+					logger.warn(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
+				}
+			}
+			this.ipcPaths.delete(screen);
+			return;
+		}
+
 		if (stream && stream.playbackTimer) {
 			clearInterval(stream.playbackTimer);
 		}
@@ -882,10 +934,10 @@ export class PlayerService {
 		if (stream?.process?.pid) {
 			this.killChildProcesses(stream.process.pid);
 		}
-	
+
 		this.clearMonitoring(screen);
 		this.streams.delete(screen);
-		
+
 		const ipcPath = this.ipcPaths.get(screen);
 		if (ipcPath && fs.existsSync(ipcPath)) {
 			try {
@@ -895,7 +947,7 @@ export class PlayerService {
 			}
 		}
 		this.ipcPaths.delete(screen);
-	
+
 		logger.info(`Cleanup complete for screen ${screen}.`, 'PlayerService');
 	}
 
