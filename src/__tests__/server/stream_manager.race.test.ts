@@ -57,16 +57,6 @@ jest.mock('../../server/services/logger', () => {
   };
 });
 
-// Mock keyboard events
-jest.mock('../../server/services/keyboard_events', () => {
-  const mockEmitter = {
-    on: jest.fn(),
-    off: jest.fn(),
-    emit: jest.fn()
-  };
-  
-  return { keyboardEvents: mockEmitter };
-});
 
 describe('StreamManager Race Condition Tests', () => {
   let streamManager: StreamManager;

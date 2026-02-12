@@ -42,12 +42,6 @@ jest.mock('./services/player', () => ({
   }))
 }));
 
-jest.mock('./services/keyboard', () => ({
-  KeyboardService: jest.fn().mockImplementation(() => ({
-    startListening: jest.fn(),
-    stopListening: jest.fn()
-  }))
-}));
 
 // Mock fetch for network status tests
 global.fetch = jest.fn();
@@ -64,7 +58,6 @@ describe('StreamManager Network Recovery', () => {
   let mockTwitchService: any;
   let mockYouTubeService: any;
   let mockPlayerService: any;
-  let mockKeyboardService: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -78,7 +71,6 @@ describe('StreamManager Network Recovery', () => {
     mockTwitchService = require('./services/twitch').TwitchService();
     mockYouTubeService = require('./services/youtube').YouTubeService();
     mockPlayerService = require('./services/player').PlayerService();
-    mockKeyboardService = require('./services/keyboard').KeyboardService();
 
     // Create mock config
     mockConfig = {
@@ -102,8 +94,7 @@ describe('StreamManager Network Recovery', () => {
       mockHolodexService,
       mockTwitchService,
       mockYouTubeService,
-      mockPlayerService,
-      mockKeyboardService
+      mockPlayerService
     );
   });
 

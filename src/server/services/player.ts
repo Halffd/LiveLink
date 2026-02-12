@@ -402,6 +402,9 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
 
+		// Add startup delay to ensure display session is ready
+		await this.ensureDisplaySessionReady();
+
 		const args = this.getMpvArgs(options);
 		const env = this.getProcessEnv();
 
@@ -439,9 +442,9 @@ export class PlayerService {
 			throw new Error('IPC path not found for screen ' + options.screen);
 		}
 
-		const maxWait = 120000; // 70 seconds
+		const maxWait = 120000; // 120 seconds (increased from 70s to allow for slow startup)
 		try {
-			await this.waitForIpcSocket(ipcPath, maxWait);
+			await this.waitForIpcSocketWithRetry(ipcPath, maxWait);
 			logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
 		} catch (error) {
 			mpvProcess.kill();
@@ -454,6 +457,11 @@ export class PlayerService {
 	private async startStreamlinkProcess(
 		options: StreamOptions & { screen: number }
 	): Promise<ChildProcess> {
+		logger.info(`Starting streamlink for screen ${options.screen}`, 'PlayerService');
+
+		// Add startup delay to ensure display session is ready
+		await this.ensureDisplaySessionReady();
+
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
 		logger.info(`Streamlink args: streamlink ${args.join(' ')}`, 'PlayerService');
@@ -477,12 +485,12 @@ export class PlayerService {
 					process.kill();
 					reject(new Error(`Streamlink start timeout. Stderr: ${stderrOutput}`));
 				}, this.STARTUP_TIMEOUT);
-	
+
 				process.on('error', (err) => {
 					clearTimeout(startTimeout);
 					reject(err);
 				});
-	
+
 				process.on('exit', (code) => {
 					clearTimeout(startTimeout);
 					if (code !== 0) {
@@ -498,26 +506,19 @@ export class PlayerService {
                     return reject(new Error('IPC path not found for screen ' + options.screen));
                 }
 
-                const checkInterval = 250; // ms
-                const maxWait = 120000; // 15 seconds
-                let waited = 0;
-
-                const intervalId = setInterval(() => {
-                    if (fs.existsSync(ipcPath)) {
-                        clearInterval(intervalId);
+                const maxWait = 120000; // 120 seconds (increased from 15s to allow for slow startup)
+                
+                this.waitForIpcSocketWithRetry(ipcPath, maxWait)
+                    .then(() => {
                         clearTimeout(startTimeout);
                         logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
                         resolve(process);
-                    } else {
-                        waited += checkInterval;
-                        if (waited >= maxWait) {
-                            clearInterval(intervalId);
-                            clearTimeout(startTimeout);
-                            process.kill();
-                            reject(new Error(`IPC socket at ${ipcPath} not created after ${maxWait / 1000}s. Stderr: ${stderrOutput}`));
-                        }
-                    }
-                }, checkInterval);
+                    })
+                    .catch((error) => {
+                        clearTimeout(startTimeout);
+                        process.kill();
+                        reject(new Error(`IPC socket at ${ipcPath} not ready after ${maxWait / 1000}s. Stderr: ${stderrOutput}. Error: ${error.message}`));
+                    });
 			});
 
 		} catch (error) {
@@ -1012,6 +1013,30 @@ export class PlayerService {
 
 		return title; // No need to add extra quotes - those will be added by the argument handling
 	}
+
+	/**
+	 * Properly escape a string for shell argument usage
+	 * This prevents issues with special characters like quotes, backticks, etc.
+	 * @param str The string to escape
+	 * @returns The properly escaped string
+	 */
+	private escapeShellArg(str: string): string {
+		// If the string is empty, return quoted empty string
+		if (str === '') {
+			return "''";
+		}
+
+		// If the string contains shell metacharacters, wrap in single quotes
+		// and escape any single quotes within the string
+		if (/[^\w@%+=:,./-]/.test(str)) {
+			// Replace each single quote with '\'' (exit single quote mode, add escaped quote, resume single quote mode)
+			return `'${str.replace(/'/g, "'\"'\"'")}'`;
+		}
+
+		// If no special characters, return as-is
+		return str;
+	}
+
 	private getMpvArgs(
 		options: StreamOptions & { screen: number },
 		includeUrl: boolean = true
@@ -1066,7 +1091,6 @@ export class PlayerService {
 			`--log-file=${logFile}`,
 			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--volume=${(options.volume || 0).toString()}`,
-			`--title=${this.getTitle(options)}`,
 			'--msg-level=all=debug'
 		);
 
@@ -1119,23 +1143,18 @@ export class PlayerService {
 		// This prevents streamlink from using the stream URL as the forced media title
 		streamlinkArgs.push(
 			'--title',
-			this.getTitle(options)  // Use the same title we want to display
+			this.escapeShellArg(this.getTitle(options))  // Use the same title we want to display, properly escaped
 		);
 
 		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
 		const mpvArgs = this.getMpvArgs(options, false);
 
-		// FIXED: Don't join MPV args into a single quoted string
-		// Instead, add --player-args and then each argument properly
+		// Add --player-args and then each argument properly escaped
 		streamlinkArgs.push('--player-args');
 
-				// Join all MPV args into a properly escaped single string
-		// This is the critical fix - we need one properly escaped string
+		// Join all MPV args into a properly escaped single string
 		const mpvArgsString = mpvArgs
-			.map((arg) => {
-				// Handle special characters in arguments
-				return arg.replace(/"/g, '\"');
-			})
+			.map(arg => this.escapeShellArg(arg))
 			.join(' ');
 
 		// Add the entire MPV command as a single quoted argument
@@ -1151,13 +1170,111 @@ export class PlayerService {
 	}
 
 	private getProcessEnv(): NodeJS.ProcessEnv {
-		return {
+		// Get the current session environment variables
+		const sessionEnv = {
 			...process.env,
 			MPV_HOME: undefined,
 			XDG_CONFIG_HOME: undefined,
 			DISPLAY: process.env.DISPLAY || ':0',
+			XAUTHORITY: process.env.XAUTHORITY || `${process.env.HOME || '/tmp'}/.Xauthority`,
+			WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || undefined,
+			DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || undefined,
 			SDL_VIDEODRIVER: 'x11',
 		};
+		
+		// Log important session variables for debugging
+		logger.debug(`Session environment variables: DISPLAY=${sessionEnv.DISPLAY}, XAUTHORITY=${sessionEnv.XAUTHORITY}`, 'PlayerService');
+		
+		return sessionEnv;
+	}
+
+	/**
+	 * Ensures the display session is ready before starting MPV
+	 * Waits for the display to be accessible before proceeding
+	 */
+	private async ensureDisplaySessionReady(): Promise<void> {
+		// Check if we're in a headless environment or if DISPLAY is not set
+		const display = process.env.DISPLAY || ':0';
+		
+		// On boot/login, wait at least 10-15 seconds for session to become ready
+		// OR wait for compositor socket / X11 socket to be ready
+		logger.info(`Waiting for display session to be ready: ${display}`, 'PlayerService');
+		
+		// Wait for a minimum delay to allow session to initialize
+		await new Promise(resolve => setTimeout(resolve, 15000)); // 15 seconds
+		
+		// Additionally, check if the X11 socket exists and is accessible
+		if (display.startsWith(':')) {
+			const displayNum = display.substring(1).split('.')[0]; // Extract display number
+			const x11SocketPath = `/tmp/.X11-unix/X${displayNum}`;
+			
+			logger.info(`Checking X11 socket at: ${x11SocketPath}`, 'PlayerService');
+			
+			const maxWait = 30000; // 30 seconds additional wait
+			const checkInterval = 500; // 500ms
+			let waited = 0;
+			
+			while (waited < maxWait) {
+				if (fs.existsSync(x11SocketPath)) {
+					logger.info(`X11 socket ready at: ${x11SocketPath}`, 'PlayerService');
+					return;
+				}
+				
+				await new Promise(resolve => setTimeout(resolve, checkInterval));
+				waited += checkInterval;
+			}
+			
+			logger.warn(`X11 socket not ready after ${maxWait / 1000}s: ${x11SocketPath}`, 'PlayerService');
+		}
+	}
+
+	/**
+	 * Improved IPC socket wait with retry logic to handle race conditions
+	 */
+	private async waitForIpcSocketWithRetry(ipcPath: string, timeout: number): Promise<void> {
+		const checkInterval = 250; // ms
+		const maxWait = timeout;
+		let waited = 0;
+		
+		// First, wait for the socket to exist
+		while (waited < maxWait) {
+			if (fs.existsSync(ipcPath)) {
+				// Socket exists, now check if it's writable/accessible
+				try {
+					// Try to connect to the socket to ensure it's actually working
+					const socket = net.connect(ipcPath);
+					
+					await new Promise((resolve, reject) => {
+						const timeoutId = setTimeout(() => {
+							socket.destroy();
+							reject(new Error('Socket connection timeout'));
+						}, 1000);
+						
+						socket.on('connect', () => {
+							clearTimeout(timeoutId);
+							socket.destroy();
+							resolve(undefined);
+						});
+						
+						socket.on('error', (err) => {
+							clearTimeout(timeoutId);
+							socket.destroy();
+							reject(err);
+						});
+					});
+					
+					logger.info(`IPC socket verified at ${ipcPath}`, 'PlayerService');
+					return;
+				} catch (err) {
+					logger.debug(`IPC socket at ${ipcPath} not ready yet: ${err}`, 'PlayerService');
+				}
+			}
+			
+			await new Promise(resolve => setTimeout(resolve, checkInterval));
+			waited += checkInterval;
+		}
+		
+		throw new Error(`IPC socket at ${ipcPath} not ready after ${timeout / 1000}s`);
 	}
 	public isStreamHealthy(screen: number): boolean {
 		const activeStream = this.streams.get(screen);

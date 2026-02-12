@@ -2,8 +2,6 @@ import { EventEmitter } from 'events';
 
 declare global {
   interface ProcessEventTypes {
-    'keyboard:autostart': (screen: number) => void;
-    'keyboard:closeall': () => void;
   }
 }
 
