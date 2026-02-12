@@ -227,13 +227,24 @@ class QueueService extends EventEmitter {
   }
 
   // Watched Streams Management
-  public markStreamAsWatched(url: string): void {
-		if (this.watchedStreams.has(url)) return;
-		this.watchedStreams.add(url);
-	}
+  public markStreamAsWatched(streamOrUrl: string | StreamSource): void {
+    const key = typeof streamOrUrl === 'string' ? streamOrUrl : this.getWatchedKey(streamOrUrl);
+    if (this.watchedStreams.has(key)) return;
+    this.watchedStreams.add(key);
+  }
 
-  public isStreamWatched(url: string): boolean {
-    return this.watchedStreams.has(url);
+  public isStreamWatched(streamOrUrl: string | StreamSource): boolean {
+    const key = typeof streamOrUrl === 'string' ? streamOrUrl : this.getWatchedKey(streamOrUrl);
+    return this.watchedStreams.has(key);
+  }
+
+  private getWatchedKey(stream: StreamSource): string {
+    // Use stable channel identity when available, fallback to URL
+    if (stream.platform && stream.channelId) {
+      return `${stream.platform}:${stream.channelId}`;
+    }
+    // Fallback to URL if platform/channelId not available
+    return stream.url;
   }
 
   public getWatchedStreams(): string[] {
@@ -258,17 +269,11 @@ class QueueService extends EventEmitter {
 
   // Add method to check if any streams are unwatched
   hasUnwatchedStreams(streams: StreamSource[]): boolean {
-    return streams.some(stream => !this.watchedStreams.has(stream.url));
+    return streams.some(stream => !this.isStreamWatched(stream));
   }
 
   // Add method to filter unwatched streams
   public filterUnwatchedStreams(streams: StreamSource[]): StreamSource[] {
-    // First check if we have any unwatched non-favorite streams
-    const hasUnwatchedNonFavorites = streams.some(stream => {
-      const isFavorite = stream.subtype === 'favorites';
-      return !isFavorite && !this.watchedStreams.has(stream.url);
-    });
-
     return streams.filter(stream => {
       // Enhanced members-only detection
       const isMembersOnly = (stream.title?.toLowerCase() || '').match(
@@ -290,22 +295,16 @@ class QueueService extends EventEmitter {
         return false;
       }
 
-      const isFavorite = stream.subtype === 'favorites';
-      const isWatched = this.isStreamWatched(stream.url);
-      
-      // If it's not watched, always include it
-      if (!isWatched) {
-        return true;
+      const isWatched = this.isStreamWatched(stream);
+
+      // Hard rule: watched means never re-add, even favorites
+      if (isWatched) {
+        logger.debug(`Filtering out watched stream: ${stream.url}`, 'QueueService');
+        return false;
       }
-      
-      // If it's watched and a favorite, only include if all non-favorites are watched
-      if (isFavorite && !hasUnwatchedNonFavorites) {
-        logger.debug(`Including watched favorite stream ${stream.url} with priority ${stream.priority} because all non-favorites are watched`, 'QueueService');
-        return true;
-      }
-      
-      logger.debug(`Filtering out watched stream ${stream.url}`, 'QueueService');
-      return false;
+
+      // Stream is not watched and passes all other filters
+      return true;
     });
   }
 

@@ -22,7 +22,6 @@ import { queueService } from './services/queue_service.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import { EventEmitter } from 'events';
-import { KeyboardService } from './services/keyboard_service.js';
 import './types/events.js';
 import { parallelOps, safeAsync } from './utils/async_helpers.js';
 import { SimpleMutex } from './utils/mutex.js';
@@ -117,7 +116,6 @@ export class StreamManager extends EventEmitter {
 	private twitchService: TwitchService;
 	private holodexService: HolodexService;
 	private playerService: PlayerService;
-	private keyboardService: KeyboardService;
 	private isShuttingDown = false;
 
 	// Active streams and their states
@@ -134,8 +132,6 @@ export class StreamManager extends EventEmitter {
 	// Single source of truth: queues with enhanced state tracking
 	private queues: Map<number, QueueStreamSource[]> = new Map();
 
-	// Cached set of watched URLs for efficient lookup
-	private watchedUrls: Set<string> = new Set();
 	// Add a short-term cache to track recently watched streams to prevent race conditions
 	private recentlyWatched: Map<string, number> = new Map();
 	private readonly RECENTLY_WATCHED_EXPIRY = 5000; // 5 seconds
@@ -194,7 +190,6 @@ export class StreamManager extends EventEmitter {
 		this.holodexService = holodexService;
 		this.twitchService = twitchService;
 		this.playerService = playerService;
-		this.keyboardService = new KeyboardService();
 		this.favoriteChannels = config.favoriteChannels;
 
 		// Initialize screen configs
@@ -1546,15 +1541,7 @@ export class StreamManager extends EventEmitter {
 	 * Rebuild the watched URLs cache from all queues to ensure it's in sync
 	 */
 	private rebuildWatchedUrlsCache(): void {
-		this.watchedUrls.clear();
-
-		for (const queue of this.queues.values()) {
-			for (const stream of queue) {
-				if (stream.watchedAt !== undefined) {
-					this.watchedUrls.add(stream.url);
-				}
-			}
-		}
+		// This method is no longer needed since we rely on QueueService as the single source of truth
 	}
 
 	/**
@@ -1634,21 +1621,25 @@ export class StreamManager extends EventEmitter {
 			}
 		}
 
-		// Check the main cached set for performance
-		if (this.watchedUrls.has(url)) {
-			return true;
-		}
-
-		// If not in cache, check the queues directly as a fallback
-		// This handles cases where the cache might not be fully synchronized
+		// Find the stream source to pass to queueService for consistent key generation
+		let streamSource: StreamSource | undefined = undefined;
+		
+		// Look for the stream in all queues
 		for (const queue of this.queues.values()) {
-			for (const stream of queue) {
-				if (stream.url === url && stream.watchedAt !== undefined) {
-					return true;
-				}
+			const foundStream = queue.find(stream => stream.url === url);
+			if (foundStream) {
+				streamSource = foundStream as StreamSource;
+				break;
 			}
 		}
-		return false;
+		
+		// If not found in queues, create a minimal stream source with the URL
+		if (!streamSource) {
+			streamSource = { url } as StreamSource;
+		}
+		
+		// Check QueueService for watched status using the stream source for consistent key generation
+		return queueService.isStreamWatched(streamSource);
 	}
 
 	/**
@@ -1686,9 +1677,6 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-		// Always add to cached set for fast lookups, even if not found in current queues
-		// This handles the case where a stream was consumed (removed from queue) but still needs to be watched
-		this.watchedUrls.add(url);
 		if (!foundInQueue) {
 			logger.info(`Stream marked as watched but not found in current queues: ${url}`, 'StreamManager');
 		}
@@ -1776,8 +1764,8 @@ export class StreamManager extends EventEmitter {
 		const manualCloseExpiry = 60 * 60 * 1000; // 1 hour for manual closes
 		const failureResetTime = this.STREAM_FAILURE_RESET_TIME; // 10 minutes for failures
 
-		// First, rebuild the watched URLs set to ensure consistency
-		this.watchedUrls.clear();
+		// Clear QueueService watched streams to ensure consistency
+		queueService.clearWatchedStreams();
 
 		// Clean up queue entries
 		for (const [screen, queue] of this.queues.entries()) {
@@ -1789,9 +1777,9 @@ export class StreamManager extends EventEmitter {
 					logger.debug(`Expired watched status for ${stream.url}`, 'StreamManager');
 				}
 
-				// Add to cached set if still watched
+				// Add to QueueService if still watched
 				if (stream.watchedAt !== undefined) {
-					this.watchedUrls.add(stream.url);
+					queueService.markStreamAsWatched(stream.url);
 				}
 
 				// Clean up expired manual close entries
@@ -1842,9 +1830,6 @@ export class StreamManager extends EventEmitter {
 				}
 			}
 		}
-
-		// Rebuild the watched URLs cache to ensure it's in sync with queue data
-		this.rebuildWatchedUrlsCache();
 
 		// Clean up expired entries from recently watched cache
 		this.cleanupRecentlyWatched();
@@ -2014,8 +1999,25 @@ export class StreamManager extends EventEmitter {
 		// Clean up expired entries from recently watched cache
 		this.cleanupRecentlyWatched();
 
-		// Sync with queueService
-		queueService.markStreamAsWatched(url);
+		// Find the stream source to pass to queueService for consistent key generation
+		let streamSource: StreamSource | null = null;
+		
+		// Look for the stream in all queues
+		for (const queue of this.queues.values()) {
+			const foundStream = queue.find(stream => stream.url === url);
+			if (foundStream) {
+				streamSource = foundStream as StreamSource;
+				break;
+			}
+		}
+		
+		// If not found in queues, create a minimal stream source with the URL
+		if (!streamSource) {
+			streamSource = { url } as StreamSource;
+		}
+		
+		// Sync with queueService using the stream source for consistent key generation
+		queueService.markStreamAsWatched(streamSource);
 
 		// Update all queues for this URL to potentially remove them if they should be skipped
 		for (const [screen, queue] of this.queues.entries()) {
@@ -2033,17 +2035,8 @@ export class StreamManager extends EventEmitter {
 		// Clean up expired entries first using the single source of truth
 		this.cleanupExpiredQueueEntries();
 
-		// Get watched streams from the queue (single source of truth)
-		const watchedUrls = new Set<string>();
-		for (const queue of this.queues.values()) {
-			for (const stream of queue) {
-				if (stream.watchedAt !== undefined) {
-					watchedUrls.add(stream.url);
-				}
-			}
-		}
-
-		return Array.from(watchedUrls);
+		// Get watched streams from QueueService (single source of truth)
+		return queueService.getWatchedStreams();
 	}
 
 	public clearWatchedStreams(): void {
@@ -2056,9 +2049,6 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-
-		// Clear cached set
-		this.watchedUrls.clear();
 
 		queueService.clearWatchedStreams();
 		logger.info('Cleared watched streams history', 'StreamManager');
@@ -2077,9 +2067,6 @@ export class StreamManager extends EventEmitter {
 		this.isShuttingDown = true;
 
 		try {
-			// Stop all keyboard listeners
-			this.keyboardService.cleanup();
-
 			// Get all active screens
 			const activeScreens = Array.from(this.streams.keys());
 
@@ -2798,9 +2785,6 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-
-		// Clear cached set
-		this.watchedUrls.clear();
 
 		queueService.clearWatchedStreams();
 
