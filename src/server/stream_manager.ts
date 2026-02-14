@@ -719,7 +719,14 @@ export class StreamManager extends EventEmitter {
 			// Get the queue and start a stream if available
 			const queue = this.queues.get(screen) || [];
 			if (queue.length > 0) {
-				await this._handleStreamEndInternal(screen); // This will start the next stream
+				// Schedule the stream start outside the current lock to avoid recursive lock acquisition
+				// Use a small delay to ensure the current lock is fully released
+				setTimeout(async () => {
+					// Acquire lock separately for the next attempt
+					await this.withLock(screen, 'updateSingleScreen-startNextStream', async () => {
+						await this._handleStreamEndInternal(screen); // This will start the next stream
+					}, 15000);
+				}, 10); // Small delay to ensure lock is released
 			} else {
 				logger.debug(`No streams in queue for screen ${screen}`, 'StreamManager');
 			}
@@ -943,7 +950,9 @@ export class StreamManager extends EventEmitter {
 			return;
 		}
 
+		// Transition to STARTING state first, then schedule the actual stream start outside the lock
 		const transitionSuccess = await this.setScreenState(screen, StreamState.STARTING);
+		
 		if (transitionSuccess) {
 			const streamOptions: StreamOptions = {
 				url: nextStream.url,
@@ -956,36 +965,35 @@ export class StreamManager extends EventEmitter {
 				windowMaximized: screenConfig.windowMaximized,
 			};
 
-			const startResult = await this.startStream(streamOptions);
+			// Schedule the startStream operation outside the current lock to avoid holding the lock during async operations
+			// Use a small timeout to ensure the current lock is released before acquiring it again
+			setTimeout(async () => {
+				const startResult = await this.startStream(streamOptions);
 
-			if (startResult.success) {
-				// Stream started successfully - mark as playing
-				this.markStreamAsPlaying(screen, nextStream.url);
-			} else {
-				// If it failed, update the failure count
-				this.recordStreamFailure(nextStream.url);
+				if (!startResult.success) {
+					// If it failed, update the failure count
+					this.recordStreamFailure(nextStream.url);
 
-				logger.warn(`Failed to start stream ${nextStream.url}, will try next stream`, 'StreamManager');
+					logger.warn(`Failed to start stream ${nextStream.url}, will try next stream`, 'StreamManager');
 
-				// Check if this failure is due to max streams reached - if so, wait a bit longer before retrying
-				const isMaxStreamsError = startResult.error?.includes('Maximum number of streams') === true;
+					// Check if this failure is due to max streams reached - if so, wait a bit longer before retrying
+					const isMaxStreamsError = startResult.error?.includes('Maximum number of streams') === true;
 
-				if (isMaxStreamsError) {
-					// Wait a bit to allow streams to clear before trying again
-					await new Promise(resolve => setTimeout(resolve, 2000));
-				}
+					if (isMaxStreamsError) {
+						// Wait a bit to allow streams to clear before trying again
+						await new Promise(resolve => setTimeout(resolve, 2000));
+					}
 
-				// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
-				// Use queueMicrotask to ensure it runs after the current lock is released
-				queueMicrotask(() => {
-					setImmediate(async () => {
+					// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
+					setTimeout(async () => {
 						// Acquire lock separately for the next attempt
 						await this.withLock(screen, 'handleStreamEnd-startNextStream', async () => {
 							await this._handleStreamEndInternal(screen);
 						}, 15000);
-					});
-				});
-			}
+					}, 10); // Small delay to ensure lock is released
+				}
+				// If start was successful, the stream is now playing and no further action needed here
+			}, 10); // Small delay to ensure lock is released before starting stream
 		} else {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
@@ -993,9 +1001,12 @@ export class StreamManager extends EventEmitter {
 	public async handleStreamEnd(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Use shorter timeout for handleStreamEnd to prevent long lock holds
 		// This reduces the chance of cascading lock timeouts
-		await this.withLock(screen, `handleStreamEnd`, async () => {
-			await this._handleStreamEndInternal(screen, isManual, playbackTime);
-		}, 15000); // Reduced from 30s to 15s
+		// Schedule the operation to run without holding the lock during async operations
+		setTimeout(async () => {
+			await this.withLock(screen, `handleStreamEnd`, async () => {
+				await this._handleStreamEndInternal(screen, isManual, playbackTime);
+			}, 15000); // Reduced from 30s to 15s
+		}, 10); // Small delay to ensure any current operations complete
 	}
 
 
@@ -1664,22 +1675,20 @@ export class StreamManager extends EventEmitter {
 	 * Mark a stream as watched in the queue
 	 */
 	private markStreamInQueueAsWatched(url: string): void {
-		let foundInQueue = false;
+		// Mark the stream as watched in the queue for consistency
 		for (const [screen, queue] of this.queues.entries()) {
 			for (const stream of queue) {
 				if (stream.url === url) {
 					stream.watchedAt = Date.now();
 					stream.shouldSkip = true;
 					logger.info(`Marked stream as watched in queue: ${url}`, 'StreamManager');
-					foundInQueue = true;
 				}
 			}
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-		if (!foundInQueue) {
-			logger.info(`Stream marked as watched but not found in current queues: ${url}`, 'StreamManager');
-		}
+		// Note: We no longer log when stream is not found in queues since watched status
+		// is maintained globally by QueueService and doesn't depend on queue membership
 	}
 
 	/**
@@ -1764,10 +1773,8 @@ export class StreamManager extends EventEmitter {
 		const manualCloseExpiry = 60 * 60 * 1000; // 1 hour for manual closes
 		const failureResetTime = this.STREAM_FAILURE_RESET_TIME; // 10 minutes for failures
 
-		// Clear QueueService watched streams to ensure consistency
-		queueService.clearWatchedStreams();
-
-		// Clean up queue entries
+		// Clean up queue entries - DO NOT clear QueueService watched streams here
+		// Only clean up local queue state
 		for (const [screen, queue] of this.queues.entries()) {
 			const filteredQueue = queue.filter(stream => {
 				// Clean up expired watched entries
@@ -2050,9 +2057,10 @@ export class StreamManager extends EventEmitter {
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
 
-		queueService.clearWatchedStreams();
-		logger.info('Cleared watched streams history', 'StreamManager');
+		logger.info('Cleared watched streams history in local queues only', 'StreamManager');
 
+		// Only clear local queue watched status, don't affect global watched state
+		// Global watched state should only be cleared via explicit user action
 		// Force update all queues to ensure they reflect the cleared watched status
 		this.forceQueueRefresh().catch((error) => {
 			logger.error(
@@ -2785,8 +2793,6 @@ export class StreamManager extends EventEmitter {
 			// Update queue service
 			queueService.setQueue(screen, queue as StreamSource[]);
 		}
-
-		queueService.clearWatchedStreams();
 
 		// Clear manually closed status in all queues - allows manually closed streams to be available again
 		for (const [screen, queue] of this.queues.entries()) {

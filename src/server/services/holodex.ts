@@ -1,4 +1,4 @@
-import { HolodexApiClient, type Channel, VideoStatus } from 'holodex.js';
+import { HolodexApiClient, type Channel } from 'holodex.js';
 import type { StreamSource, HolodexVideo } from '../../types/stream.js';
 import { logger } from './logger.js';
 import type { StreamService } from '../../types/stream.js';
@@ -198,7 +198,7 @@ export class HolodexService implements StreamService {
     try {
       const videos = await this.client.getLiveVideos({
         channel_id: channelId,
-        status: VideoStatus.Live,
+        status: 'live' as any,
         
       }) as HolodexVideo[];
       
@@ -220,7 +220,7 @@ export class HolodexService implements StreamService {
       const promises = this.favoriteChannels.map(channelId =>
         this.client!.getLiveVideos({ 
           channel_id: channelId,
-          status: VideoStatus.Live,
+          status: 'live' as any,
           max_upcoming_hours: 0
         })
       );

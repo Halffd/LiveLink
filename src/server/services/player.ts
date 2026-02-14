@@ -1004,12 +1004,16 @@ export class PlayerService {
 			}
 		}
 
-		// Simplify the escaping - just replace double quotes with single quotes
-		const title =
-			`Screen ${options.screen}: ${options.url} - ${options.title} - Viewers: ${options.viewerCount} - start time: ${formattedStartTime}`.replace(
-				/"/g,
-				"'"
-			);
+		// Create a safe title by sanitizing potentially problematic characters
+		// Instead of complex escaping, we'll sanitize the title to avoid shell issues
+		const sanitizedTitle = (options.title || 'Unknown Title')
+			.replace(/[\\"]/g, '_')  // Replace backslashes and quotes with underscores
+			.replace(/\n/g, ' ')     // Replace newlines with spaces
+			.replace(/\r/g, '')      // Remove carriage returns
+			.replace(/\t/g, ' ')     // Replace tabs with spaces
+			.substring(0, 100);      // Limit length to prevent issues
+
+		const title = `Screen ${options.screen}: ${options.url} - ${sanitizedTitle} - Viewers: ${options.viewerCount} - start time: ${formattedStartTime}`;
 
 		return title; // No need to add extra quotes - those will be added by the argument handling
 	}
@@ -1141,6 +1145,7 @@ export class PlayerService {
 
 		// Add player title option to streamlink to override the default media title
 		// This prevents streamlink from using the stream URL as the forced media title
+		// Use the sanitized title to avoid shell injection issues
 		streamlinkArgs.push(
 			'--title',
 			this.escapeShellArg(this.getTitle(options))  // Use the same title we want to display, properly escaped
