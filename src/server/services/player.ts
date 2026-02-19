@@ -80,6 +80,10 @@ export class PlayerService {
 	private disabledScreens: Set<number> = new Set();
 	private ipcPaths: Map<number, string> = new Map();
 	private isNetworkError: Map<number, boolean> = new Map(); // Track if error is network-related
+	// Track pending async operations to cancel them on close
+	private pendingIpcWaits: Map<number, AbortController> = new Map();
+	private pendingMpvSpawns: Map<number, AbortController> = new Map();
+	private pendingDisplayWaits: Map<number, AbortController> = new Map();
 
 	private config: Config;
 	private mpvPath: string;
@@ -361,7 +365,20 @@ export class PlayerService {
 			this.manuallyClosedScreens.delete(screen);
 			this.streamRetries.set(screen, 0);
 			this.networkRetries.set(screen, 0);
-	
+
+			// Set the window title via MPV IPC after startup to avoid shell injection issues
+			// with complex Unicode titles in the --title parameter
+			if (options.title) {
+				setTimeout(async () => {
+					try {
+						await this.setStreamTitle(screen, options);
+						logger.debug(`Set MPV title for screen ${screen} to: ${options.title}`, 'PlayerService');
+					} catch (error) {
+						logger.warn(`Failed to set MPV title for screen ${screen}`, 'PlayerService', error);
+					}
+				}, 1000); // Small delay to ensure MPV is ready
+			}
+
 			return { screen, success: true };
 	
 		} catch (error) {
@@ -402,56 +419,65 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		logger.info(`Starting MPV for screen ${options.screen}`, 'PlayerService');
 
-		// Add startup delay to ensure display session is ready
-		await this.ensureDisplaySessionReady();
+		// Create an abort controller to track this operation
+		const abortController = new AbortController();
+		this.pendingMpvSpawns.set(options.screen, abortController);
 
-		const args = this.getMpvArgs(options);
-		const env = this.getProcessEnv();
-
-		logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
-		const mpvLogFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
-		const mpvLogStream = fs.createWriteStream(mpvLogFile, { flags: 'a' });
-		logger.info(`MPV logs will be written to: ${mpvLogFile}`, 'PlayerService');
-
-		const mpvProcess = spawn(this.mpvPath, args, {
-			env,
-			stdio: ['ignore', 'pipe', 'pipe']
-		});
-
-		// Set up logging for the process
-		if (mpvProcess.stdout) {
-			mpvProcess.stdout.on('data', (data: Buffer) => {
-				const logData = data.toString().trim();
-				mpvLogStream.write(`[${new Date().toISOString()}] ${logData}\n`);
-			});
-		}
-
-		if (mpvProcess.stderr) {
-			mpvProcess.stderr.on('data', (data: Buffer) => {
-				const logData = data.toString().trim();
-				mpvLogStream.write(`[${new Date().toISOString()}] [ERROR] ${logData}\n`);
-			});
-		}
-
-		mpvProcess.on('close', () => mpvLogStream.end());
-
-		// Wait for IPC socket to be created
-		const ipcPath = this.ipcPaths.get(options.screen);
-		if (!ipcPath) {
-			mpvProcess.kill();
-			throw new Error('IPC path not found for screen ' + options.screen);
-		}
-
-		const maxWait = 120000; // 120 seconds (increased from 70s to allow for slow startup)
 		try {
-			await this.waitForIpcSocketWithRetry(ipcPath, maxWait);
-			logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
-		} catch (error) {
-			mpvProcess.kill();
-			throw error;
-		}
+			// Add startup delay to ensure display session is ready
+			await this.ensureDisplaySessionReady(options.screen);
 
-		return mpvProcess;
+			const args = this.getMpvArgs(options);
+			const env = this.getProcessEnv();
+
+			logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
+			const mpvLogFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
+			const mpvLogStream = fs.createWriteStream(mpvLogFile, { flags: 'a' });
+			logger.info(`MPV logs will be written to: ${mpvLogFile}`, 'PlayerService');
+
+			const mpvProcess = spawn(this.mpvPath, args, {
+				env,
+				stdio: ['ignore', 'pipe', 'pipe']
+			});
+
+			// Set up logging for the process
+			if (mpvProcess.stdout) {
+				mpvProcess.stdout.on('data', (data: Buffer) => {
+					const logData = data.toString().trim();
+					mpvLogStream.write(`[${new Date().toISOString()}] ${logData}\n`);
+				});
+			}
+
+			if (mpvProcess.stderr) {
+				mpvProcess.stderr.on('data', (data: Buffer) => {
+					const logData = data.toString().trim();
+					mpvLogStream.write(`[${new Date().toISOString()}] [ERROR] ${logData}\n`);
+				});
+			}
+
+			mpvProcess.on('close', () => mpvLogStream.end());
+
+			// Wait for IPC socket to be created
+			const ipcPath = this.ipcPaths.get(options.screen);
+			if (!ipcPath) {
+				mpvProcess.kill();
+				throw new Error('IPC path not found for screen ' + options.screen);
+			}
+
+			const maxWait = 120000; // 120 seconds (increased from 70s to allow for slow startup)
+			try {
+				await this.waitForIpcSocketWithRetry(ipcPath, maxWait);
+				logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
+			} catch (error) {
+				mpvProcess.kill();
+				throw error;
+			}
+
+			return mpvProcess;
+		} finally {
+			// Remove the abort controller when done
+			this.pendingMpvSpawns.delete(options.screen);
+		}
 	}
 
 	private async startStreamlinkProcess(
@@ -460,7 +486,7 @@ export class PlayerService {
 		logger.info(`Starting streamlink for screen ${options.screen}`, 'PlayerService');
 
 		// Add startup delay to ensure display session is ready
-		await this.ensureDisplaySessionReady();
+		await this.ensureDisplaySessionReady(options.screen);
 
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
@@ -825,21 +851,26 @@ export class PlayerService {
 	): Promise<boolean> {
 		const streamInstance = this.streams.get(screen);
 		if (!streamInstance) {
+			// Cancel any pending operations for this screen
+			this.cancelPendingOperations(screen);
 			this.cleanup_after_stop(screen);
 			return true;
 		}
-	
+
 		if (streamInstance.status === 'stopping') {
 			return true; // Already being stopped
 		}
-	
+
 		logger.info(`Stopping stream on screen ${screen} (manual=${isManualStop}, force=${force})`, 'PlayerService');
 		streamInstance.status = 'stopping';
-	
+
 		if (isManualStop) {
 			this.manuallyClosedScreens.add(screen);
 		}
-	
+
+		// Cancel any pending operations for this screen
+		this.cancelPendingOperations(screen);
+
 		const { process } = streamInstance;
 		if (process && this.isProcessRunning(process.pid)) {
 			process.removeAllListeners('exit');
@@ -847,7 +878,7 @@ export class PlayerService {
 			try {
 				const signal = force ? 'SIGKILL' : 'SIGTERM';
 				process.kill(signal);
-	
+
 				await new Promise<void>(resolve => {
 					const timeout = setTimeout(() => {
 						if (this.isProcessRunning(process.pid)) {
@@ -856,7 +887,7 @@ export class PlayerService {
 						}
 						resolve();
 					}, this.SHUTDOWN_TIMEOUT);
-	
+
 					process.once('exit', () => {
 						clearTimeout(timeout);
 						resolve();
@@ -867,7 +898,7 @@ export class PlayerService {
 				if (this.isProcessRunning(process.pid)) process.kill('SIGKILL');
 			}
 		}
-	
+
 		this.cleanup_after_stop(screen);
 		return true;
 	}
@@ -891,6 +922,35 @@ export class PlayerService {
 			});
 		} catch (error) {
 			logger.error(`Failed to execute pkill for parent PID ${parentPid}`, 'PlayerService', error);
+		}
+	}
+
+	/**
+	 * Cancel any pending async operations for a screen
+	 */
+	private cancelPendingOperations(screen: number): void {
+		// Cancel pending IPC waits
+		const ipcWaitController = this.pendingIpcWaits.get(screen);
+		if (ipcWaitController) {
+			ipcWaitController.abort();
+			this.pendingIpcWaits.delete(screen);
+			logger.debug(`Cancelled pending IPC wait for screen ${screen}`, 'PlayerService');
+		}
+
+		// Cancel pending MPV spawns
+		const mpvSpawnController = this.pendingMpvSpawns.get(screen);
+		if (mpvSpawnController) {
+			mpvSpawnController.abort();
+			this.pendingMpvSpawns.delete(screen);
+			logger.debug(`Cancelled pending MPV spawn for screen ${screen}`, 'PlayerService');
+		}
+
+		// Cancel pending display waits
+		const displayWaitController = this.pendingDisplayWaits.get(screen);
+		if (displayWaitController) {
+			displayWaitController.abort();
+			this.pendingDisplayWaits.delete(screen);
+			logger.debug(`Cancelled pending display wait for screen ${screen}`, 'PlayerService');
 		}
 	}
 
@@ -1143,13 +1203,8 @@ export class PlayerService {
 			});
 		}
 
-		// Add player title option to streamlink to override the default media title
-		// This prevents streamlink from using the stream URL as the forced media title
-		// Use the sanitized title to avoid shell injection issues
-		streamlinkArgs.push(
-			'--title',
-			this.escapeShellArg(this.getTitle(options))  // Use the same title we want to display, properly escaped
-		);
+		// NOTE: Removed --title parameter from streamlink due to shell injection vulnerabilities
+		// with complex Unicode titles. Title will be set via MPV IPC after startup.
 
 		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
 		const mpvArgs = this.getMpvArgs(options, false);
@@ -1197,39 +1252,68 @@ export class PlayerService {
 	 * Ensures the display session is ready before starting MPV
 	 * Waits for the display to be accessible before proceeding
 	 */
-	private async ensureDisplaySessionReady(): Promise<void> {
+	private async ensureDisplaySessionReady(screen: number): Promise<void> {
 		// Check if we're in a headless environment or if DISPLAY is not set
 		const display = process.env.DISPLAY || ':0';
-		
-		// On boot/login, wait at least 10-15 seconds for session to become ready
-		// OR wait for compositor socket / X11 socket to be ready
-		logger.info(`Waiting for display session to be ready: ${display}`, 'PlayerService');
-		
-		// Wait for a minimum delay to allow session to initialize
-		await new Promise(resolve => setTimeout(resolve, 15000)); // 15 seconds
-		
-		// Additionally, check if the X11 socket exists and is accessible
-		if (display.startsWith(':')) {
-			const displayNum = display.substring(1).split('.')[0]; // Extract display number
-			const x11SocketPath = `/tmp/.X11-unix/X${displayNum}`;
-			
-			logger.info(`Checking X11 socket at: ${x11SocketPath}`, 'PlayerService');
-			
-			const maxWait = 30000; // 30 seconds additional wait
-			const checkInterval = 500; // 500ms
-			let waited = 0;
-			
-			while (waited < maxWait) {
-				if (fs.existsSync(x11SocketPath)) {
-					logger.info(`X11 socket ready at: ${x11SocketPath}`, 'PlayerService');
-					return;
-				}
-				
-				await new Promise(resolve => setTimeout(resolve, checkInterval));
-				waited += checkInterval;
+
+		// Create an abort controller to track this operation
+		const abortController = new AbortController();
+		this.pendingDisplayWaits.set(screen, abortController);
+
+		try {
+			// On boot/login, wait at least 10-15 seconds for session to become ready
+			// OR wait for compositor socket / X11 socket to be ready
+			logger.info(`Waiting for display session to be ready: ${display} for screen ${screen}`, 'PlayerService');
+
+			// Wait for a minimum delay to allow session to initialize
+			const delayPromise = new Promise<void>((resolve) => {
+				const timeoutId = setTimeout(resolve, 15000); // 15 seconds
+				abortController.signal.addEventListener('abort', () => {
+					clearTimeout(timeoutId);
+					resolve(); // Resolve early if aborted
+				});
+			});
+
+			await delayPromise;
+
+			// Check if the operation was cancelled
+			if (abortController.signal.aborted) {
+				logger.info(`Display session readiness check cancelled for screen ${screen}`, 'PlayerService');
+				return;
 			}
-			
-			logger.warn(`X11 socket not ready after ${maxWait / 1000}s: ${x11SocketPath}`, 'PlayerService');
+
+			// Additionally, check if the X11 socket exists and is accessible
+			if (display.startsWith(':')) {
+				const displayNum = display.substring(1).split('.')[0]; // Extract display number
+				const x11SocketPath = `/tmp/.X11-unix/X${displayNum}`;
+
+				logger.info(`Checking X11 socket at: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
+
+				const maxWait = 30000; // 30 seconds additional wait
+				const checkInterval = 500; // 500ms
+				let waited = 0;
+
+				while (waited < maxWait) {
+					// Check if the operation was cancelled
+					if (abortController.signal.aborted) {
+						logger.info(`Display session readiness check cancelled for screen ${screen}`, 'PlayerService');
+						return;
+					}
+
+					if (fs.existsSync(x11SocketPath)) {
+						logger.info(`X11 socket ready at: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
+						return;
+					}
+
+					await new Promise(resolve => setTimeout(resolve, checkInterval));
+					waited += checkInterval;
+				}
+
+				logger.warn(`X11 socket not ready after ${maxWait / 1000}s: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
+			}
+		} finally {
+			// Remove the abort controller when done
+			this.pendingDisplayWaits.delete(screen);
 		}
 	}
 
@@ -1559,6 +1643,54 @@ export class PlayerService {
 				}
 			});
 		});
+	}
+
+	/**
+	 * Sets the stream title via MPV IPC
+	 * @param screen The screen number
+	 * @param options The stream options containing title information
+	 */
+	public async setStreamTitle(screen: number, options: StreamOptions & { screen: number }): Promise<void> {
+		const title = this.getTitle(options);
+		try {
+			await this.sendMpvCommand(screen, ['set_property', 'title', title]);
+			logger.info(`Successfully set title for screen ${screen}: ${title}`, 'PlayerService');
+		} catch (error) {
+			logger.error(`Failed to set title for screen ${screen}`, 'PlayerService', error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Updates the stream title dynamically for a running stream
+	 * @param screen The screen number
+	 * @param title The new title to set
+	 */
+	public async updateStreamTitle(screen: number, title: string): Promise<void> {
+		try {
+			// Sanitize the title to prevent any potential issues
+			const sanitizedTitle = this.sanitizeTitle(title);
+			await this.sendMpvCommand(screen, ['set_property', 'title', sanitizedTitle]);
+			logger.info(`Successfully updated title for screen ${screen}: ${sanitizedTitle}`, 'PlayerService');
+		} catch (error) {
+			logger.error(`Failed to update title for screen ${screen}`, 'PlayerService', error);
+			throw error;
+		}
+	}
+
+	/**
+	 * Sanitizes a title string to prevent shell injection and other issues
+	 * @param title The title to sanitize
+	 * @returns The sanitized title
+	 */
+	private sanitizeTitle(title: string): string {
+		// Remove potentially problematic characters
+		return (title || 'Unknown Title')
+			.replace(/[\\"]/g, '_')  // Replace backslashes and quotes with underscores
+			.replace(/\n/g, ' ')     // Replace newlines with spaces
+			.replace(/\r/g, '')      // Remove carriage returns
+			.replace(/\t/g, ' ')     // Replace tabs with spaces
+			.substring(0, 100);      // Limit length to prevent issues
 	}
 
 	private async waitForIpcSocket(ipcPath: string, timeout: number): Promise<void> {

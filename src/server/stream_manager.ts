@@ -32,10 +32,22 @@ export enum StreamState {
 	IDLE = 'idle', // No stream running
 	STARTING = 'starting', // Stream is being started
 	PLAYING = 'playing', // Stream is running
+	CLOSING = 'closing', // Stream is being manually closed (new state)
 	STOPPING = 'stopping', // Stream is being stopped
 	DISABLED = 'disabled', // Screen is disabled
 	ERROR = 'error', // Error state
 	NETWORK_RECOVERY = 'network_recovery' // Recovering from network issues
+}
+
+// Define failure types for proper classification
+export enum StreamFailureType {
+	USER_MANUAL_STOP = 'user_manual_stop',       // User stopped the stream manually
+	NATURAL_END = 'natural_end',                 // Stream ended normally (completed)
+	MANAGER_TIMEOUT = 'manager_timeout',         // Manager-induced timeout (like stuck starting)
+	LOCK_CONFLICT = 'lock_conflict',             // Lock acquisition failure
+	STREAM_ERROR = 'stream_error',               // Stream error from player
+	NETWORK_ERROR = 'network_error',             // Network-related error
+	UNKNOWN_ERROR = 'unknown_error'              // Any other error
 }
 
 async function timeoutPromise<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -66,13 +78,15 @@ class StreamStateMachine {
 				StreamState.NETWORK_RECOVERY,
 				StreamState.ERROR
 			],
-			[StreamState.STARTING]: [StreamState.PLAYING, StreamState.ERROR, StreamState.STOPPING, StreamState.IDLE],
+			[StreamState.STARTING]: [StreamState.PLAYING, StreamState.ERROR, StreamState.STOPPING, StreamState.CLOSING, StreamState.IDLE],
 			[StreamState.PLAYING]: [
 				StreamState.STOPPING,
 				StreamState.ERROR,
 				StreamState.NETWORK_RECOVERY,
+				StreamState.CLOSING,  // Allow transition to CLOSING from PLAYING
 				StreamState.IDLE
 			],
+			[StreamState.CLOSING]: [StreamState.IDLE], // Only transition from CLOSING is to IDLE
 			[StreamState.STOPPING]: [StreamState.IDLE, StreamState.ERROR],
 			[StreamState.DISABLED]: [StreamState.IDLE],
 			[StreamState.ERROR]: [StreamState.IDLE, StreamState.STARTING, StreamState.NETWORK_RECOVERY],
@@ -163,10 +177,14 @@ export class StreamManager extends EventEmitter {
 	private minUpdateSeconds: number = 60;
 	// Add a map to track when screens entered the STARTING state
 	private screenStartingTimestamps: Map<number, number> = new Map();
+	// Add a map to track stuck starting timers to allow cancellation
+	private stuckStartingTimers: Map<number, NodeJS.Timeout> = new Map();
 	private readonly MAX_STARTING_TIME = 45000; // 45 seconds max in starting state
 
 	// Add a set to track screens that are currently being processed to prevent race conditions
 	private processingScreens: Set<number> = new Set();
+	// Add a set to track screens that have stream end processing in flight to prevent duplicate handling
+	private streamEndProcessing: Set<number> = new Set();
 	private readonly DEFAULT_LOCK_TIMEOUT = 15000; // 15 seconds - reduced from 45s to prevent long-held locks
 	private static readonly DEFAULT_QUEUE_UPDATE_TIMEOUT = 15_000; // 15 seconds - reduced from 25s
 	private static readonly MAX_QUEUE_UPDATE_RETRIES = 2;
@@ -230,7 +248,7 @@ export class StreamManager extends EventEmitter {
 
 		this.playerService.onStreamError((data) => {
 			this.emit('streamError', data);
-			this.handleStreamError(data.screen, data.error, data.code, data.url, data.moveToNext, data.shouldRestart);
+			this.handleStreamError(data.screen, data.error, data.code, data.url, data.moveToNext, data.shouldRestart, data.playbackTime);
 		});
 
 		this.playerService.onStreamEnd((data) => {
@@ -263,9 +281,10 @@ export class StreamManager extends EventEmitter {
 		code?: number,
 		url?: string,
 		moveToNext?: boolean,
-		shouldRestart?: boolean
+		shouldRestart?: boolean,
+		playbackTime?: number
 	): Promise<void> {
-		logger.error(`Stream error on screen ${screen}: ${error}`, 'StreamManager', { code, url });
+		logger.error(`Stream error on screen ${screen}: ${error}`, 'StreamManager', { code, url, playbackTime });
 
 		// Check if this is a manual close - if so, don't trigger global operations
 		// The shouldRestart parameter will be false if it was a manual close
@@ -283,7 +302,8 @@ export class StreamManager extends EventEmitter {
 
 		// For automatic closes (errors, network issues, etc.), continue with normal flow
 		logger.info(`Stream on screen ${screen} ended, consuming and moving to next stream`, 'StreamManager');
-		await this._handleStreamEndInternal(screen); // This will consume the current stream and start the next one
+		// Pass the playback time to the end handler so it can properly classify the failure
+		await this._handleStreamEndInternal(screen, false, playbackTime ?? 0); // This will consume the current stream and start the next one
 	}
 
 	// Initialize state machines for all screens
@@ -399,17 +419,24 @@ export class StreamManager extends EventEmitter {
 				return false;
 			}
 
+			const oldState = stateMachine.getState();
+			
 			// Skip if already in the target state and not forcing
-			if (stateMachine.getState() === state && !force) {
+			if (oldState === state && !force) {
 				return true;
 			}
-			
+
 			const success = await stateMachine.transition(state, undefined, force);
 
 			if (success) {
+				// Cancel stuck starting timer if transitioning from STARTING to PLAYING
+				if (oldState === StreamState.STARTING && state === StreamState.PLAYING) {
+					this.cancelStuckStartingTimer(screen);
+				}
+				
 				this.emit('screenStateChanged', {
 					screen,
-					oldState: stateMachine.getState(), // this is now the new state, need to get old state before transition
+					oldState,
 					newState: state,
 					error
 				});
@@ -683,7 +710,8 @@ export class StreamManager extends EventEmitter {
 
 			// Quick state checks first
 			if (currentState === StreamState.STARTING) {
-				await this.handleStuckStarting(screen);
+				// Don't handle stuck starting from within updateSingleScreen to avoid lock inversion
+				// The timer will handle stuck starting cases
 				return;
 			}
 
@@ -759,51 +787,81 @@ export class StreamManager extends EventEmitter {
 	 * @param timeoutMs Maximum allowed time in 'starting' state before considering it stuck
 	 */
 	private async handleStuckStarting(screen: number, timeoutMs: number = this.MAX_STARTING_TIME): Promise<void> {
-		try {
-			await this.withLock(screen, 'handleStuckStarting', async () => {
-				const state = this.getScreenState(screen);
+		// Don't use withLock here to avoid lock inversion with updateSingleScreen
+		// Instead, check the state directly and return early if not in STARTING state
 
-				// Only proceed if the screen is in 'starting' state
-				if (state !== StreamState.STARTING) {
-					return;
-				}
+		const state = this.getScreenState(screen);
 
-				const startTime = this.screenStartingTimestamps.get(screen);
+		// Only proceed if the screen is in 'starting' state
+		if (state !== StreamState.STARTING) {
+			return;
+		}
 
-				if (!startTime) {
-					this.screenStartingTimestamps.set(screen, Date.now());
-					return;
-				}
+		const startTime = this.screenStartingTimestamps.get(screen);
 
-				const elapsed = Date.now() - startTime;
+		if (!startTime) {
+			this.screenStartingTimestamps.set(screen, Date.now());
+			return;
+		}
 
-				if (elapsed >= timeoutMs) {
-					logger.warn(
-						`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(
-							timeoutMs / 1000
-						)}s). Resetting.`,
-						'StreamManager'
-					);
-					this.screenStartingTimestamps.delete(screen);
+		const elapsed = Date.now() - startTime;
 
-					// Stop any existing stream process for this screen to clean up
-					await this.playerService.stopStream(screen, true, false);
+		if (elapsed >= timeoutMs) {
+			logger.warn(
+				`[Screen ${screen}] Stream has been in STARTING state for ${Math.round(elapsed / 1000)}s (> ${Math.round(
+					timeoutMs / 1000
+				)}s). Resetting.`,
+				'StreamManager'
+			);
 
-					// For livestreams, don't set ERROR state - just move to IDLE and continue
+			// Clean up timestamps and timers
+			this.screenStartingTimestamps.delete(screen);
+			this.cancelStuckStartingTimer(screen);
+
+			// Stop any existing stream process for this screen to clean up
+			await this.playerService.stopStream(screen, true, false);
+
+			// For livestreams, don't set ERROR state - just move to IDLE and continue
+			// But use withLock to ensure thread safety when changing state
+			await this.withLock(screen, 'handleStuckStarting-stateChange', async () => {
+				const currentState = this.getScreenState(screen);
+				// Double-check state hasn't changed since we started this operation
+				if (currentState === StreamState.STARTING) {
 					await this.setScreenState(screen, StreamState.IDLE, undefined, true);
-					await this._handleStreamEndInternal(screen); // Trigger recovery by moving to next stream
+					// DO NOT start the next stream from timeout path - this can cause race conditions
+					// The next stream will be started by the normal queue update mechanism
+					logger.info(`Screen ${screen} reset from timeout, not starting next stream from timeout path`, 'StreamManager');
 				}
 			}, 10000); // Use shorter timeout for stuck handling
-		} catch (error) {
-			logger.error(`Error in handleStuckStarting for screen ${screen}`, 'StreamManager', error);
-			// If we can't handle the stuck state due to lock issues, at least try to reset the screen state
-			try {
-				// For livestreams, don't set ERROR state - just move to IDLE and continue
-				await this.setScreenState(screen, StreamState.IDLE, undefined, true);
-			} catch (resetError) {
-				logger.error(`Failed to reset screen state after handleStuckStarting error for screen ${screen}`, 'StreamManager', resetError);
-			}
 		}
+	}
+	
+	/**
+	 * Cancels the stuck starting timer for a screen if it exists
+	 * @param screen The screen number
+	 */
+	private cancelStuckStartingTimer(screen: number): void {
+		const timer = this.stuckStartingTimers.get(screen);
+		if (timer) {
+			clearTimeout(timer);
+			this.stuckStartingTimers.delete(screen);
+		}
+	}
+	
+	/**
+	 * Sets up a stuck starting timer for a screen
+	 * @param screen The screen number
+	 */
+	private setupStuckStartingTimer(screen: number): void {
+		// Cancel any existing timer first
+		this.cancelStuckStartingTimer(screen);
+		
+		// Set up a new timer to check for stuck starting state
+		const timer = setTimeout(async () => {
+			await this.handleStuckStarting(screen);
+		}, this.MAX_STARTING_TIME);
+		
+		this.stuckStartingTimers.set(screen, timer);
 	}
 
 
@@ -811,15 +869,38 @@ export class StreamManager extends EventEmitter {
 	 * Handles stream end events, cleans up, and starts the next stream in the queue.
 	 * This is a central part of the stream lifecycle.
 	 * @param screen The screen number where the stream ended or should be started.
+	 * @param isManual Whether the stream was stopped manually by the user
+	 * @param playbackTime How long the stream was playing (in seconds)
 	 */
 	private async _handleStreamEndInternal(screen: number, isManual = false, playbackTime = 0): Promise<void> {
 		// Add a delay to respect the player's startup cooldown
 		await new Promise(resolve => setTimeout(resolve, this.playerService.getStartupCooldown()));
 
+		// Determine failure type based on how the stream ended
+		const failureType = this.classifyStreamFailure(isManual, playbackTime);
+
 		// Get screen config at the start of the function
 		const screenConfig = this.getScreenConfig(screen);
 
 		const currentState = this.getScreenState(screen);
+		
+		// If we're in CLOSING state, this means the user manually closed the stream
+		// In this case, we should just go to IDLE and not start the next stream
+		if (currentState === StreamState.CLOSING) {
+			logger.info(`Screen ${screen} is in CLOSING state, setting to IDLE after manual close`, 'StreamManager');
+			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
+			
+			// Mark the stream as manually closed so it won't be reselected immediately
+			const existingStream = this.streams.get(screen);
+			if (existingStream) {
+				this.markStreamAsManuallyClosed(existingStream.url);
+				logger.info(`Stream ${existingStream.url} marked as manually closed after user stop.`, 'StreamManager');
+			}
+			
+			this.manualIdleScreens.add(screen); // Flag screen as manually idled
+			return;
+		}
+		
 		if (![StreamState.IDLE, StreamState.PLAYING, StreamState.STOPPING].includes(currentState)) {
 			// We no longer include ERROR state here since livestreams should not enter error state
 			// Instead, they should transition directly to IDLE and continue with the next stream
@@ -835,18 +916,21 @@ export class StreamManager extends EventEmitter {
 		// Clean up any existing stream for this screen
 		const existingStream = this.streams.get(screen);
 		if (existingStream) {
-			if (!isManual) {
-				// For livestreams, we don't care about watch time - consume the stream immediately
-				// regardless of how long it played. This prevents the inconsistent "watched" marking
-				// that was causing issues with stream rotation.
-				// Still mark as watched to prevent re-selection in the queue.
+			// Only mark as watched for legitimate stream ends (manual stop or natural end)
+			// Don't mark as watched for manager-induced failures like timeouts or lock conflicts
+			const shouldMarkAsWatched = this.shouldMarkStreamAsWatched(failureType, playbackTime);
+			
+			if (shouldMarkAsWatched) {
 				logger.info(
 					`Stream on screen ${screen} ended after ${playbackTime.toFixed(0)}s. Consuming stream.`,
 					'StreamManager'
 				);
 				this.markStreamAsWatched(existingStream.url);
 			} else {
-				logger.info(`Stream on screen ${screen} was manually stopped. Not marking as watched.`, 'StreamManager');
+				logger.info(
+					`Stream on screen ${screen} ended after ${playbackTime.toFixed(0)}s due to ${failureType}. Not marking as watched.`,
+					'StreamManager'
+				);
 			}
 
 			// Mark as not playing in the queue
@@ -952,8 +1036,11 @@ export class StreamManager extends EventEmitter {
 
 		// Transition to STARTING state first, then schedule the actual stream start outside the lock
 		const transitionSuccess = await this.setScreenState(screen, StreamState.STARTING);
-		
+
 		if (transitionSuccess) {
+			// Set up stuck starting timer to detect if stream gets stuck in STARTING state
+			this.setupStuckStartingTimer(screen);
+			
 			const streamOptions: StreamOptions = {
 				url: nextStream.url,
 				screen,
@@ -998,14 +1085,91 @@ export class StreamManager extends EventEmitter {
 			logger.error(`Failed to transition screen ${screen} to STARTING state. Aborting start.`, 'StreamManager');
 		}
 	}
+	
+	/**
+	 * Classifies the type of failure based on how the stream ended
+	 * @param isManual Whether the stream was stopped manually by the user
+	 * @param playbackTime How long the stream was playing (in seconds)
+	 * @returns The classified failure type
+	 */
+	private classifyStreamFailure(isManual: boolean, playbackTime: number): StreamFailureType {
+		if (isManual) {
+			return StreamFailureType.USER_MANUAL_STOP;
+		}
+		
+		// If playback time is very short (e.g., less than 5 seconds), it might be a timeout or error
+		if (playbackTime < 5) {
+			// This could be a timeout, network error, or other issue
+			// Since we don't have specific error info here, we'll assume it's a manager timeout
+			return StreamFailureType.MANAGER_TIMEOUT;
+		}
+		
+		// For longer playback times, assume it was a natural end or stream error
+		return StreamFailureType.NATURAL_END;
+	}
+	
+	/**
+	 * Determines if a stream should be marked as watched based on failure type and playback time
+	 * @param failureType The type of failure that occurred
+	 * @param playbackTime How long the stream was playing (in seconds)
+	 * @returns Whether the stream should be marked as watched
+	 */
+	private shouldMarkStreamAsWatched(failureType: StreamFailureType, playbackTime: number): boolean {
+		switch (failureType) {
+			case StreamFailureType.USER_MANUAL_STOP:
+				// User stopped it intentionally - mark as watched
+				return true;
+			case StreamFailureType.NATURAL_END:
+				// Stream ended naturally - mark as watched
+				return true;
+			case StreamFailureType.MANAGER_TIMEOUT:
+				// Manager-induced timeout (like stuck starting) - don't mark as watched
+				return false;
+			case StreamFailureType.LOCK_CONFLICT:
+				// Lock acquisition failure - don't mark as watched
+				return false;
+			case StreamFailureType.STREAM_ERROR:
+				// Stream error from player - don't mark as watched if playback time was short
+				return playbackTime >= 10; // Only mark as watched if it played for at least 10 seconds
+			case StreamFailureType.NETWORK_ERROR:
+				// Network error - don't mark as watched
+				return false;
+			case StreamFailureType.UNKNOWN_ERROR:
+				// Unknown error - don't mark as watched if playback time was short
+				return playbackTime >= 10; // Only mark as watched if it played for at least 10 seconds
+			default:
+				return false;
+		}
+	}
+	
 	public async handleStreamEnd(screen: number, isManual = false, playbackTime = 0): Promise<void> {
+		// Check if stream end is already being processed for this screen to prevent duplicate handling
+		if (this.streamEndProcessing.has(screen)) {
+			logger.debug(`Stream end already being processed for screen ${screen}, skipping duplicate`, 'StreamManager');
+			return;
+		}
+
+		// Mark that stream end is being processed for this screen
+		this.streamEndProcessing.add(screen);
+
 		// Use shorter timeout for handleStreamEnd to prevent long lock holds
 		// This reduces the chance of cascading lock timeouts
 		// Schedule the operation to run without holding the lock during async operations
 		setTimeout(async () => {
-			await this.withLock(screen, `handleStreamEnd`, async () => {
-				await this._handleStreamEndInternal(screen, isManual, playbackTime);
-			}, 15000); // Reduced from 30s to 15s
+			try {
+				await this.withLock(screen, `handleStreamEnd`, async () => {
+					// Check again inside the lock to ensure we're still processing
+					if (!this.streamEndProcessing.has(screen)) {
+						logger.debug(`Stream end no longer being processed for screen ${screen}, exiting`, 'StreamManager');
+						return;
+					}
+					
+					await this._handleStreamEndInternal(screen, isManual, playbackTime);
+				}, 15000); // Reduced from 30s to 15s
+			} finally {
+				// Always remove from processing set when done
+				this.streamEndProcessing.delete(screen);
+			}
 		}, 10); // Small delay to ensure any current operations complete
 	}
 
@@ -1135,24 +1299,45 @@ export class StreamManager extends EventEmitter {
 		logger.info(`Starting stream process for screen ${screen}: ${url}`, 'StreamManager');
 		this.screenStartingTimestamps.set(screen, Date.now());
 
-		try {
-			const screenConfig = this.screenConfigs.get(screen);
-			if (!screenConfig) {
-				throw new Error(`Screen ${screen} not found in screenConfigs`);
-			}
+		// Check if we're in a shutdown state
+		if (this.isShuttingDown) {
+			return { screen, success: false, error: 'Manager is shutting down' };
+		}
 
-			const result = await this.playerService.startStream({
-				...options,
-				screen,
-				config: screenConfig,
-				startTime: options.startTime !== undefined
-					? (typeof options.startTime === 'string' ? parseInt(options.startTime, 10) : options.startTime)
-					: undefined
-			});
+		const screenConfig = this.screenConfigs.get(screen);
+		if (!screenConfig) {
+			throw new Error(`Screen ${screen} not found in screenConfigs`);
+		}
 
+		// Check if the screen state is still valid before starting
+		const currentState = this.getScreenState(screen);
+		if (currentState !== StreamState.STARTING) {
+			logger.warn(`Screen ${screen} state changed from STARTING to ${currentState} before stream start`, 'StreamManager');
+			return { screen, success: false, error: `Invalid state transition: expected STARTING, got ${currentState}` };
+		}
+
+		// Call player service outside of lock to avoid holding lock during long-running operations
+		const result = await this.playerService.startStream({
+			...options,
+			screen,
+			config: screenConfig,
+			startTime: options.startTime !== undefined
+				? (typeof options.startTime === 'string' ? parseInt(options.startTime, 10) : options.startTime)
+				: undefined
+		});
+
+		// Now we need to acquire the lock again to update internal state
+		return await this.withLock(screen, 'startStream-updateState', async () => {
 			this.screenStartingTimestamps.delete(screen);
 
 			if (result.success) {
+				// Double-check state before setting to PLAYING to avoid race conditions
+				const finalState = this.getScreenState(screen);
+				if (finalState !== StreamState.STARTING) {
+					logger.warn(`Screen ${screen} state changed from STARTING to ${finalState} during stream start`, 'StreamManager');
+					return { screen, success: false, error: `State changed during start: ${finalState}` };
+				}
+
 				this.streams.set(screen, {
 					url: options.url,
 					screen: screen,
@@ -1187,28 +1372,7 @@ export class StreamManager extends EventEmitter {
 				});
 				return { screen, success: false, error: error };
 			}
-		} catch (error) {
-			this.screenStartingTimestamps.delete(screen);
-			// Record the failure in the queue (single source of truth)
-			this.recordStreamFailure(url);
-			const err = error instanceof Error ? error : new Error(String(error));
-			logger.error(`Unhandled error in startStream for screen ${screen}`, 'StreamManager', err);
-
-			// For livestreams, don't set ERROR state - just move to IDLE and continue with next stream
-			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
-
-			// Schedule the next stream attempt outside the current lock to avoid recursive lock acquisition
-			// Use queueMicrotask to ensure it runs after the current lock is released
-			queueMicrotask(() => {
-				setImmediate(async () => {
-					// Acquire lock separately for the next attempt
-					await this.withLock(screen, 'handleStreamEnd-catch', async () => {
-						await this._handleStreamEndInternal(screen);
-					}, 15000);
-				});
-			});
-			return { screen, success: false, error: err.message };
-		}
+		}, 15000);
 	}
 
 	/**
@@ -1241,7 +1405,12 @@ export class StreamManager extends EventEmitter {
 				if (!this.streams.has(screen)) return true;
 			}
 
-			await this.setScreenState(screen, StreamState.STOPPING);
+			// If this is a manual stop, transition to CLOSING state first
+			if (isManualStop) {
+				await this.setScreenState(screen, StreamState.CLOSING);
+			} else {
+				await this.setScreenState(screen, StreamState.STOPPING);
+			}
 
 			if (isManualStop) {
 				const streamInstance = this.streams.get(screen);
@@ -2136,6 +2305,15 @@ export class StreamManager extends EventEmitter {
 
 	public sendCommandToAll(command: string): void {
 		this.playerService.sendCommandToAll(command);
+	}
+
+	/**
+	 * Updates the title of a stream running on a specific screen
+	 * @param screen The screen number
+	 * @param title The new title to set
+	 */
+	public updateStreamTitle(screen: number, title: string): void {
+		this.playerService.updateStreamTitle(screen, title);
 	}
 
 	public async addToQueue(screen: number, source: StreamSource): Promise<void> {
