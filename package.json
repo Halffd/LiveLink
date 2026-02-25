@@ -34,7 +34,9 @@
 		"tsc:watch": "tsc -p tsconfig.server.json --watch",
 		"electron:dev": "npm run build:server && electron . --dev",
 		"electron:build": "electron-builder --dir",
-		"electron:dist": "electron-builder"
+		"electron:dist": "electron-builder",
+		"wm:config": "node scripts/generate-wm-config.js",
+		"wm:config:all": "node scripts/generate-wm-config.js --all"
 	},
 	"files": [
 		"dist",
