@@ -4,8 +4,9 @@ export const defaultMpvConfig: MpvConfig = {
   // Video Output & Hardware Acceleration
   vo: 'gpu',
   hwdec: 'auto-copy-safe',
-  'gpu-api': 'x11',
-  'gpu-context': 'x11',
+  // gpu-api and gpu-context will be set dynamically based on display server
+  // For X11: gpu-api=x11, gpu-context=x11
+  // For Wayland: gpu-api=wayland, gpu-context=wayland
   'hwdec-codecs': 'all',
   
   // Process Priority
