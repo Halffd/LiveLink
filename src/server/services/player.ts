@@ -248,12 +248,12 @@ export class PlayerService {
 	private startPlaybackTimer(screen: number): void {
 		const stream = this.streams.get(screen);
 		if (!stream) return;
-	
+
 		// Clear any existing timer
 		if (stream.playbackTimer) {
 			clearInterval(stream.playbackTimer);
 		}
-	
+
 		stream.playbackTimer = setInterval(async () => {
 			if (!this.streams.has(screen)) {
 				// Stream is gone, clear timer
@@ -264,14 +264,14 @@ export class PlayerService {
 				const response = await this.sendMpvCommand(screen, ['get_property', 'playback-time']);
 				if (response && typeof response.data === 'number') {
 					const stream = this.streams.get(screen);
-					if(stream) stream.playbackTime = response.data;
+					if (stream) stream.playbackTime = response.data;
 				}
 			} catch (error) {
 				// It might fail if the stream is closing, that's okay.
 				logger.debug(`Could not get playback time for screen ${screen}`, 'PlayerService');
 				const stream = this.streams.get(screen);
 				if (stream && stream.playbackTimer) {
-					 clearInterval(stream.playbackTimer); // Stop polling if it errors
+					clearInterval(stream.playbackTimer); // Stop polling if it errors
 				}
 			}
 		}, 5000); // every 5 seconds
@@ -279,7 +279,7 @@ export class PlayerService {
 
 	async startStream(options: StreamOptions & { screen: number }): Promise<StreamResponse> {
 		const { screen, url } = options;
-	
+
 		// Use a longer cooldown to prevent race conditions
 		const lastStart = this.streamStartCooldowns.get(screen) || 0;
 		const now = Date.now();
@@ -289,7 +289,7 @@ export class PlayerService {
 			return { screen, success: false, error: errorMsg };
 		}
 		this.streamStartCooldowns.set(screen, now);
-	
+
 		logger.info(`Attempting to start stream on screen ${screen}: ${url}`, 'PlayerService');
 
 		if (this.disabledScreens.has(screen)) {
@@ -327,23 +327,23 @@ export class PlayerService {
 					await this.stopStream(screen, true, false);
 				}
 			}
-	
+
 			const ipcPath = this.initializeIpcPath(screen);
 			logger.info(`Starting stream with IPC path: ${ipcPath}`, 'PlayerService');
-	
+
 			let playerProcess: ChildProcess;
 			if (this.config.player.preferStreamlink || url.includes('twitch.tv')) {
 				playerProcess = await this.startStreamlinkProcess(options);
 			} else {
 				playerProcess = await this.startMpvProcess(options);
 			}
-	
+
 			if (!playerProcess || !playerProcess.pid || !this.isProcessRunning(playerProcess.pid)) {
 				throw new Error('Failed to start player process or it exited immediately.');
 			}
-	
+
 			logger.info(`Player process started with PID ${playerProcess.pid} for screen ${screen}`, 'PlayerService');
-	
+
 			const streamInstance: LocalStreamInstance = {
 				id: Date.now(),
 				screen,
@@ -358,7 +358,7 @@ export class PlayerService {
 				options,
 				playbackTime: 0
 			};
-	
+
 			this.streams.set(screen, streamInstance);
 			this.startPlaybackTimer(screen);
 			this.setupProcessHandlers(playerProcess, screen);
@@ -380,7 +380,7 @@ export class PlayerService {
 			}
 
 			return { screen, success: true };
-	
+
 		} catch (error) {
 			logger.error(`Failed to start stream on screen ${screen}: ${url}`, 'PlayerService', error);
 			await this.stopStream(screen, true, false);
@@ -401,7 +401,7 @@ export class PlayerService {
 		}
 		const ipcPath = path.join(ipcDir, `mpv-ipc-${screen}`);
 		this.ipcPaths.set(screen, ipcPath);
-	
+
 		// Clean up old socket file
 		if (fs.existsSync(ipcPath)) {
 			try {
@@ -424,9 +424,6 @@ export class PlayerService {
 		this.pendingMpvSpawns.set(options.screen, abortController);
 
 		try {
-			// Add startup delay to ensure display session is ready
-			await this.ensureDisplaySessionReady(options.screen);
-
 			const args = this.getMpvArgs(options);
 			const env = this.getProcessEnv();
 
@@ -485,9 +482,6 @@ export class PlayerService {
 	): Promise<ChildProcess> {
 		logger.info(`Starting streamlink for screen ${options.screen}`, 'PlayerService');
 
-		// Add startup delay to ensure display session is ready
-		await this.ensureDisplaySessionReady(options.screen);
-
 		const args = this.getStreamlinkArgs(options.url, options);
 		const env = this.getProcessEnv();
 		logger.info(`Streamlink args: streamlink ${args.join(' ')}`, 'PlayerService');
@@ -525,26 +519,26 @@ export class PlayerService {
 				});
 
 				// Wait for IPC socket to be created
-                const ipcPath = this.ipcPaths.get(options.screen);
-                if (!ipcPath) {
-                    clearTimeout(startTimeout);
-                    process.kill();
-                    return reject(new Error('IPC path not found for screen ' + options.screen));
-                }
+				const ipcPath = this.ipcPaths.get(options.screen);
+				if (!ipcPath) {
+					clearTimeout(startTimeout);
+					process.kill();
+					return reject(new Error('IPC path not found for screen ' + options.screen));
+				}
 
-                const maxWait = 120000; // 120 seconds (increased from 15s to allow for slow startup)
-                
-                this.waitForIpcSocketWithRetry(ipcPath, maxWait)
-                    .then(() => {
-                        clearTimeout(startTimeout);
-                        logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
-                        resolve(process);
-                    })
-                    .catch((error) => {
-                        clearTimeout(startTimeout);
-                        process.kill();
-                        reject(new Error(`IPC socket at ${ipcPath} not ready after ${maxWait / 1000}s. Stderr: ${stderrOutput}. Error: ${error.message}`));
-                    });
+				const maxWait = 120000; // 120 seconds (increased from 15s to allow for slow startup)
+
+				this.waitForIpcSocketWithRetry(ipcPath, maxWait)
+					.then(() => {
+						clearTimeout(startTimeout);
+						logger.info(`IPC socket found for screen ${options.screen} at ${ipcPath}`, 'PlayerService');
+						resolve(process);
+					})
+					.catch((error) => {
+						clearTimeout(startTimeout);
+						process.kill();
+						reject(new Error(`IPC socket at ${ipcPath} not ready after ${maxWait / 1000}s. Stderr: ${stderrOutput}. Error: ${error.message}`));
+					});
 			});
 
 		} catch (error) {
@@ -601,7 +595,7 @@ export class PlayerService {
 		});
 	}
 
-	
+
 
 	private handleProcessExit(screen: number, code: number | null): void {
 		// Get stream info before any cleanup happens
@@ -803,7 +797,7 @@ export class PlayerService {
 		this.clearMonitoring(screen);
 	}
 
-	    public clearMonitoring(screen: number): void {
+	public clearMonitoring(screen: number): void {
 		logger.debug(`Clearing monitoring for screen ${screen}`, 'PlayerService');
 
 		// Clear inactive timer
@@ -910,7 +904,7 @@ export class PlayerService {
 		if (!parentPid || !this.isProcessRunning(parentPid)) {
 			return;
 		}
-	
+
 		try {
 			// Using pkill is more reliable for finding and killing child process trees
 			exec(`pkill -P ${parentPid}`, (error) => {
@@ -965,7 +959,7 @@ export class PlayerService {
 		// Never cleanup during starting state to avoid race conditions
 		const shouldCleanup = stream &&
 			(stream.status === 'playing' || stream.status === 'stopping' ||
-			 (stream.process && stream.process.pid && this.isProcessRunning(stream.process.pid)));
+				(stream.process && stream.process.pid && this.isProcessRunning(stream.process.pid)));
 
 		if (!shouldCleanup) {
 			// If we're in starting state, don't perform cleanup to avoid race conditions
@@ -1101,6 +1095,117 @@ export class PlayerService {
 		return str;
 	}
 
+	/**
+	 * Detect the current display server and window manager type
+	 * @returns Object containing display server and WM type information
+	 */
+	private detectDisplayEnvironment(): {
+		displayServer: 'x11' | 'wayland' | 'unknown';
+		isTilingWM: boolean;
+		wmName?: string;
+	} {
+		// Check for Wayland first
+		if (process.env.WAYLAND_DISPLAY) {
+			const wmName = this.detectWaylandWM();
+			return {
+				displayServer: 'wayland',
+				isTilingWM: this.isTilingWindowManager(wmName),
+				wmName
+			};
+		}
+
+		// Check for X11
+		if (process.env.DISPLAY) {
+			const wmName = this.detectX11WM();
+			return {
+				displayServer: 'x11',
+				isTilingWM: this.isTilingWindowManager(wmName),
+				wmName
+			};
+		}
+
+		return { displayServer: 'unknown', isTilingWM: false };
+	}
+
+	/**
+	 * Detect Wayland compositor
+	 */
+	private detectWaylandWM(): string | undefined {
+		// Common Wayland compositors that act as tiling WMs
+		const waylandCompositors = [
+			'Hyprland', 'Sway', 'Wayfire', 'KWin', 'Mutter', 'Weston'
+		];
+
+		// Check WAYLAND_DISPLAY or use loginctl to detect session
+		const compositor = process.env.XDG_CURRENT_DESKTOP || process.env.XDG_SESSION_DESKTOP;
+		if (compositor) {
+			return compositor;
+		}
+
+		// Try to detect via loginctl (systemd-based systems)
+		try {
+			const output = execSync('loginctl show-session $(loginctl | grep $(whoami) | awk \'{print $1}\') -p Type', {
+				stdio: ['ignore', 'pipe', 'ignore'],
+				timeout: 2000
+			}).toString();
+			if (output.includes('wayland')) {
+				return compositor || 'wayland';
+			}
+		} catch (e) {
+			// Ignore errors
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Detect X11 window manager
+	 */
+	private detectX11WM(): string | undefined {
+		try {
+			// Try to get WM name via xprop
+			const output = execSync('xprop -root _NET_WM_NAME', {
+				stdio: ['ignore', 'pipe', 'ignore'],
+				timeout: 2000
+			}).toString();
+			if (output) {
+				const match = output.match(/"([^"]+)"/);
+				if (match) return match[1];
+			}
+		} catch (e) {
+			// Try fallback: check for common tiling WM processes
+			const tilingWMs = ['i3', 'sway', 'bspwm', 'dwm', 'xmonad', 'awesome', 'qtile', 'herbstluftwm'];
+			for (const wm of tilingWMs) {
+				try {
+					execSync(`pgrep -x "${wm}"`, { stdio: ['ignore', 'ignore', 'ignore'], timeout: 1000 });
+					return wm;
+				} catch (e) {
+					// Continue checking
+				}
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Check if a window manager is a tiling WM
+	 */
+	private isTilingWindowManager(wmName?: string): boolean {
+		if (!wmName) return false;
+
+		const tilingWMs = [
+			'i3', 'sway', 'bspwm', 'dwm', 'xmonad', 'awesome', 'qtile',
+			'herbstluftwm', 'hyprland', 'wayfire', 'swayfx'
+		];
+
+		const wmLower = wmName.toLowerCase();
+		return tilingWMs.some(wm => wmLower.includes(wm));
+	}
+
+	/**
+	 * Get MPV arguments optimized for the current display environment
+	 * Reads from mpv.json and streamlink.json configs, with dynamic overrides for display server
+	 */
 	private getMpvArgs(
 		options: StreamOptions & { screen: number },
 		includeUrl: boolean = true
@@ -1110,9 +1215,13 @@ export class PlayerService {
 			throw new Error(`No screen configuration found for screen ${options.screen}`);
 		}
 
+		// Detect display environment
+		const env = this.detectDisplayEnvironment();
+		logger.info(`Display environment: ${env.displayServer}, WM: ${env.wmName || 'unknown'}, Tiling: ${env.isTilingWM}`, 'PlayerService');
+
 		// Initialize IPC path if not already set
 		if (!this.ipcPaths.has(options.screen)) {
-			const ipcPath = `/tmp/mpv-socket-${options.screen}`;
+			const ipcPath = `/tmp/mpv-ipc-${options.screen}`;
 			this.ipcPaths.set(options.screen, ipcPath);
 		}
 
@@ -1130,33 +1239,79 @@ export class PlayerService {
 
 		const baseArgs: string[] = [];
 
-		// Add global MPV arguments from config
+		// Track which keys we've already added to avoid duplicates
+		const addedKeys = new Set<string>();
+
+		// Add global MPV arguments from mpv.json config
 		if (this.config.mpv) {
 			for (const [key, value] of Object.entries(this.config.mpv)) {
+				// Skip gpu-api and gpu-context as they'll be set dynamically
+				if (key === 'gpu-api' || key === 'gpu-context') {
+					logger.debug(`Skipping config option ${key} (set dynamically)`, 'PlayerService');
+					continue;
+				}
 				if (value !== undefined && value !== null) {
 					baseArgs.push(`--${key}=${value}`);
+					addedKeys.add(key);
 				}
 			}
 		}
 
-		// Add screen-specific MPV arguments from streamlink config
+		// Add screen-specific MPV arguments from streamlink.json mpv config
 		if (this.config.streamlink?.mpv) {
 			for (const [key, value] of Object.entries(this.config.streamlink.mpv)) {
+				// Skip if already added from global config (global takes precedence)
+				if (addedKeys.has(key)) {
+					continue;
+				}
+				// Skip gpu-api and gpu-context as they'll be set dynamically
+				if (key === 'gpu-api' || key === 'gpu-context') {
+					logger.debug(`Skipping streamlink.mpv option ${key} (set dynamically)`, 'PlayerService');
+					continue;
+				}
 				if (value !== undefined && value !== null) {
 					baseArgs.push(`--${key}=${value}`);
+					addedKeys.add(key);
 				}
 			}
 		}
 
-		// Essential arguments
+		// Essential arguments (always added, cannot be overridden by config)
 		baseArgs.push(
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${path.join(process.cwd(), 'scripts', 'mpv')}`,
 			`--log-file=${logFile}`,
-			`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
 			`--volume=${(options.volume || 0).toString()}`,
 			'--msg-level=all=debug'
 		);
+
+		// Handle geometry and window positioning based on WM type
+		if (env.isTilingWM) {
+			// For tiling WMs, use wm-class/instance for window rules instead of geometry
+			// Users can configure their WM to position windows based on class
+			baseArgs.push(
+				`--wayland-app-id=livelink-screen-${options.screen}`,
+				`--title=LiveLink-Screen-${options.screen}`
+			);
+
+			// Set window size hints (tiling WMs may respect these)
+			baseArgs.push(
+				`--geometry=${screenConfig.width}x${screenConfig.height}`
+			);
+
+			logger.info(`Tiling WM detected (${env.wmName}), using wm-class for window rules instead of geometry positioning`, 'PlayerService');
+		} else if (env.displayServer === 'wayland') {
+			// For Wayland (non-tiling), use geometry but with Wayland-compatible options
+			baseArgs.push(
+				`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`,
+				`--class=livelink-screen-${options.screen}`
+			);
+		} else {
+			// For X11 (traditional/compositing WM), use full geometry
+			baseArgs.push(
+				`--geometry=${screenConfig.width}x${screenConfig.height}+${screenConfig.x}+${screenConfig.y}`
+			);
+		}
 
 		if (options.windowMaximized) {
 			baseArgs.push('--window-maximized=yes');
@@ -1171,6 +1326,10 @@ export class PlayerService {
 		return baseArgs;
 	}
 
+	/**
+	 * Get streamlink arguments from streamlink.json config
+	 * Reads options, http_header, args, and mpv config from streamlink.json
+	 */
 	private getStreamlinkArgs(url: string, options: StreamOptions & { screen: number }): string[] {
 		const screenConfig = this.config.player.screens.find((s) => s.screen === options.screen);
 		if (!screenConfig) {
@@ -1185,8 +1344,10 @@ export class PlayerService {
 			this.mpvPath
 		];
 
-		// Add streamlink options from config
+		// Add streamlink options from streamlink.json config
+		// These are the main streamlink configuration options
 		if (this.config.streamlink?.options) {
+			logger.debug(`Adding streamlink options from config: ${Object.keys(this.config.streamlink.options).length} options`, 'PlayerService');
 			Object.entries(this.config.streamlink.options).forEach(([key, value]) => {
 				if (value === true) {
 					streamlinkArgs.push(`--${key}`);
@@ -1196,8 +1357,9 @@ export class PlayerService {
 			});
 		}
 
-		// Add HTTP headers if configured
+		// Add HTTP headers from streamlink.json config
 		if (this.config.streamlink?.http_header) {
+			logger.debug(`Adding HTTP headers from config: ${Object.keys(this.config.streamlink.http_header).length} headers`, 'PlayerService');
 			Object.entries(this.config.streamlink.http_header).forEach(([key, value]) => {
 				streamlinkArgs.push('--http-header', `${key}=${value}`);
 			});
@@ -1207,114 +1369,45 @@ export class PlayerService {
 		// with complex Unicode titles. Title will be set via MPV IPC after startup.
 
 		// Get MPV arguments without the URL (we don't want streamlink to pass the URL to MPV)
+		// This reads from mpv.json and streamlink.json mpv config
 		const mpvArgs = this.getMpvArgs(options, false);
 
-		// Add --player-args and then each argument properly escaped
-		streamlinkArgs.push('--player-args');
+		// Add --player-args followed by MPV arguments as a single string
+		// When using spawn, don't add quotes - pass as separate array element
+		streamlinkArgs.push('--player-args', mpvArgs.join(' '));
 
-		// Join all MPV args into a properly escaped single string
-		const mpvArgsString = mpvArgs
-			.map(arg => this.escapeShellArg(arg))
-			.join(' ');
-
-		// Add the entire MPV command as a single quoted argument
-		streamlinkArgs.push(mpvArgsString);
-
-		// Add any additional streamlink arguments from config
-		if (this.config.streamlink?.args) {
+		// Add any additional streamlink arguments from streamlink.json args array
+		// These are extra command-line arguments passed directly to streamlink
+		if (this.config.streamlink?.args && this.config.streamlink.args.length > 0) {
+			logger.debug(`Adding additional streamlink args from config: ${this.config.streamlink.args.length} args`, 'PlayerService');
 			streamlinkArgs.push(...this.config.streamlink.args);
 		}
 
-		logger.debug(`Streamlink args: ${streamlinkArgs.join(' ')}`, 'PlayerService');
+		logger.info(`Streamlink args for screen ${options.screen}: ${streamlinkArgs.join(' ')}`, 'PlayerService');
 		return streamlinkArgs;
 	}
 
 	private getProcessEnv(): NodeJS.ProcessEnv {
+		// Detect display environment to set appropriate environment variables
+		const env = this.detectDisplayEnvironment();
+
 		// Get the current session environment variables
 		const sessionEnv = {
 			...process.env,
 			MPV_HOME: undefined,
 			XDG_CONFIG_HOME: undefined,
-			DISPLAY: process.env.DISPLAY || ':0',
-			XAUTHORITY: process.env.XAUTHORITY || `${process.env.HOME || '/tmp'}/.Xauthority`,
-			WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || undefined,
+			DISPLAY: process.env.DISPLAY || (env.displayServer === 'x11' ? ':0' : undefined),
+			XAUTHORITY: process.env.XAUTHORITY || (env.displayServer === 'x11' ? `${process.env.HOME || '/tmp'}/.Xauthority` : undefined),
+			WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || (env.displayServer === 'wayland' ? undefined : undefined),
 			DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || undefined,
-			SDL_VIDEODRIVER: 'x11',
+			// Set SDL video driver based on display server
+			SDL_VIDEODRIVER: env.displayServer === 'wayland' ? 'wayland' : 'x11',
 		};
-		
+
 		// Log important session variables for debugging
-		logger.debug(`Session environment variables: DISPLAY=${sessionEnv.DISPLAY}, XAUTHORITY=${sessionEnv.XAUTHORITY}`, 'PlayerService');
-		
+		logger.debug(`Session environment: ${env.displayServer}/${env.wmName || 'unknown'}, DISPLAY=${sessionEnv.DISPLAY}, WAYLAND_DISPLAY=${sessionEnv.WAYLAND_DISPLAY}`, 'PlayerService');
+
 		return sessionEnv;
-	}
-
-	/**
-	 * Ensures the display session is ready before starting MPV
-	 * Waits for the display to be accessible before proceeding
-	 */
-	private async ensureDisplaySessionReady(screen: number): Promise<void> {
-		// Check if we're in a headless environment or if DISPLAY is not set
-		const display = process.env.DISPLAY || ':0';
-
-		// Create an abort controller to track this operation
-		const abortController = new AbortController();
-		this.pendingDisplayWaits.set(screen, abortController);
-
-		try {
-			// On boot/login, wait at least 10-15 seconds for session to become ready
-			// OR wait for compositor socket / X11 socket to be ready
-			logger.info(`Waiting for display session to be ready: ${display} for screen ${screen}`, 'PlayerService');
-
-			// Wait for a minimum delay to allow session to initialize
-			const delayPromise = new Promise<void>((resolve) => {
-				const timeoutId = setTimeout(resolve, 15000); // 15 seconds
-				abortController.signal.addEventListener('abort', () => {
-					clearTimeout(timeoutId);
-					resolve(); // Resolve early if aborted
-				});
-			});
-
-			await delayPromise;
-
-			// Check if the operation was cancelled
-			if (abortController.signal.aborted) {
-				logger.info(`Display session readiness check cancelled for screen ${screen}`, 'PlayerService');
-				return;
-			}
-
-			// Additionally, check if the X11 socket exists and is accessible
-			if (display.startsWith(':')) {
-				const displayNum = display.substring(1).split('.')[0]; // Extract display number
-				const x11SocketPath = `/tmp/.X11-unix/X${displayNum}`;
-
-				logger.info(`Checking X11 socket at: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
-
-				const maxWait = 30000; // 30 seconds additional wait
-				const checkInterval = 500; // 500ms
-				let waited = 0;
-
-				while (waited < maxWait) {
-					// Check if the operation was cancelled
-					if (abortController.signal.aborted) {
-						logger.info(`Display session readiness check cancelled for screen ${screen}`, 'PlayerService');
-						return;
-					}
-
-					if (fs.existsSync(x11SocketPath)) {
-						logger.info(`X11 socket ready at: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
-						return;
-					}
-
-					await new Promise(resolve => setTimeout(resolve, checkInterval));
-					waited += checkInterval;
-				}
-
-				logger.warn(`X11 socket not ready after ${maxWait / 1000}s: ${x11SocketPath} for screen ${screen}`, 'PlayerService');
-			}
-		} finally {
-			// Remove the abort controller when done
-			this.pendingDisplayWaits.delete(screen);
-		}
 	}
 
 	/**
@@ -1324,7 +1417,7 @@ export class PlayerService {
 		const checkInterval = 250; // ms
 		const maxWait = timeout;
 		let waited = 0;
-		
+
 		// First, wait for the socket to exist
 		while (waited < maxWait) {
 			if (fs.existsSync(ipcPath)) {
@@ -1332,43 +1425,43 @@ export class PlayerService {
 				try {
 					// Try to connect to the socket to ensure it's actually working
 					const socket = net.connect(ipcPath);
-					
+
 					await new Promise((resolve, reject) => {
 						const timeoutId = setTimeout(() => {
 							socket.destroy();
 							reject(new Error('Socket connection timeout'));
 						}, 1000);
-						
+
 						socket.on('connect', () => {
 							clearTimeout(timeoutId);
 							socket.destroy();
 							resolve(undefined);
 						});
-						
+
 						socket.on('error', (err) => {
 							clearTimeout(timeoutId);
 							socket.destroy();
 							reject(err);
 						});
 					});
-					
+
 					logger.info(`IPC socket verified at ${ipcPath}`, 'PlayerService');
 					return;
 				} catch (err) {
 					logger.debug(`IPC socket at ${ipcPath} not ready yet: ${err}`, 'PlayerService');
 				}
 			}
-			
+
 			await new Promise(resolve => setTimeout(resolve, checkInterval));
 			waited += checkInterval;
 		}
-		
+
 		throw new Error(`IPC socket at ${ipcPath} not ready after ${timeout / 1000}s`);
 	}
 	public isStreamHealthy(screen: number): boolean {
 		const activeStream = this.streams.get(screen);
 		if (!activeStream || !activeStream.process) return false;
-	
+
 		// Process is running
 		return this.isProcessRunning(activeStream.process.pid);
 	}
@@ -1430,7 +1523,7 @@ export class PlayerService {
 
 		const stopPromises = Array.from(this.streams.keys()).map(screen => this.stopStream(screen, true));
 		await Promise.allSettled(stopPromises);
-	
+
 		this.ipcPaths.forEach((ipcPath) => {
 			try {
 				if (fs.existsSync(ipcPath)) {
@@ -1440,16 +1533,16 @@ export class PlayerService {
 				this.logError(`Failed to remove IPC socket ${ipcPath}`, 'PlayerService', error);
 			}
 		});
-	
+
 		// Clear all timers
 		this.retryTimers.forEach(timer => clearTimeout(timer));
-	
+
 		// Clear all state maps
 		this.streams.clear();
 		this.ipcPaths.clear();
 		this.retryTimers.clear();
 		this.startupLocks.clear();
-	
+
 		logger.info('Player service cleanup complete', 'PlayerService');
 	}
 
@@ -1505,9 +1598,9 @@ export class PlayerService {
 							exec(cmd, (error) => {
 								if (error && error.code !== 1) { // code 1 means no process found
 									logger.debug(
-									`${logPrefix} Command failed: ${error.message}`,
-									'PlayerService'
-								);
+										`${logPrefix} Command failed: ${error.message}`,
+										'PlayerService'
+									);
 								}
 								resolve();
 							});
@@ -1601,21 +1694,21 @@ export class PlayerService {
 		if (!ipcPath) {
 			throw new Error(`No IPC socket for screen ${screen}`);
 		}
-	
+
 		return new Promise((resolve, reject) => {
 			const socket = net.createConnection(ipcPath);
 			let responseData = '';
-	
+
 			const timeout = setTimeout(() => {
 				socket.destroy();
 				reject(new Error('Socket timeout'));
 			}, 30000);
-	
+
 			socket.on('connect', () => {
 				const mpvCommand = JSON.stringify({ command });
 				socket.write(mpvCommand + '\n');
 			});
-	
+
 			socket.on('data', (data) => {
 				responseData += data.toString();
 				// MPV responses are newline-terminated JSON
@@ -1630,12 +1723,12 @@ export class PlayerService {
 					}
 				}
 			});
-	
+
 			socket.on('error', (err) => {
 				clearTimeout(timeout);
 				reject(err);
 			});
-	
+
 			socket.on('close', () => {
 				clearTimeout(timeout);
 				if (!responseData) {
@@ -1717,7 +1810,7 @@ export class PlayerService {
 	/**
 	 * Set up heartbeat monitoring for a stream to detect if it becomes unresponsive
 	 */
-	
+
 
 	// Add method to check if stream is having persistent issues
 	private isPersistentIssue(screen: number): boolean {
