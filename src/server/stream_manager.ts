@@ -956,12 +956,9 @@ export class StreamManager extends EventEmitter {
 		// Only set to IDLE if we're not already in an error state that needs to be handled
 		await this.setScreenState(screen, StreamState.IDLE, undefined, true); // Force to IDLE to prepare for start
 
-		// Update queue if needed
-		const lastUpdate = this.lastUpdateTimestamp.get(screen) || 0;
-		const now = Date.now();
-		if (lastUpdate < now - this.minUpdateSeconds * 1000) {
-			await this.updateQueue(screen);
-		}
+		// Always refresh queue to ensure watched streams are filtered out
+		// Don't use timestamp-based caching here as it can cause loops
+		await this.updateQueue(screen);
 
 		// Get the next stream from the queue and immediately consume it to prevent re-selection
 		const queue = this.queues.get(screen) || [];
@@ -2897,6 +2894,7 @@ export class StreamManager extends EventEmitter {
 			}));
 
 			const unwatchedStreams = this.filterUnwatchedStreams(queueStreams as StreamSource[], screen);
+			logger.info(`Queue for screen ${screen}: ${queueStreams.length} total → ${unwatchedStreams.length} after filtering watched`, 'StreamManager');
 			const sortedStreams = this.sortStreams(unwatchedStreams, screenConfig);
 
 			// Assign score based on queue index

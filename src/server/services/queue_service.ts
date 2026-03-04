@@ -228,14 +228,59 @@ class QueueService extends EventEmitter {
 
   // Watched Streams Management
   public markStreamAsWatched(streamOrUrl: string | StreamSource): void {
-    const key = typeof streamOrUrl === 'string' ? streamOrUrl : this.getWatchedKey(streamOrUrl);
-    if (this.watchedStreams.has(key)) return;
-    this.watchedStreams.add(key);
+    if (typeof streamOrUrl === 'string') {
+      // If it's just a URL, store it directly
+      if (this.watchedStreams.has(streamOrUrl)) {
+        logger.debug(`Stream already marked as watched: ${streamOrUrl}`, 'QueueService');
+        return;
+      }
+      this.watchedStreams.add(streamOrUrl);
+      logger.info(`Marked stream as watched (URL): ${streamOrUrl}`, 'QueueService');
+    } else {
+      // For StreamSource objects, store both the channel key AND the URL
+      // This ensures reliable matching even if metadata changes between API calls
+      const channelKey = this.getWatchedKey(streamOrUrl);
+      const urlKey = streamOrUrl.url;
+      
+      let added = false;
+      // Store both keys to ensure reliable matching
+      if (!this.watchedStreams.has(channelKey)) {
+        this.watchedStreams.add(channelKey);
+        added = true;
+        logger.debug(`Marked stream as watched (channel): ${channelKey}`, 'QueueService');
+      }
+      if (!this.watchedStreams.has(urlKey)) {
+        this.watchedStreams.add(urlKey);
+        added = true;
+        logger.debug(`Marked stream as watched (URL): ${urlKey}`, 'QueueService');
+      }
+      if (added) {
+        logger.info(`Marked stream as watched: ${streamOrUrl.url}`, 'QueueService');
+      }
+    }
   }
 
   public isStreamWatched(streamOrUrl: string | StreamSource): boolean {
-    const key = typeof streamOrUrl === 'string' ? streamOrUrl : this.getWatchedKey(streamOrUrl);
-    return this.watchedStreams.has(key);
+    if (typeof streamOrUrl === 'string') {
+      // Direct URL check
+      const isWatched = this.watchedStreams.has(streamOrUrl);
+      if (isWatched) {
+        logger.debug(`Stream is watched (URL match): ${streamOrUrl}`, 'QueueService');
+      }
+      return isWatched;
+    } else {
+      // Check both channel key and URL for reliable matching
+      const channelKey = this.getWatchedKey(streamOrUrl);
+      const urlKey = streamOrUrl.url;
+      const channelMatch = this.watchedStreams.has(channelKey);
+      const urlMatch = this.watchedStreams.has(urlKey);
+      
+      if (channelMatch || urlMatch) {
+        logger.debug(`Stream is watched (${channelMatch ? 'channel' : ''}${channelMatch && urlMatch ? '&' : ''}${urlMatch ? 'URL' : ''}): ${streamOrUrl.url}`, 'QueueService');
+      }
+      // If either key matches, the stream is watched
+      return channelMatch || urlMatch;
+    }
   }
 
   private getWatchedKey(stream: StreamSource): string {
