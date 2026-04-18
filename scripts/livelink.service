@@ -3,8 +3,8 @@ Description=LiveLink Server
 After=network-online.target
 
 [Service]
-WorkingDirectory=/home/half-arch/repos/LiveLink
-ExecStart=/usr/bin/env node dist/server/api.js
+WorkingDirectory=/home/all/repos/LiveLink
+ExecStart=/usr/bin/bash /home/all/scripts/livelink.sh
 Restart=always
 RestartSec=5
 EnvironmentFile=%h/.config/livelink.env
