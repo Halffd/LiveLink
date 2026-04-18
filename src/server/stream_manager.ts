@@ -286,24 +286,11 @@ export class StreamManager extends EventEmitter {
 	): Promise<void> {
 		logger.error(`Stream error on screen ${screen}: ${error}`, 'StreamManager', { code, url, playbackTime });
 
-		// Check if this is a manual close - if so, don't trigger global operations
-		// The shouldRestart parameter will be false if it was a manual close
-		if (shouldRestart === false) {
-			logger.info(`Stream on screen ${screen} was manually closed, setting to IDLE without global operations`, 'StreamManager');
-			// Just set the screen to IDLE without triggering global refresh
-			await this.setScreenState(screen, StreamState.IDLE, undefined, true);
-			// Mark the stream as manually closed so it won't be reselected immediately
-			if (url) {
-				this.markStreamAsManuallyClosed(url);
-				logger.info(`Stream ${url} marked as manually closed`, 'StreamManager');
-			}
-			return;
-		}
-
-		// For automatic closes (errors, network issues, etc.), continue with normal flow
-		logger.info(`Stream on screen ${screen} ended, consuming and moving to next stream`, 'StreamManager');
-		// Pass the playback time to the end handler so it can properly classify the failure
-		await this._handleStreamEndInternal(screen, false, playbackTime ?? 0); // This will consume the current stream and start the next one
+		// If shouldRestart is false, it's a manual close from the player side (e.g. user closed window)
+		const isManual = shouldRestart === false;
+		
+		// Use the centralized end handler
+		await this.handleStreamEnd(screen, isManual, playbackTime ?? 0);
 	}
 
 	// Initialize state machines for all screens

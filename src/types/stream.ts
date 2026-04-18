@@ -193,6 +193,20 @@ export interface ScreenConfig {
 }
 
 /**
+ * Logging configuration
+ */
+export interface LoggingConfig {
+  /** Whether logging is enabled */
+  enabled: boolean;
+  /** Log level (debug, info, warn, error) */
+  level: 'debug' | 'info' | 'warn' | 'error';
+  /** Maximum log file size in MB before rotation */
+  maxSizeMB: number;
+  /** Maximum number of log files to keep */
+  maxFiles: number;
+}
+
+/**
  * Global player settings
  */
 export interface PlayerSettings {
@@ -215,6 +229,8 @@ export interface PlayerSettings {
   /** Whether to force player to always be running for each enabled screen */
   force_player: boolean;
   disableHeartbeat?: boolean;
+  /** Logging configuration */
+  logging?: LoggingConfig;
 }
 
 /**
@@ -362,6 +378,8 @@ export interface Config {
     /** Whether to force player to always be running for each enabled screen */
     force_player: boolean;
     disableHeartbeat?: boolean;
+    /** Logging configuration */
+    logging?: LoggingConfig;
     /** Configuration for each screen */
     screens: ScreenConfig[];
   };

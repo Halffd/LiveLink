@@ -70,7 +70,7 @@ export const defaultMpvConfig: MpvConfig = {
   'osd-border-color': '#DD322640',
   
   // Debug & Logging
-  'msg-level': 'all=v',
+  'msg-level': 'all=status',
   
   // YouTube-DL
   'ytdl-format': 'bestvideo[height<=?1080]+bestaudio/best',

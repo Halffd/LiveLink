@@ -120,6 +120,12 @@ export function loadAllConfigs(): Config {
         autoStart: true,
         disableHeartbeat: false,
         force_player: false,
+        logging: {
+          enabled: true,
+          level: 'info',
+          maxSizeMB: 50,
+          maxFiles: 5
+        },
         screens: [
           {
             id: 1,

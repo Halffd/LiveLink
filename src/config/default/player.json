@@ -6,6 +6,12 @@
   "autoStart": true,
   "force_player": false,
   "disableHeartbeat": true,
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "maxSizeMB": 50,
+    "maxFiles": 5
+  },
   "screens": [
     {
       "id": 1,

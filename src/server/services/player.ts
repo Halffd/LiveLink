@@ -56,8 +56,47 @@ interface StartResult {
 export class PlayerService {
 	private readonly logsDir = path.join(new URL('.', import.meta.url).pathname, '../../../logs');
 	private getLogFilePath(prefix: string): string {
-		const timestamp = format(new Date(), 'yyyyMMdd-HHmmss');
-		return path.join(this.logsDir, `${prefix}-${timestamp}.log`);
+		const logging = this.config.player.logging;
+		const logFile = path.join(this.logsDir, `${prefix}.log`);
+		const maxSizeBytes = (logging?.maxSizeMB || 50) * 1024 * 1024;
+
+		try {
+			// Ensure directory exists
+			const dir = path.dirname(logFile);
+			if (!fs.existsSync(dir)) {
+				fs.mkdirSync(dir, { recursive: true });
+			}
+
+			if (fs.existsSync(logFile)) {
+				const stats = fs.statSync(logFile);
+				if (stats.size > maxSizeBytes) {
+					// Rotation logic
+					const maxFiles = logging?.maxFiles || 5;
+					
+					// Delete oldest file
+					const oldest = `${logFile}.${maxFiles}`;
+					if (fs.existsSync(oldest)) {
+						try { fs.unlinkSync(oldest); } catch (e) { /* ignore */ }
+					}
+
+					// Shift files
+					for (let i = maxFiles - 1; i >= 1; i--) {
+						const current = `${logFile}.${i}`;
+						const next = `${logFile}.${i + 1}`;
+						if (fs.existsSync(current)) {
+							try { fs.renameSync(current, next); } catch (e) { /* ignore */ }
+						}
+					}
+
+					// Rename current to .1
+					try { fs.renameSync(logFile, `${logFile}.1`); } catch (e) { /* ignore */ }
+				}
+			}
+		} catch (error) {
+			logger.warn(`Failed to rotate logs for ${prefix}: ${error instanceof Error ? error.message : String(error)}`, 'PlayerService');
+		}
+
+		return logFile;
 	}
 	private readonly BASE_LOG_DIR: string;
 	private readonly MAX_RETRIES = 2; // Maximum number of retries
@@ -428,9 +467,15 @@ export class PlayerService {
 			const env = this.getProcessEnv();
 
 			logger.debug(`MPV command: ${this.mpvPath} ${args.join(' ')}`, 'PlayerService');
-			const mpvLogFile = this.getLogFilePath(`mpv-screen-${options.screen}`);
-			const mpvLogStream = fs.createWriteStream(mpvLogFile, { flags: 'a' });
-			logger.info(`MPV logs will be written to: ${mpvLogFile}`, 'PlayerService');
+			
+			const isLoggingEnabled = this.config.player.logging?.enabled !== false;
+			let mpvLogStream: fs.WriteStream | null = null;
+			
+			if (isLoggingEnabled) {
+				const mpvLogFile = this.getLogFilePath(`mpv/screen-${options.screen}`);
+				mpvLogStream = fs.createWriteStream(mpvLogFile, { flags: 'a' });
+				logger.info(`MPV logs will be written to: ${mpvLogFile}`, 'PlayerService');
+			}
 
 			const mpvProcess = spawn(this.mpvPath, args, {
 				env,
@@ -438,21 +483,23 @@ export class PlayerService {
 			});
 
 			// Set up logging for the process
-			if (mpvProcess.stdout) {
-				mpvProcess.stdout.on('data', (data: Buffer) => {
-					const logData = data.toString().trim();
-					mpvLogStream.write(`[${new Date().toISOString()}] ${logData}\n`);
-				});
-			}
+			if (isLoggingEnabled && mpvLogStream) {
+				if (mpvProcess.stdout) {
+					mpvProcess.stdout.on('data', (data: Buffer) => {
+						const logData = data.toString().trim();
+						mpvLogStream?.write(`[${new Date().toISOString()}] ${logData}\n`);
+					});
+				}
 
-			if (mpvProcess.stderr) {
-				mpvProcess.stderr.on('data', (data: Buffer) => {
-					const logData = data.toString().trim();
-					mpvLogStream.write(`[${new Date().toISOString()}] [ERROR] ${logData}\n`);
-				});
-			}
+				if (mpvProcess.stderr) {
+					mpvProcess.stderr.on('data', (data: Buffer) => {
+						const logData = data.toString().trim();
+						mpvLogStream?.write(`[${new Date().toISOString()}] [ERROR] ${logData}\n`);
+					});
+				}
 
-			mpvProcess.on('close', () => mpvLogStream.end());
+				mpvProcess.on('close', () => mpvLogStream?.end());
+			}
 
 			// Wait for IPC socket to be created
 			const ipcPath = this.ipcPaths.get(options.screen);
@@ -486,9 +533,14 @@ export class PlayerService {
 		const env = this.getProcessEnv();
 		logger.info(`Streamlink args: streamlink ${args.join(' ')}`, 'PlayerService');
 		try {
-			const streamlinkLogFile = this.getLogFilePath(`streamlink-screen-${options.screen}`);
-			const streamlinkLogStream = fs.createWriteStream(streamlinkLogFile, { flags: 'a' });
-			logger.info(`Streamlink logs will be written to: ${streamlinkLogFile}`, 'PlayerService');
+			const isLoggingEnabled = this.config.player.logging?.enabled !== false;
+			let streamlinkLogStream: fs.WriteStream | null = null;
+			
+			if (isLoggingEnabled) {
+				const streamlinkLogFile = this.getLogFilePath(`streamlink/screen-${options.screen}`);
+				streamlinkLogStream = fs.createWriteStream(streamlinkLogFile, { flags: 'a' });
+				logger.info(`Streamlink logs will be written to: ${streamlinkLogFile}`, 'PlayerService');
+			}
 
 			const process = spawn(this.streamlinkConfig.path || 'streamlink', args, {
 				env,
@@ -497,8 +549,20 @@ export class PlayerService {
 
 			let stderrOutput = '';
 			process.stderr?.on('data', (data) => {
-				stderrOutput += data.toString();
+				const logData = data.toString();
+				stderrOutput += logData;
+				if (isLoggingEnabled && streamlinkLogStream) {
+					streamlinkLogStream.write(`[${new Date().toISOString()}] [ERROR] ${logData}`);
+				}
 			});
+
+			process.stdout?.on('data', (data) => {
+				if (isLoggingEnabled && streamlinkLogStream) {
+					streamlinkLogStream.write(`[${new Date().toISOString()}] ${data.toString()}`);
+				}
+			});
+
+			process.on('close', () => streamlinkLogStream?.end());
 
 			return new Promise((resolve, reject) => {
 				const startTimeout = setTimeout(() => {
@@ -1230,7 +1294,6 @@ export class PlayerService {
 			fs.mkdirSync(this.BASE_LOG_DIR, { recursive: true });
 		}
 
-		const logFile = path.join(this.BASE_LOG_DIR, `screen_${options.screen}.log`);
 		const ipcPath = this.ipcPaths.get(options.screen);
 
 		if (!ipcPath) {
@@ -1277,12 +1340,12 @@ export class PlayerService {
 		}
 
 		// Essential arguments (always added, cannot be overridden by config)
+		const logLevel = this.config.player.logging?.level || 'info';
 		baseArgs.push(
 			`--input-ipc-server=${ipcPath}`,
 			`--config-dir=${path.join(process.cwd(), 'scripts', 'mpv')}`,
-			`--log-file=${logFile}`,
 			`--volume=${(options.volume || 0).toString()}`,
-			'--msg-level=all=debug'
+			`--msg-level=all=${logLevel}`
 		);
 
 		// Handle geometry and window positioning based on WM type

@@ -75,7 +75,7 @@ export const MpvConfigSchema = z.record(z.any()).default({
   'osd-border-color': z.string().default('#DD322640'),
   
   // Debug & Logging
-  'msg-level': 'all=v',
+  'msg-level': z.string().default('all=status'),
   'log-file': z.string().optional(),
   
   // YouTube-DL
