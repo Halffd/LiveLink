@@ -1,3 +1,4 @@
+use crate::config::FavoriteChannels;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::debug;
@@ -179,5 +180,10 @@ pub struct OrchestratorConfig {
     pub max_streams: usize,
     pub startup_cooldown_ms: u64,
     pub crash_threshold_seconds: u64,
+    pub favorite_channels: FavoriteChannels,
+    pub holodex_api_key: String,
+    pub twitch_client_id: String,
+    pub twitch_client_secret: String,
+    pub youtube_api_key: String,
 }
 

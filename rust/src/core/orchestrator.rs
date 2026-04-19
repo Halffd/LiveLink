@@ -2,7 +2,12 @@ use crate::core::state::{
     OrchestratorConfig, Platform, ScreenState, StreamInfo, StreamState,
 };
 use crate::queue::queue::{QueueService, StreamSource};
+use crate::services::fallback::FallbackService;
+use crate::services::holodex::HolodexService;
+use crate::services::network::{NetworkEvent, NetworkState};
 use crate::services::player::{PlayerService, ProcessExit};
+use crate::services::twitch::TwitchService;
+use crate::services::youtube::YouTubeService;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
@@ -10,34 +15,57 @@ use tracing::{debug, error, info, warn};
 
 pub struct Orchestrator {
     config: OrchestratorConfig,
-    state: DashMap<u32, ScreenState>,
-    locks: DashMap<u32, Arc<Mutex<()>>>,
+    pub(crate) state: DashMap<u32, ScreenState>,
+    pub(crate) locks: DashMap<u32, Arc<Mutex<()>>>,
     player: Arc<Mutex<PlayerService>>,
-    queue: Arc<Mutex<QueueService>>,
+    pub(crate) queue: Arc<Mutex<QueueService>>,
+    fallback_service: Arc<FallbackService>,
+    holodex_service: Arc<HolodexService>,
+    twitch_service: Arc<Mutex<TwitchService>>,
+    youtube_service: Arc<YouTubeService>,
     max_streams: usize,
 }
 
 impl Orchestrator {
-    pub fn new(config: OrchestratorConfig, exit_receiver: mpsc::Receiver<ProcessExit>) -> Self {
+    pub fn new(
+        config: OrchestratorConfig,
+        exit_receiver: mpsc::Receiver<ProcessExit>,
+        network_receiver: mpsc::Receiver<NetworkEvent>,
+    ) -> Self {
         let max_streams = config.max_streams;
         let (exit_sender, receiver) = mpsc::channel(100);
         drop(exit_receiver);
 
         let player = PlayerService::new(exit_sender);
         let queue = QueueService::new();
+        let fallback_service = FallbackService::new(config.favorite_channels.clone());
+        let holodex_service = HolodexService::new(config.holodex_api_key.clone());
+        let twitch_service = TwitchService::new(config.twitch_client_id.clone(), config.twitch_client_secret.clone());
+        let youtube_service = YouTubeService::new(config.youtube_api_key.clone());
 
         let orchestrator = Self {
-            config,
+            config: config.clone(),
             state: DashMap::new(),
             locks: DashMap::new(),
             player: Arc::new(Mutex::new(player)),
             queue: Arc::new(Mutex::new(queue)),
+            fallback_service: Arc::new(fallback_service),
+            holodex_service: Arc::new(holodex_service),
+            twitch_service: Arc::new(Mutex::new(twitch_service)),
+            youtube_service: Arc::new(youtube_service),
             max_streams,
         };
 
         let orchestrator_clone = Arc::new(orchestrator.clone_inner());
+        let orchestrator_for_exit = orchestrator_clone.clone();
+
         tokio::spawn(async move {
-            Self::exit_listener(receiver, orchestrator_clone).await;
+            Self::exit_listener(receiver, orchestrator_for_exit).await;
+        });
+
+        let orchestrator_for_network = Arc::new(orchestrator.clone_inner());
+        tokio::spawn(async move {
+            Self::network_listener(network_receiver, orchestrator_for_network).await;
         });
 
         orchestrator
@@ -50,6 +78,10 @@ impl Orchestrator {
             locks: DashMap::new(),
             player: self.player.clone(),
             queue: self.queue.clone(),
+            fallback_service: self.fallback_service.clone(),
+            holodex_service: self.holodex_service.clone(),
+            twitch_service: self.twitch_service.clone(),
+            youtube_service: self.youtube_service.clone(),
             max_streams: self.max_streams,
         }
     }
@@ -61,6 +93,23 @@ impl Orchestrator {
         while let Some(exit) = receiver.recv().await {
             info!(screen = exit.screen, pid = exit.pid, code = ?exit.exit_code, "Process exit received");
             orchestrator.handle_process_exit(exit.screen, exit.exit_code).await;
+        }
+    }
+
+    async fn network_listener(
+        mut receiver: mpsc::Receiver<NetworkEvent>,
+        orchestrator: Arc<Orchestrator>,
+    ) {
+        while let Some(event) = receiver.recv().await {
+            info!(state = ?event.state, "Network state changed");
+            match event.state {
+                NetworkState::Online => {
+                    orchestrator.recover_on_network_restore().await;
+                }
+                NetworkState::Offline => {
+                    info!("Network offline - existing streams will continue, no new starts allowed");
+                }
+            }
         }
     }
 
@@ -231,12 +280,6 @@ impl Orchestrator {
         if runtime < self.config.crash_threshold_seconds {
             screen_state.mark_error(format!("Crash after {}s (code: {:?})", runtime, exit_code));
             warn!(screen, url = %url, runtime, "Stream crashed - entering error state");
-
-            drop(screen_state);
-
-            tokio::spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            });
         } else {
             let url_for_queue = url.clone();
             screen_state.finish_stop();
@@ -278,6 +321,77 @@ impl Orchestrator {
         });
     }
 
+    async fn recover_on_network_restore(&self) {
+        info!("Network restored - checking screens for recovery");
+
+        let screens: Vec<u32> = self.state.iter().map(|r| r.screen).collect();
+
+        for screen in screens {
+            self.attempt_screen_recovery(screen).await;
+        }
+    }
+
+    async fn attempt_screen_recovery(&self, screen: u32) {
+        let lock = match self.locks.get(&screen) {
+            Some(l) => l.value().clone(),
+            None => return,
+        };
+
+        let _guard = lock.lock().await;
+
+        let screen_state = match self.state.get(&screen) {
+            Some(s) => s,
+            None => return,
+        };
+
+        match screen_state.state {
+            StreamState::Idle | StreamState::Error => {
+                debug!(screen, state = %screen_state.state, "Screen needs recovery");
+            }
+            StreamState::Playing | StreamState::Starting | StreamState::Stopping => {
+                debug!(screen, state = %screen_state.state, "Screen does not need recovery");
+                return;
+            }
+        }
+
+        if screen_state.stream.is_none() {
+            debug!(screen, "No stream info to recover");
+            return;
+        }
+
+        drop(screen_state);
+
+        let active_count = self.count_active_streams_internal();
+        if active_count >= self.max_streams {
+            info!(screen, active_count, max = self.max_streams, "Cannot recover - max streams reached");
+            return;
+        }
+
+        let stream_info = self.state.get(&screen).and_then(|s| s.stream.clone());
+
+        if let Some(info) = stream_info {
+            info!(screen, url = %info.url, "Recovering stream");
+
+            let player = self.player.clone();
+            let player_screen = screen;
+            let url = info.url.clone();
+
+            tokio::spawn(async move {
+                let mut player_guard = player.lock().await;
+                match player_guard.start_process(player_screen, &url, 1280, 720, 0, 0).await {
+                    Ok(_) => info!(screen, url = %url, "Stream recovered successfully"),
+                    Err(e) => error!(screen, url = %url, error = %e, "Failed to recover stream"),
+                }
+            });
+
+            let mut state = self.state.get_mut(&screen).unwrap();
+            state.state = StreamState::Starting;
+            if let Some(ref mut stream) = state.stream {
+                stream.start_time = Some(std::time::Instant::now());
+            }
+        }
+    }
+
     async fn get_or_create_lock(&self, screen: u32) -> Arc<Mutex<()>> {
         self.locks
             .get(&screen)
@@ -287,6 +401,108 @@ impl Orchestrator {
                 self.locks.insert(screen, lock.clone());
                 lock
             })
+    }
+
+    /// Fetch streams for a screen using the fallback chain:
+    /// 1. If API service is enabled (API key present) → use API
+    /// 2. If no API key → use favorite channels from config (FallbackService)
+    ///
+    /// This method is intended to be called when populating the queue
+    /// from configured sources. The actual service integrations (Twitch, Holodex, YouTube)
+    /// will be checked here once they are wired to the Orchestrator.
+pub async fn fetch_streams_for_screen(&self, screen: u32) -> Vec<StreamSource> {
+    if self.holodex_service.is_enabled() {
+        match self.holodex_service.get_live_streams().await {
+            Ok(streams) => {
+                debug!(screen, count = streams.len(), "Fetched streams from Holodex API");
+                return streams;
+            }
+            Err(e) => {
+                warn!(screen, error = %e, "Holodex API failed, falling back to favorites");
+            }
+        }
+    }
+
+    if self.twitch_service.lock().await.is_enabled() {
+        let twitch_channels: Vec<String> = self.config
+            .favorite_channels
+            .twitch
+            .default
+            .iter()
+            .map(|ch| ch.id.clone())
+            .collect();
+
+        if !twitch_channels.is_empty() {
+            let mut twitch = self.twitch_service.lock().await;
+            if twitch.authenticate().await.is_ok() {
+                match twitch.get_live_streams(&twitch_channels).await {
+                    Ok(streams) => {
+                        debug!(screen, count = streams.len(), "Fetched streams from Twitch API");
+                        return streams;
+                    }
+                    Err(e) => {
+                        warn!(screen, error = %e, "Twitch API failed, falling back");
+                    }
+                }
+            } else {
+                warn!(screen, "Twitch authentication failed");
+            }
+        }
+    }
+
+    if self.youtube_service.is_enabled() {
+        let yt_channels: Vec<String> = self.config
+            .favorite_channels
+            .youtube
+            .default
+            .iter()
+            .map(|ch| ch.id.clone())
+            .collect();
+
+        if !yt_channels.is_empty() {
+            match self.youtube_service.get_live_streams(&yt_channels).await {
+                Ok(streams) => {
+                    debug!(screen, count = streams.len(), "Fetched streams from YouTube API");
+                    return streams;
+                }
+                Err(e) => {
+                    warn!(screen, error = %e, "YouTube API failed, falling back");
+                }
+            }
+        }
+    }
+
+    if self.fallback_service.is_empty() {
+        warn!(screen, "No favorite channels configured and no API services available");
+        return Vec::new();
+    }
+
+    let streams = self.fallback_service.all_streams();
+    debug!(screen, count = streams.len(), "Fetched streams from fallback service");
+    streams
+}
+
+pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
+    self.config.favorite_channels.clone()
+}
+
+    #[cfg(test)]
+    pub fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
+        self.state.get(&screen).map(|r| r.clone())
+    }
+
+    #[cfg(test)]
+    pub fn queue(&self) -> &Arc<Mutex<QueueService>> {
+        &self.queue
+    }
+
+    #[cfg(test)]
+    pub fn locks(&self) -> &DashMap<u32, Arc<Mutex<()>>> {
+        &self.locks
+    }
+
+    pub fn get_queue(&self) -> Arc<Mutex<QueueService>> {
+        self.queue.clone()
     }
 }
 
@@ -298,6 +514,10 @@ impl Clone for Orchestrator {
             locks: DashMap::new(),
             player: self.player.clone(),
             queue: self.queue.clone(),
+            fallback_service: self.fallback_service.clone(),
+            holodex_service: self.holodex_service.clone(),
+            twitch_service: self.twitch_service.clone(),
+            youtube_service: self.youtube_service.clone(),
             max_streams: self.max_streams,
         }
     }
