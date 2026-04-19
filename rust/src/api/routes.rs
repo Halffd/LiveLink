@@ -73,7 +73,7 @@ async fn start_stream(
         .orchestrator
         .start_stream(req.screen)
         .await
-        .map_err(|e| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -89,7 +89,7 @@ async fn stop_stream(
         .orchestrator
         .stop_stream(req.screen)
         .await
-        .map_err(|e| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(serde_json::json!({
         "success": true,

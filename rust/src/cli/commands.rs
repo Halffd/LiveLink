@@ -52,10 +52,30 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             }
         }
         Commands::List { screen } => {
+            let queue_arc = orchestrator.get_queue();
+            let queue = queue_arc.lock().await;
             if let Some(s) = screen {
-                println!("Queue for screen {}:", s);
+                if let Some(q) = queue.get_queue(s) {
+                    println!("Queue for screen {} ({} items):", s, q.len());
+                    if let Some(next) = q.get_next() {
+                        println!("  Next: {} ({})", next.title.as_deref().unwrap_or("Unknown"), next.url);
+                    }
+                    if q.len() > 1 {
+                        println!("  ... and {} more", q.len() - 1);
+                    }
+                } else {
+                    println!("Screen {} has no queue", s);
+                }
             } else {
                 println!("All queues:");
+                for s in [0, 1] {
+                    if let Some(q) = queue.get_queue(s) {
+                        println!("  Screen {}: {} items", s, q.len());
+                        if let Some(next) = q.get_next() {
+                            println!("    Next: {} ({})", next.title.as_deref().unwrap_or("Unknown"), next.url);
+                        }
+                    }
+                }
             }
         }
     }

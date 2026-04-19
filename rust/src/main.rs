@@ -1,5 +1,6 @@
 mod api;
 mod cli;
+mod config;
 mod core;
 mod queue;
 mod services;
@@ -7,9 +8,10 @@ mod services;
 #[cfg(test)]
 mod core_test;
 
+use config::{ConfigLoader, Env};
 use core::orchestrator::Orchestrator;
 use core::state::OrchestratorConfig;
-use services::player::ProcessExit;
+use services::network::{NetworkEvent, NetworkMonitor};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 use tokio::sync::mpsc;
@@ -30,41 +32,45 @@ async fn main() {
 
     info!("LiveLink starting...");
 
-    let config = OrchestratorConfig {
-        max_streams: 2,
+    let _env = Env::load();
+
+    let loader = ConfigLoader::new();
+    let config = loader.load();
+
+    info!(
+        max_streams = config.player.max_streams,
+        "Configuration loaded"
+    );
+
+    let (network_sender, network_receiver) = mpsc::channel::<NetworkEvent>(100);
+    let (_exit_tx, exit_rx) = mpsc::channel(100);
+
+    let network_monitor = NetworkMonitor::new(network_sender);
+
+    let orchestrator_config = OrchestratorConfig {
+        max_streams: config.player.max_streams,
         startup_cooldown_ms: 5000,
         crash_threshold_seconds: 3,
-        ..Default::default()
+        favorite_channels: config.favorite_channels.clone(),
+        holodex_api_key: config.holodex.api_key,
+        twitch_client_id: config.twitch.client_id,
+        twitch_client_secret: config.twitch.client_secret,
+        youtube_api_key: config.youtube.api_key,
     };
 
-    let (_exit_tx, exit_rx) = mpsc::channel(100);
-    let orchestrator = Arc::new(Orchestrator::new(config, exit_rx));
+    let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
+
+    tokio::spawn(async move {
+        network_monitor.start().await;
+    });
 
     orchestrator.register_screen(0).await;
     orchestrator.register_screen(1).await;
 
-    let sources = vec![
-        queue::queue::StreamSource {
-            url: "https://twitch.tv/channel1".to_string(),
-            title: Some("Test Stream 1".to_string()),
-            platform: Some("twitch".to_string()),
-            viewer_count: Some(100),
-            priority: Some(1),
-            is_live: true,
-            ..Default::default()
-        },
-        queue::queue::StreamSource {
-            url: "https://twitch.tv/channel2".to_string(),
-            title: Some("Test Stream 2".to_string()),
-            platform: Some("twitch".to_string()),
-            viewer_count: Some(200),
-            priority: Some(2),
-            is_live: true,
-            ..Default::default()
-        },
-    ];
-
-    orchestrator.set_queue(0, sources).await;
+    let sources = orchestrator.fetch_streams_for_screen(0).await;
+    if !sources.is_empty() {
+        orchestrator.set_queue(0, sources).await;
+    }
 
     info!("LiveLink initialized");
     info!("Active streams: {}", orchestrator.count_active_streams());
@@ -75,8 +81,15 @@ async fn main() {
             eprintln!("CLI error: {}", e);
         }
     } else {
-        info!("No CLI command specified, running in server mode");
-        tokio::signal::ctrl_c().await.ok();
+        let orchestrator_for_api = orchestrator.clone();
+        let app = api::routes::create_router(orchestrator_for_api);
+
+        let port = 3001;
+        let addr = format!("0.0.0.0:{}", port);
+        info!("Starting API server on {}", addr);
+
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        axum::serve(listener, app).await.unwrap();
     }
 
     info!("LiveLink shutting down");
