@@ -5,7 +5,7 @@ use crate::queue::queue::{QueueService, StreamSource};
 use crate::services::fallback::FallbackService;
 use crate::services::holodex::HolodexService;
 use crate::services::network::{NetworkEvent, NetworkState};
-use crate::services::player::{PlayerService, ProcessExit};
+use crate::services::player::{PlayerConfig, PlayerService, ProcessExit};
 use crate::services::twitch::TwitchService;
 use crate::services::youtube::YouTubeService;
 use dashmap::DashMap;
@@ -36,7 +36,16 @@ impl Orchestrator {
         let (exit_sender, receiver) = mpsc::channel(100);
         drop(exit_receiver);
 
-        let player = PlayerService::new(exit_sender);
+        let player_config = PlayerConfig {
+            player_type: crate::services::player::PlayerType::MpvProcess,
+            mpv_path: "mpv".to_string(),
+            streamlink_path: "streamlink".to_string(),
+            default_quality: "best".to_string(),
+            default_volume: 50,
+            window_maximized: false,
+            log_rotation: true,
+        };
+        let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();
         let fallback_service = FallbackService::new(config.favorite_channels.clone());
         let holodex_service = HolodexService::new(config.holodex_api_key.clone());
@@ -186,7 +195,7 @@ impl Orchestrator {
 
         tokio::spawn(async move {
             let mut player_guard = player.lock().await;
-            if let Err(e) = player_guard.start_process(player_screen, &url_clone, 1280, 720, 0, 0).await {
+            if let Err(e) = player_guard.start(player_screen, &url_clone, 1280, 720, 0, 0).await {
                 error!(screen = player_screen, error = %e, "Failed to start process");
             }
         });
@@ -224,7 +233,7 @@ impl Orchestrator {
         let player = self.player.clone();
         tokio::spawn(async move {
             let mut player_guard = player.lock().await;
-            if let Err(e) = player_guard.stop_process(screen).await {
+            if let Err(e) = player_guard.stop(screen).await {
                 warn!(screen, error = %e, "Failed to stop process");
             }
         });
@@ -316,8 +325,8 @@ impl Orchestrator {
     pub fn poll_player_exits(&self) {
         let player = self.player.clone();
         tokio::spawn(async move {
-            let mut player_guard = player.lock().await;
-            player_guard.poll_processes();
+            let player_guard = player.lock().await;
+            player_guard.poll_exits();
         });
     }
 
@@ -378,7 +387,7 @@ impl Orchestrator {
 
             tokio::spawn(async move {
                 let mut player_guard = player.lock().await;
-                match player_guard.start_process(player_screen, &url, 1280, 720, 0, 0).await {
+                match player_guard.start(player_screen, &url, 1280, 720, 0, 0).await {
                     Ok(_) => info!(screen, url = %url, "Stream recovered successfully"),
                     Err(e) => error!(screen, url = %url, error = %e, "Failed to recover stream"),
                 }
@@ -503,6 +512,28 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
 
     pub fn get_queue(&self) -> Arc<Mutex<QueueService>> {
         self.queue.clone()
+    }
+
+    pub async fn clear_watched(&self, screen: u32) {
+        let mut queue = self.queue.lock().await;
+        queue.clear_watched(screen);
+        info!(screen, "Cleared watched history for screen");
+    }
+
+    pub async fn clear_all_watched(&self) {
+        let mut queue = self.queue.lock().await;
+        queue.clear_all_watched();
+        info!("Cleared all watched history");
+    }
+
+    pub async fn cleanup_expired_watched(&self, max_age_hours: i64) -> usize {
+        let max_age_seconds = max_age_hours * 3600;
+        let mut queue = self.queue.lock().await;
+        let removed = queue.cleanup_expired_watched(max_age_seconds);
+        if removed > 0 {
+            info!(count = removed, "Cleaned up expired watched entries");
+        }
+        removed
     }
 }
 

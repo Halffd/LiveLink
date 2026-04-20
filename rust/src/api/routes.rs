@@ -41,6 +41,18 @@ pub struct StopRequest {
     screen: u32,
 }
 
+#[derive(Deserialize)]
+pub struct ClearWatchedRequest {
+    screen: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct QueueInfo {
+    screen: u32,
+    count: usize,
+    watched_count: usize,
+}
+
 async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
     let active = state.orchestrator.count_active_streams();
     let screens = vec![
@@ -97,6 +109,48 @@ async fn stop_stream(
     })))
 }
 
+async fn clear_watched(
+    State(state): State<AppState>,
+    Json(req): Json<ClearWatchedRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    match req.screen {
+        Some(screen) => {
+            state.orchestrator.clear_watched(screen).await;
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "message": format!("Cleared watched history for screen {}", screen)
+            })))
+        }
+        None => {
+            state.orchestrator.clear_all_watched().await;
+            Ok(Json(serde_json::json!({
+                "success": true,
+                "message": "Cleared all watched history"
+            })))
+        }
+    }
+}
+
+async fn get_queues(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let queue_arc = state.orchestrator.get_queue();
+    let queue_service = queue_arc.lock().await;
+    let queues: Vec<QueueInfo> = queue_service
+        .get_all_queues()
+        .iter()
+        .map(|(screen, q)| QueueInfo {
+            screen: *screen,
+            count: q.len(),
+            watched_count: q.get_watched_count(),
+        })
+        .collect();
+
+    Json(serde_json::json!({
+        "queues": queues
+    }))
+}
+
 pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
     let app_state = AppState { orchestrator };
 
@@ -104,5 +158,7 @@ pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
         .route("/status", get(get_status))
         .route("/stream/start", post(start_stream))
         .route("/stream/stop", post(stop_stream))
+        .route("/queue/clear-watched", post(clear_watched))
+        .route("/queues", get(get_queues))
         .with_state(app_state)
 }
