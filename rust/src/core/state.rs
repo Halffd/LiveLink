@@ -87,6 +87,7 @@ pub struct ScreenState {
     pub stream: Option<StreamInfo>,
     pub error_count: u32,
     pub last_error: Option<String>,
+    pub enabled: bool,
 }
 
 impl ScreenState {
@@ -97,6 +98,7 @@ impl ScreenState {
             stream: None,
             error_count: 0,
             last_error: None,
+            enabled: true,
         }
     }
 

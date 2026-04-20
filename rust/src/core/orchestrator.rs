@@ -547,6 +547,57 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         }
         removed
     }
+
+    pub fn is_screen_enabled(&self, screen: u32) -> bool {
+        self.state.get(&screen).map(|s| s.enabled).unwrap_or(true)
+    }
+
+    pub async fn enable_screen(&self, screen: u32) {
+        if let Some(mut state) = self.state.get_mut(&screen) {
+            state.enabled = true;
+            info!(screen, "Screen enabled");
+        }
+    }
+
+    pub async fn disable_screen(&self, screen: u32) {
+        if let Some(mut state) = self.state.get_mut(&screen) {
+            state.enabled = false;
+            info!(screen, "Screen disabled");
+        }
+    }
+
+    pub async fn player_pause(&self, screen: u32) -> Result<(), String> {
+        let player = self.player.lock().await;
+        player.command(screen, &["pause"]).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn player_set_volume(&self, screen: u32, volume: u8) -> Result<(), String> {
+        let player = self.player.lock().await;
+        player.set_volume(screen, volume).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn player_seek(&self, screen: u32, seconds: i64) -> Result<(), String> {
+        let player = self.player.lock().await;
+        player.command(screen, &["seek", &seconds.to_string()]).await.map_err(|e| e.to_string())
+    }
+
+    pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
+        let streams = self.fetch_streams_for_screen(screen).await;
+        let mut queue = self.queue.lock().await;
+        queue.set_queue(screen, streams);
+        info!(screen, "Queue refreshed");
+        Ok(())
+    }
+
+    pub async fn refresh_all_queues(&self) -> Result<(), String> {
+        for screen in [0, 1] {
+            let streams = self.fetch_streams_for_screen(screen).await;
+            let mut queue = self.queue.lock().await;
+            queue.set_queue(screen, streams);
+        }
+        info!("All queues refreshed");
+        Ok(())
+    }
 }
 
 impl Clone for Orchestrator {
