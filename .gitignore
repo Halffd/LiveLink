@@ -69,4 +69,5 @@ scripts/mpv
 .vscode
 
 # Generated WM configs (auto-generated from player.json)
-generated-wm-configs/livelink-*
+generated-wm-configs/livelink-*src-tauri/target
+src-tauri/gen

@@ -1,7 +1,0 @@
-cargo:rerun-if-changed=permissions
-cargo:PERMISSION_FILES_PATH=/home/all/repos/LiveLink/src-tauri/target/debug/build/tauri-plugin-global-shortcut-e2c7138d44070499/out/tauri-plugin-global-shortcut-permission-files
-cargo:rerun-if-env-changed=REMOVE_UNUSED_COMMANDS
-cargo:GLOBAL_API_SCRIPT_PATH=/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-global-shortcut-2.3.1/api-iife.js
-cargo:rustc-check-cfg=cfg(mobile)
-cargo:rustc-check-cfg=cfg(desktop)
-cargo:rustc-cfg=desktop
