@@ -95,15 +95,15 @@ impl Orchestrator {
         }
     }
 
-    async fn exit_listener(
-        mut receiver: mpsc::Receiver<ProcessExit>,
-        orchestrator: Arc<Orchestrator>,
-    ) {
-        while let Some(exit) = receiver.recv().await {
-            info!(screen = exit.screen, pid = exit.pid, code = ?exit.exit_code, "Process exit received");
-            orchestrator.handle_process_exit(exit.screen, exit.exit_code).await;
-        }
+async fn exit_listener(
+    mut receiver: mpsc::Receiver<ProcessExit>,
+    orchestrator: Arc<Orchestrator>,
+) {
+    while let Some(exit) = receiver.recv().await {
+        info!(screen = exit.screen, pid = exit.pid, code = ?exit.exit_code, playback_time = exit.playback_time, "Process exit received");
+        orchestrator.handle_process_exit(exit).await;
     }
+}
 
     async fn network_listener(
         mut receiver: mpsc::Receiver<NetworkEvent>,
@@ -253,45 +253,57 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub async fn handle_process_exit(&self, screen: u32, exit_code: Option<i32>) {
-        let lock = match self.locks.get(&screen) {
-            Some(l) => l.value().clone(),
-            None => {
-                warn!(screen, "Process exit but no lock, ignoring");
-                return;
-            }
-        };
-
-        let _guard = lock.lock().await;
-
-        let mut screen_state = match self.state.get_mut(&screen) {
-            Some(s) => s,
-            None => {
-                warn!(screen, "Process exit but no screen state");
-                return;
-            }
-        };
-
-        if screen_state.state != StreamState::Playing && screen_state.state != StreamState::Starting {
-            debug!(screen, state = %screen_state.state, "Ignoring process exit for non-active stream");
+pub async fn handle_process_exit(&self, exit: ProcessExit) {
+    let screen = exit.screen;
+    let lock = match self.locks.get(&screen) {
+        Some(l) => l.value().clone(),
+        None => {
+            warn!(screen, "Process exit but no lock, ignoring");
             return;
         }
+    };
 
-        let runtime = screen_state
+    let _guard = lock.lock().await;
+
+    let mut screen_state = match self.state.get_mut(&screen) {
+        Some(s) => s,
+        None => {
+            warn!(screen, "Process exit but no screen state");
+            return;
+        }
+    };
+
+    if screen_state.state != StreamState::Playing && screen_state.state != StreamState::Starting {
+        debug!(screen, state = %screen_state.state, "Ignoring process exit for non-active stream");
+        return;
+    }
+
+    // Use playback_time from mpv if available (more accurate), otherwise fall back to wall clock
+    let playback_seconds = exit.playback_time as u64;
+    let runtime = if playback_seconds > 0 {
+        playback_seconds
+    } else {
+        screen_state
             .stream
             .as_ref()
             .and_then(|s| s.start_time)
             .map(|start| start.elapsed().as_secs())
-            .unwrap_or(u64::MAX);
+            .unwrap_or(u64::MAX)
+    };
 
-        let url = screen_state.stream.as_ref().map(|s| s.url.clone()).unwrap_or_default();
+    let url = screen_state.stream.as_ref().map(|s| s.url.clone()).unwrap_or_default();
 
-        if runtime < self.config.crash_threshold_seconds {
-            screen_state.mark_error(format!("Crash after {}s (code: {:?})", runtime, exit_code));
-            warn!(screen, url = %url, runtime, "Stream crashed - entering error state");
+    if runtime < self.config.crash_threshold_seconds {
+        let error_msg = if let Some(e) = exit.error {
+            format!("Crash after {}s: {}", runtime, e)
         } else {
-            let url_for_queue = url.clone();
-            screen_state.finish_stop();
+            format!("Crash after {}s (code: {:?})", runtime, exit.exit_code)
+        };
+        screen_state.mark_error(error_msg);
+        warn!(screen, url = %url, runtime, "Stream crashed - entering error state");
+    } else {
+        let url_for_queue = url.clone();
+        screen_state.finish_stop();
 
             drop(screen_state);
 
