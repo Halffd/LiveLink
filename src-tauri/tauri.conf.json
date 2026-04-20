@@ -11,6 +11,10 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "iconAsTemplate": true
+    },
     "windows": [
       {
         "title": "LiveLink",
@@ -19,7 +23,8 @@
         "resizable": true,
         "fullscreen": false,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 600,
+        "center": true
       }
     ],
     "security": {

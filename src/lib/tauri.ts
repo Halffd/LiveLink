@@ -12,6 +12,51 @@ export interface SystemRequirements {
     streamlink: boolean;
 }
 
+export interface AppConfig {
+    streams: StreamConfig[];
+    mpv: MpvConfig;
+    streamlink: StreamlinkConfig;
+    favorites?: FavoritesConfig;
+}
+
+export interface StreamConfig {
+    id: number;
+    screen: number;
+    enabled: boolean;
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    volume: number;
+    quality: string;
+}
+
+export interface MpvConfig {
+    priority: string;
+    'gpu-context': string;
+}
+
+export interface StreamlinkConfig {
+    path: string;
+    options: Record<string, unknown>;
+}
+
+export interface FavoritesConfig {
+    holodex: PlatformFavorites;
+    twitch: PlatformFavorites;
+    youtube: PlatformFavorites;
+}
+
+export interface PlatformFavorites {
+    default: FavoriteChannel[];
+}
+
+export interface FavoriteChannel {
+    id: string;
+    name: string;
+    score: number;
+}
+
 export async function getAppInfo(): Promise<AppInfo> {
     return invoke<AppInfo>('get_app_info');
 }
@@ -38,6 +83,30 @@ export async function maximizeWindow(): Promise<void> {
 export async function closeWindow(): Promise<void> {
     const window = getCurrentWindow();
     await window.close();
+}
+
+export async function hideWindow(): Promise<void> {
+    await invoke('window_hide');
+}
+
+export async function showWindow(): Promise<void> {
+    await invoke('window_show');
+}
+
+export async function toggleFullscreen(): Promise<boolean> {
+    return invoke<boolean>('window_toggle_fullscreen');
+}
+
+export async function readConfig(): Promise<AppConfig> {
+    return invoke<AppConfig>('read_config');
+}
+
+export async function writeConfig(config: AppConfig): Promise<void> {
+    return invoke<void>('write_config', { config });
+}
+
+export async function getConfigPath(): Promise<string> {
+    return invoke<string>('get_config_path');
 }
 
 export function isTauri(): boolean {

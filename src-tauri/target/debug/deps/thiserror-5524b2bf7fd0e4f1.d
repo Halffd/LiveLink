@@ -1,0 +1,13 @@
+/home/all/repos/LiveLink/src-tauri/target/debug/deps/thiserror-5524b2bf7fd0e4f1.d: /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/provide.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/all/repos/LiveLink/src-tauri/target/debug/build/thiserror-840bc648e8f1962b/out/private.rs
+
+/home/all/repos/LiveLink/src-tauri/target/debug/deps/libthiserror-5524b2bf7fd0e4f1.rmeta: /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/provide.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/all/repos/LiveLink/src-tauri/target/debug/build/thiserror-840bc648e8f1962b/out/private.rs
+
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/provide.rs:
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/home/half-arch/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/home/all/repos/LiveLink/src-tauri/target/debug/build/thiserror-840bc648e8f1962b/out/private.rs:
+
+# env-dep:OUT_DIR=/home/all/repos/LiveLink/src-tauri/target/debug/build/thiserror-840bc648e8f1962b/out
