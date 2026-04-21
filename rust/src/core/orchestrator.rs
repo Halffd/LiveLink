@@ -4,6 +4,7 @@ use crate::core::state::{
 use crate::queue::queue::{QueueService, StreamSource};
 use crate::services::fallback::FallbackService;
 use crate::services::holodex::HolodexService;
+use crate::services::kick::KickService;
 use crate::services::network::{NetworkEvent, NetworkState};
 use crate::services::player::{PlayerConfig, PlayerService, ProcessExit};
 use crate::services::twitch::TwitchService;
@@ -22,7 +23,8 @@ pub struct Orchestrator {
     fallback_service: Arc<FallbackService>,
     holodex_service: Arc<HolodexService>,
     twitch_service: Arc<Mutex<TwitchService>>,
-    youtube_service: Arc<YouTubeService>,
+    youtube_service: Arc<Mutex<YouTubeService>>,
+    kick_service: Arc<KickService>,
     max_streams: usize,
 }
 
@@ -45,25 +47,27 @@ impl Orchestrator {
             window_maximized: false,
             log_rotation: true,
         };
-        let player = PlayerService::new(exit_sender, player_config);
-        let queue = QueueService::new();
-        let fallback_service = FallbackService::new(config.favorite_channels.clone());
-        let holodex_service = HolodexService::new(config.holodex_api_key.clone());
-        let twitch_service = TwitchService::new(config.twitch_client_id.clone(), config.twitch_client_secret.clone());
-        let youtube_service = YouTubeService::new(config.youtube_api_key.clone());
+let player = PlayerService::new(exit_sender, player_config);
+    let queue = QueueService::new();
+    let fallback_service = FallbackService::new(config.favorite_channels.clone());
+    let holodex_service = HolodexService::new(config.holodex_api_key.clone());
+    let twitch_service = TwitchService::new(config.twitch_client_id.clone(), config.twitch_client_secret.clone());
+    let youtube_service = YouTubeService::new(config.youtube_api_key.clone());
+    let kick_service = KickService::new();
 
-        let orchestrator = Self {
-            config: config.clone(),
-            state: DashMap::new(),
-            locks: DashMap::new(),
-            player: Arc::new(Mutex::new(player)),
-            queue: Arc::new(Mutex::new(queue)),
-            fallback_service: Arc::new(fallback_service),
-            holodex_service: Arc::new(holodex_service),
-            twitch_service: Arc::new(Mutex::new(twitch_service)),
-            youtube_service: Arc::new(youtube_service),
-            max_streams,
-        };
+    let orchestrator = Self {
+        config: config.clone(),
+        state: DashMap::new(),
+        locks: DashMap::new(),
+        player: Arc::new(Mutex::new(player)),
+        queue: Arc::new(Mutex::new(queue)),
+        fallback_service: Arc::new(fallback_service),
+        holodex_service: Arc::new(holodex_service),
+        twitch_service: Arc::new(Mutex::new(twitch_service)),
+        youtube_service: Arc::new(Mutex::new(youtube_service)),
+        kick_service: Arc::new(kick_service),
+        max_streams,
+    };
 
         let orchestrator_clone = Arc::new(orchestrator.clone_inner());
         let orchestrator_for_exit = orchestrator_clone.clone();
@@ -91,6 +95,7 @@ impl Orchestrator {
             holodex_service: self.holodex_service.clone(),
             twitch_service: self.twitch_service.clone(),
             youtube_service: self.youtube_service.clone(),
+            kick_service: self.kick_service.clone(),
             max_streams: self.max_streams,
         }
     }
@@ -471,8 +476,7 @@ pub async fn fetch_streams_for_screen(&self, screen: u32) -> Vec<StreamSource> {
         }
     }
 
-    if self.youtube_service.is_enabled() {
-        let yt_channels: Vec<String> = self.config
+    let yt_channels: Vec<String> = self.config
             .favorite_channels
             .youtube
             .default
@@ -480,15 +484,37 @@ pub async fn fetch_streams_for_screen(&self, screen: u32) -> Vec<StreamSource> {
             .map(|ch| ch.id.clone())
             .collect();
 
-        if !yt_channels.is_empty() {
-            match self.youtube_service.get_live_streams(&yt_channels).await {
+if !yt_channels.is_empty() {
+        let mut yt_service = self.youtube_service.lock().await;
+        if yt_service.is_enabled() || true {
+            match yt_service.get_live_streams(&yt_channels).await {
                 Ok(streams) => {
-                    debug!(screen, count = streams.len(), "Fetched streams from YouTube API");
+                    debug!(screen, count = streams.len(), "Fetched streams from YouTube");
                     return streams;
                 }
                 Err(e) => {
-                    warn!(screen, error = %e, "YouTube API failed, falling back");
+                    warn!(screen, error = %e, "YouTube service failed, falling back");
                 }
+            }
+        }
+    }
+
+    let kick_channels: Vec<String> = self.config
+        .favorite_channels
+        .kick
+        .default
+        .iter()
+        .map(|ch| ch.id.clone())
+        .collect();
+
+    if !kick_channels.is_empty() {
+        match self.kick_service.get_live_streams(&kick_channels).await {
+            Ok(streams) => {
+                debug!(screen, count = streams.len(), "Fetched streams from Kick");
+                return streams;
+            }
+            Err(e) => {
+                warn!(screen, error = %e, "Kick service failed, falling back");
             }
         }
     }
@@ -612,6 +638,7 @@ impl Clone for Orchestrator {
             holodex_service: self.holodex_service.clone(),
             twitch_service: self.twitch_service.clone(),
             youtube_service: self.youtube_service.clone(),
+            kick_service: self.kick_service.clone(),
             max_streams: self.max_streams,
         }
     }

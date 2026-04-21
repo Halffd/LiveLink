@@ -18,6 +18,7 @@ pub struct Config {
     pub holodex: HolodexConfig,
     pub twitch: TwitchConfig,
     pub youtube: YoutubeConfig,
+    pub kick: KickConfig,
     pub player: PlayerConfig,
     pub mpv: MpvConfig,
     pub streamlink: StreamlinkConfig,
@@ -80,6 +81,11 @@ pub struct TwitchConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct YoutubeConfig {
     pub api_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct KickConfig {
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -227,30 +233,35 @@ impl ConfigLoader {
                 },
                 streamers_file: "streamers.json".to_string(),
             },
-            youtube: YoutubeConfig {
-                api_key: if let Some(ref key) = env.youtube_api_key {
-                    key.clone()
-                } else {
-                    main_config
-                        .as_ref()
-                        .and_then(|c| c.youtube.as_ref().map(|y| y.api_key.clone()))
-                        .unwrap_or_default()
-                },
+youtube: YoutubeConfig {
+            api_key: if let Some(ref key) = env.youtube_api_key {
+                key.clone()
+            } else {
+                main_config
+                    .as_ref()
+                    .and_then(|c| c.youtube.as_ref().map(|y| y.api_key.clone()))
+                    .unwrap_or_default()
             },
-            player,
-            mpv,
-            streamlink,
-            filters,
-        }
+        },
+        kick: main_config
+            .as_ref()
+            .and_then(|c| c.kick.clone())
+            .unwrap_or(KickConfig { enabled: true }),
+        player,
+        mpv,
+        streamlink,
+        filters,
     }
+}
 
-    fn default_favorites(&self) -> FavoriteChannels {
-        FavoriteChannels {
-            holodex: PlatformFavorites { default: vec![] },
-            twitch: PlatformFavorites { default: vec![] },
-            youtube: PlatformFavorites { default: vec![] },
-        }
+fn default_favorites(&self) -> FavoriteChannels {
+    FavoriteChannels {
+        holodex: PlatformFavorites { default: vec![] },
+        twitch: PlatformFavorites { default: vec![] },
+        youtube: PlatformFavorites { default: vec![] },
+        kick: PlatformFavorites { default: vec![] },
     }
+}
 
     fn default_player_config(&self) -> PlayerConfig {
         PlayerConfig {
@@ -351,4 +362,5 @@ struct MainConfig {
     holodex: Option<HolodexConfig>,
     twitch: Option<TwitchConfig>,
     youtube: Option<YoutubeConfig>,
+    kick: Option<KickConfig>,
 }

@@ -23,6 +23,8 @@ chrono = "0.4"
 youtube-api = "0.1"
 dotenv = "0.15"
 mpv = "0.2"
+kick-rust = "0.1"
+futures-util = "0.3"
 
 [dev-dependencies]
 tokio-test = "0.4"

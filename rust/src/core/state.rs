@@ -68,6 +68,7 @@ pub enum Platform {
     Twitch,
     YouTube,
     Holodex,
+    Kick,
 }
 
 impl fmt::Display for Platform {
@@ -76,6 +77,7 @@ impl fmt::Display for Platform {
             Platform::Twitch => write!(f, "Twitch"),
             Platform::YouTube => write!(f, "YouTube"),
             Platform::Holodex => write!(f, "Holodex"),
+            Platform::Kick => write!(f, "Kick"),
         }
     }
 }
