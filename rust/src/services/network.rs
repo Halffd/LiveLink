@@ -96,6 +96,8 @@ impl Default for NetworkState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_network_state_default() {
@@ -108,5 +110,47 @@ mod tests {
         assert_eq!(NetworkState::Online, NetworkState::Online);
         assert_eq!(NetworkState::Offline, NetworkState::Offline);
         assert_ne!(NetworkState::Online, NetworkState::Offline);
+    }
+
+    #[tokio::test]
+    async fn test_network_monitor_initial_state() {
+        let (sender, _receiver) = mpsc::channel(100);
+        let monitor = NetworkMonitor::new(sender);
+        assert_eq!(monitor.get_state(), NetworkState::Online);
+    }
+
+    #[tokio::test]
+    async fn test_network_monitor_shutdown() {
+        let (sender, _receiver) = mpsc::channel(100);
+        let monitor = NetworkMonitor::new(sender.clone());
+        monitor.shutdown();
+    }
+
+    #[test]
+    fn test_network_event_creation() {
+        let event = NetworkEvent { state: NetworkState::Online };
+        assert_eq!(event.state, NetworkState::Online);
+    }
+
+    #[test]
+    fn test_network_state_debug() {
+        let state = NetworkState::Online;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Online"));
+    }
+
+    #[test]
+    fn test_network_state_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<NetworkState>();
+        assert_send_sync::<NetworkEvent>();
+        assert_send_sync::<NetworkMonitor>();
+    }
+
+    #[tokio::test]
+    async fn test_network_monitor_get_state() {
+        let (sender, _receiver) = mpsc::channel(100);
+        let monitor = NetworkMonitor::new(sender);
+        assert_eq!(monitor.get_state(), NetworkState::Online);
     }
 }
