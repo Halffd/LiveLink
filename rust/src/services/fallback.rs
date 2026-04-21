@@ -1,5 +1,6 @@
 use crate::config::FavoriteChannels;
 use crate::queue::queue::StreamSource;
+use tracing::warn;
 
 pub struct FallbackService {
     favorite_channels: FavoriteChannels,
@@ -10,7 +11,15 @@ impl FallbackService {
         Self { favorite_channels }
     }
 
+    /// DEPRECATED: This returns favorites as if they're all live without checking.
+    /// Use YouTubeService.check_via_rss() or get_live_streams() instead.
+    /// This method exists for backward compatibility only.
+    #[deprecated(since = "2026-04-20", note = "Use YouTubeService.is_channel_live() for actual live status")]
     pub fn get_youtube_streams(&self) -> Vec<StreamSource> {
+        warn!(
+            count = self.favorite_channels.youtube.default.len(),
+            "Deprecated FallbackService.get_youtube_streams() called - returns favorites without live check"
+        );
         self.favorite_channels
             .youtube
             .default
@@ -28,7 +37,7 @@ impl FallbackService {
                     channel_id: Some(ch.id.clone()),
                     channel: Some(ch.name.clone()),
                     priority: Some(ch.score as i32),
-                    is_live: true,
+                    is_live: true, // DEPRECATED: Naive assumption
                     ..Default::default()
                 }
             })
