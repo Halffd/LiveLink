@@ -75,8 +75,11 @@ async fn main() {
     info!("LiveLink initialized");
     info!("Active streams: {}", orchestrator.count_active_streams());
 
-    if std::env::args().len() > 1 {
+    let has_cli_args = std::env::args().len() > 1;
+
+    if has_cli_args {
         let cli = cli::commands::parse_cli();
+        
         if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
             eprintln!("CLI error: {}", e);
         }

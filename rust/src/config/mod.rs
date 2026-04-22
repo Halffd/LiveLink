@@ -145,6 +145,12 @@ impl ConfigLoader {
         Self { config_dir }
     }
 
+    pub fn with_base_path(path: &str) -> Self {
+        Self {
+            config_dir: PathBuf::from(path),
+        }
+    }
+
     fn load_json_file<T: for<'de> Deserialize<'de>>(&self, filename: &str) -> Result<T, String> {
         let path = self.config_dir.join(filename);
         info!("Loading config file: {}", path.display());

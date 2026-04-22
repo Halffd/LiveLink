@@ -14,8 +14,12 @@ pub enum PlayerError {
     Io(#[from] std::io::Error),
     #[error("No player for screen {0}")]
     NoPlayer(u32),
+    #[error("No player for screen {0} instance {1}")]
+    NoPlayerInstance(u32, u32),
     #[error("Player already exists for screen {0}")]
     AlreadyRunning(u32),
+    #[error("Player already exists for screen {0} instance {1}")]
+    AlreadyRunningInstance(u32, u32),
     #[error("Failed to spawn process: {0}")]
     SpawnFailed(String),
     #[error("Process exited unexpectedly: {0}")]
@@ -63,15 +67,17 @@ impl Default for PlayerConfig {
 #[derive(Debug)]
 pub struct PlayerInstance {
     screen: u32,
+    instance_id: u32,
     process: Option<Child>,
     ipc_path: Option<PathBuf>,
     playback_time: f64,
 }
 
 impl PlayerInstance {
-    fn new(screen: u32) -> Self {
+    fn new(screen: u32, instance_id: u32) -> Self {
         Self {
             screen,
+            instance_id,
             process: None,
             ipc_path: None,
             playback_time: 0.0,
@@ -96,7 +102,7 @@ pub enum PlayerEvent {
 }
 
 pub struct PlayerService {
-    instances: Arc<DashMap<u32, PlayerInstance>>,
+    instances: Arc<DashMap<(u32, u32), PlayerInstance>>,
     config: PlayerConfig,
     event_sender: mpsc::Sender<ProcessExit>,
     shutdown_notify: Arc<Notify>,
@@ -119,17 +125,19 @@ impl PlayerService {
     pub async fn start_mpv_process(
         &self,
         screen: u32,
+        instance_id: u32,
         url: &str,
         width: u32,
         height: u32,
         x: i32,
         y: i32,
     ) -> Result<u32, PlayerError> {
-        if self.instances.contains_key(&screen) {
-            return Err(PlayerError::AlreadyRunning(screen));
+        let key = (screen, instance_id);
+        if self.instances.contains_key(&key) {
+            return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
-        let ipc_path = format!("/tmp/mpv-ipc-{}", screen);
+        let ipc_path = format!("/tmp/mpv-ipc-{}-{}", screen, instance_id);
 
         let mut args = vec![
             "--input-ipc-server".to_string(),
@@ -157,29 +165,31 @@ impl PlayerService {
 
         let pid = child.id().ok_or_else(|| PlayerError::SpawnFailed("Failed to get pid".to_string()))?;
 
-        let mut instance = PlayerInstance::new(screen);
+        let mut instance = PlayerInstance::new(screen, instance_id);
         instance.process = Some(child);
         instance.ipc_path = Some(PathBuf::from(&ipc_path));
 
-        self.instances.insert(screen, instance);
-        info!(screen, pid, url = %url, "Started mpv process");
+        self.instances.insert(key, instance);
+        info!(screen, instance_id, pid, url = %url, "Started mpv process");
         Ok(pid)
     }
 
     pub async fn start_streamlink(
         &self,
         screen: u32,
+        instance_id: u32,
         url: &str,
         width: u32,
         height: u32,
         x: i32,
         y: i32,
     ) -> Result<u32, PlayerError> {
-        if self.instances.contains_key(&screen) {
-            return Err(PlayerError::AlreadyRunning(screen));
+        let key = (screen, instance_id);
+        if self.instances.contains_key(&key) {
+            return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
-        let ipc_path = format!("/tmp/streamlink-ipc-{}", screen);
+        let ipc_path = format!("/tmp/streamlink-ipc-{}-{}", screen, instance_id);
 
         let mpv_args = vec![
             "--input-ipc-server".to_string(),
@@ -209,20 +219,22 @@ impl PlayerService {
 
         let pid = child.id().ok_or_else(|| PlayerError::SpawnFailed("Failed to get pid".to_string()))?;
 
-        let mut instance = PlayerInstance::new(screen);
+        let mut instance = PlayerInstance::new(screen, instance_id);
         instance.process = Some(child);
         instance.ipc_path = Some(PathBuf::from(&ipc_path));
 
-        self.instances.insert(screen, instance);
-        info!(screen, pid, url = %url, "Started streamlink process");
+        self.instances.insert(key, instance);
+        info!(screen, instance_id, pid, url = %url, "Started streamlink process");
         Ok(pid)
     }
 
     /// Start a player for the given screen and URL.
     /// Uses the configured player type (MpvProcess or Streamlink).
+    /// instance_id allows multiple players per screen.
     pub async fn start(
         &self,
         screen: u32,
+        instance_id: u32,
         url: &str,
         width: u32,
         height: u32,
@@ -231,45 +243,46 @@ impl PlayerService {
     ) -> Result<u32, PlayerError> {
         match self.config.player_type {
             PlayerType::Embedded => {
-                // Embedded uses mpv directly, treat as MpvProcess
-                self.start_mpv_process(screen, url, width, height, x, y).await
+                self.start_mpv_process(screen, instance_id, url, width, height, x, y).await
             }
             PlayerType::MpvProcess => {
-                self.start_mpv_process(screen, url, width, height, x, y).await
+                self.start_mpv_process(screen, instance_id, url, width, height, x, y).await
             }
             PlayerType::Streamlink => {
-                self.start_streamlink(screen, url, width, height, x, y).await
+                self.start_streamlink(screen, instance_id, url, width, height, x, y).await
             }
         }
     }
 
-    /// Stop the player for the given screen.
+    /// Stop the player for the given screen and instance.
     /// Returns the playback time if the player was running.
-    pub async fn stop(&self, screen: u32) -> Result<f64, PlayerError> {
-        let instance = self.instances.remove(&screen);
+    pub async fn stop(&self, screen: u32, instance_id: u32) -> Result<f64, PlayerError> {
+        let key = (screen, instance_id);
+        let instance = self.instances.remove(&key);
         let (mut instance, playback_time) = match instance {
             Some((_, inst)) => {
                 let pt = inst.playback_time;
                 (inst, pt)
             }
-            None => return Err(PlayerError::NoPlayer(screen)),
+            None => return Err(PlayerError::NoPlayerInstance(screen, instance_id)),
         };
 
         if let Some(ref mut child) = instance.process {
             if let Err(e) = child.kill().await {
-                warn!(screen, "Error killing process: {}", e);
+                warn!(screen, instance_id, "Error killing process: {}", e);
             }
         }
 
         if let Some(path) = instance.ipc_path {
             if path.exists() {
                 if let Err(e) = tokio::fs::remove_file(&path).await {
-                    debug!(screen, path = %path.display(), "Failed to remove IPC file: {}", e);
+                    debug!(screen, instance_id, path = %path.display(), "Failed to remove IPC file: {}", e);
                 }
             }
         }
 
         let screen_for_event = instance.screen;
+        let instance_for_event = instance.instance_id;
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
             let exit = ProcessExit {
@@ -283,39 +296,54 @@ impl PlayerService {
                 error!(screen_for_event, "Failed to send stop event: {}", e);
             }
         });
-        info!(screen, "Stopped player");
+        info!(screen, instance_id, "Stopped player");
         Ok(playback_time)
     }
 
-    pub fn is_running(&self, screen: u32) -> bool {
-        self.instances.contains_key(&screen)
+    /// Stop all players for a screen.
+    pub async fn stop_all(&self, screen: u32) -> Result<(), PlayerError> {
+        let keys: Vec<(u32, u32)> = self.instances.iter()
+            .filter(|r| r.key().0 == screen)
+            .map(|r| *r.key())
+            .collect();
+
+        for key in keys {
+            if let Err(e) = self.stop(key.0, key.1).await {
+                warn!(screen = key.0, instance = key.1, "Error stopping: {}", e);
+            }
+        }
+        Ok(())
     }
 
-    pub fn get_pid(&self, screen: u32) -> Option<u32> {
-        self.instances.get(&screen).and_then(|inst| {
+    pub fn is_running(&self, screen: u32, instance_id: u32) -> bool {
+        self.instances.contains_key(&(screen, instance_id))
+    }
+
+    pub fn get_pid(&self, screen: u32, instance_id: u32) -> Option<u32> {
+        self.instances.get(&(screen, instance_id)).and_then(|inst| {
             inst.process.as_ref().and_then(|p| p.id())
         })
     }
 
-    /// Poll for process exits and send events for any that have terminated.
+/// Poll for process exits and send events for any that have terminated.
     pub fn poll_exits(&self) {
-        let screens: Vec<u32> = self.instances.iter().map(|r| *r.key()).collect();
+        let keys: Vec<(u32, u32)> = self.instances.iter().map(|r| *r.key()).collect();
         let sender = self.event_sender.clone();
         let instances = self.instances.clone();
 
-        for screen in screens {
-            let should_remove = if let Some(mut inst_ref) = instances.get_mut(&screen) {
+        for key in keys {
+            let should_remove = if let Some(mut inst_ref) = instances.get_mut(&key) {
                 if let Some(ref mut child) = inst_ref.process {
                     match child.try_wait() {
                         Ok(Some(status)) => {
                             let code = status.code();
-                            info!(screen, code, "Process exited");
+                            info!(screen = key.0, instance = key.1, code, "Process exited");
                             inst_ref.process = None;
                             true
                         }
                         Ok(None) => false,
                         Err(e) => {
-                            warn!(screen, "Error checking process: {}", e);
+                            warn!(screen = key.0, instance = key.1, "Error checking process: {}", e);
                             true
                         }
                     }
@@ -326,37 +354,37 @@ impl PlayerService {
                 false
             };
 
-if should_remove {
-            if let Some((_, inst)) = instances.remove(&screen) {
-                let playback_time = inst.playback_time;
-                let screen_for_event = inst.screen;
-                let sender = self.event_sender.clone();
-                tokio::spawn(async move {
-                    let exit = ProcessExit {
-                        screen: screen_for_event,
-                        pid: 0,
-                        exit_code: None,
-                        playback_time,
-                        error: None,
-                    };
-                    if let Err(e) = sender.send(exit).await {
-                        error!(screen_for_event, "Failed to send exit event: {}", e);
-                    }
-                });
+            if should_remove {
+                if let Some((_, inst)) = instances.remove(&key) {
+                    let playback_time = inst.playback_time;
+                    let screen_for_event = inst.screen;
+                    let sender = self.event_sender.clone();
+                    tokio::spawn(async move {
+                        let exit = ProcessExit {
+                            screen: screen_for_event,
+                            pid: 0,
+                            exit_code: None,
+                            playback_time,
+                            error: None,
+                        };
+                        if let Err(e) = sender.send(exit).await {
+                            error!(screen_for_event, "Failed to send exit event: {}", e);
+                        }
+                    });
+                }
             }
-        }
         }
     }
 
-    pub fn get_playback_time(&self, screen: u32) -> Option<f64> {
-        self.instances.get(&screen).map(|inst| inst.playback_time)
+    pub fn get_playback_time(&self, screen: u32, instance_id: u32) -> Option<f64> {
+        self.instances.get(&(screen, instance_id)).map(|inst| inst.playback_time)
     }
 
     /// Set volume for a screen via IPC command to mpv
-    pub async fn set_volume(&self, screen: u32, volume: u8) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&screen)
+    pub async fn set_volume(&self, screen: u32, instance_id: u32, volume: u8) -> Result<(), PlayerError> {
+        let ipc_path = self.instances.get(&(screen, instance_id))
             .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
         let script = format!(
             "echo 'set property volume {}' | socat - {}",
@@ -374,10 +402,10 @@ if should_remove {
     }
 
     /// Send a property set command to mpv via IPC
-    pub async fn set_property(&self, screen: u32, property: &str, value: &str) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&screen)
+    pub async fn set_property(&self, screen: u32, instance_id: u32, property: &str, value: &str) -> Result<(), PlayerError> {
+        let ipc_path = self.instances.get(&(screen, instance_id))
             .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
         let script = format!(
             "echo 'set property {} {}' | socat - {}",
@@ -396,10 +424,10 @@ if should_remove {
     }
 
     /// Send a command to mpv via IPC
-    pub async fn command(&self, screen: u32, cmd: &[&str]) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&screen)
+    pub async fn command(&self, screen: u32, instance_id: u32, cmd: &[&str]) -> Result<(), PlayerError> {
+        let ipc_path = self.instances.get(&(screen, instance_id))
             .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
         let cmd_str = cmd.join(" ");
         let script = format!(
@@ -452,8 +480,9 @@ mod tests {
 
     #[test]
     fn test_player_instance_new() {
-        let instance = PlayerInstance::new(0);
+        let instance = PlayerInstance::new(0, 0);
         assert_eq!(instance.screen, 0);
+        assert_eq!(instance.instance_id, 0);
         assert!(instance.process.is_none());
     }
 }

@@ -196,11 +196,12 @@ async fn exit_listener(
 
         let player = self.player.clone();
         let player_screen = screen;
+        let player_instance = 0; // default instance
         let url_clone = url.clone();
 
         tokio::spawn(async move {
             let mut player_guard = player.lock().await;
-            if let Err(e) = player_guard.start(player_screen, &url_clone, 1280, 720, 0, 0).await {
+            if let Err(e) = player_guard.start(player_screen, player_instance, &url_clone, 1280, 720, 0, 0).await {
                 error!(screen = player_screen, error = %e, "Failed to start process");
             }
         });
@@ -238,7 +239,7 @@ async fn exit_listener(
         let player = self.player.clone();
         tokio::spawn(async move {
             let mut player_guard = player.lock().await;
-            if let Err(e) = player_guard.stop(screen).await {
+            if let Err(e) = player_guard.stop(screen, 0).await {
                 warn!(screen, error = %e, "Failed to stop process");
             }
         });
@@ -400,11 +401,12 @@ pub async fn handle_process_exit(&self, exit: ProcessExit) {
 
             let player = self.player.clone();
             let player_screen = screen;
+            let player_instance = 0;
             let url = info.url.clone();
 
             tokio::spawn(async move {
                 let mut player_guard = player.lock().await;
-                match player_guard.start(player_screen, &url, 1280, 720, 0, 0).await {
+                match player_guard.start(player_screen, player_instance, &url, 1280, 720, 0, 0).await {
                     Ok(_) => info!(screen, url = %url, "Stream recovered successfully"),
                     Err(e) => error!(screen, url = %url, error = %e, "Failed to recover stream"),
                 }
@@ -594,17 +596,17 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
 
     pub async fn player_pause(&self, screen: u32) -> Result<(), String> {
         let player = self.player.lock().await;
-        player.command(screen, &["pause"]).await.map_err(|e| e.to_string())
+        player.command(screen, 0, &["pause"]).await.map_err(|e| e.to_string())
     }
 
     pub async fn player_set_volume(&self, screen: u32, volume: u8) -> Result<(), String> {
         let player = self.player.lock().await;
-        player.set_volume(screen, volume).await.map_err(|e| e.to_string())
+        player.set_volume(screen, 0, volume).await.map_err(|e| e.to_string())
     }
 
     pub async fn player_seek(&self, screen: u32, seconds: i64) -> Result<(), String> {
         let player = self.player.lock().await;
-        player.command(screen, &["seek", &seconds.to_string()]).await.map_err(|e| e.to_string())
+        player.command(screen, 0, &["seek", &seconds.to_string()]).await.map_err(|e| e.to_string())
     }
 
     pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
@@ -622,6 +624,53 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
             queue.set_queue(screen, streams);
         }
         info!("All queues refreshed");
+        Ok(())
+    }
+
+    pub async fn start_stream_on_instance(&self, screen: u32, instance_id: u32) -> Result<(), String> {
+        let lock = self.get_or_create_lock(screen).await;
+        let _guard = lock.lock().await;
+
+        let active_count = self.count_active_streams_internal();
+        if active_count >= self.max_streams {
+            return Err(format!("Max streams ({}) reached", self.max_streams));
+        }
+
+        let stream_source = {
+            let mut queue = self.queue.lock().await;
+            queue.dequeue_next(screen)
+        };
+
+        let stream_source = stream_source.ok_or_else(|| format!("No stream in queue for screen {}", screen))?;
+
+        let url = stream_source.url.clone();
+        let url_for_spawn = url.clone();
+
+        let player = self.player.clone();
+        tokio::spawn(async move {
+            let mut player_guard = player.lock().await;
+            if let Err(e) = player_guard.start(screen, instance_id, &url_for_spawn, 1280, 720, 0, 0).await {
+                error!(screen, instance_id, error = %e, "Failed to start instance");
+            }
+        });
+
+        info!(screen, instance_id, url = %url, "Stream starting on instance");
+        Ok(())
+    }
+
+    pub async fn stop_stream_instance(&self, screen: u32, instance_id: u32) -> Result<(), String> {
+        let lock = self.get_or_create_lock(screen).await;
+        let _guard = lock.lock().await;
+
+        let player = self.player.clone();
+        tokio::spawn(async move {
+            let mut player_guard = player.lock().await;
+            if let Err(e) = player_guard.stop(screen, instance_id).await {
+                warn!(screen, instance_id, error = %e, "Failed to stop instance");
+            }
+        });
+
+        info!(screen, instance_id, "Stream instance stopped");
         Ok(())
     }
 }

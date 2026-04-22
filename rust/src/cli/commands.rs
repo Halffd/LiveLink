@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use crate::core::orchestrator::Orchestrator;
 use crate::queue::queue::{Queue, StreamSource};
@@ -6,14 +6,27 @@ use crate::queue::queue::{Queue, StreamSource};
 #[derive(Parser)]
 #[command(name = "livelink")]
 #[command(about = "LiveLink streaming manager", long_about = None)]
-#[command(subcommand_required = true)]
 pub struct Cli {
+    #[arg(short, long, global = true, default_value = "config")]
+    pub config_dir: String,
+    #[arg(short = 'P', long, global = true, default_value_t = 3001)]
+    pub port: u16,
     #[command(subcommand)]
     pub command: Commands,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
+    Start(StartCommand),
+    Stop(StopCommand),
+    StopAll,
+    List(ListCommand),
+    SessionCreate { screen: u32 },
+    SessionDelete { screen: u32 },
+    SessionEnable { screen: u32 },
+    SessionDisable { screen: u32 },
+    SessionToggle { screen: u32 },
+    SessionList,
     StreamList(StreamListCommand),
     StreamStart(StreamStartCommand),
     StreamStop { screen: Option<u32> },
@@ -35,11 +48,32 @@ pub enum Commands {
     PlayerPause { screen: Option<String> },
     PlayerVolume { volume: u8, screen: Option<String> },
     PlayerSeek { seconds: i64, screen: u32 },
-    ServerStart,
-    ServerStop { all: bool },
     ServerStatus,
     Ochs,
     Diagnostics,
+}
+
+#[derive(Parser)]
+pub struct StartCommand {
+    #[arg(short, long, default_value_t = 1)]
+    pub screen: u32,
+    #[arg(short, long, default_value_t = 1)]
+    pub count: usize,
+    #[arg(long, help = "Starting instance number (for multiple players per screen)")]
+    pub instance_start: Option<u32>,
+}
+
+#[derive(Parser)]
+pub struct StopCommand {
+    pub screen: Option<u32>,
+    #[arg(short, long)]
+    pub instance: Option<u32>,
+}
+
+#[derive(Parser)]
+pub struct ListCommand {
+    #[arg(short, long, default_value_t = false)]
+    pub verbose: bool,
 }
 
 #[derive(Parser)]
@@ -104,7 +138,60 @@ pub enum QueueSortField {
 }
 
 pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), String> {
-    match cli.command {
+    match &cli.command {
+        Commands::Start(cmd) => {
+            let instance_start = cmd.instance_start.unwrap_or(0);
+            for i in 0..cmd.count {
+                let instance_id = instance_start + i as u32;
+                orchestrator.start_stream_on_instance(cmd.screen, instance_id).await?;
+                println!("Started stream on screen {} instance {}", cmd.screen, instance_id);
+            }
+        }
+        Commands::Stop(cmd) => {
+            match (cmd.screen, cmd.instance) {
+                (Some(screen), Some(instance)) => {
+                    orchestrator.stop_stream_instance(screen, instance).await?;
+                    println!("Stopped screen {} instance {}", screen, instance);
+                }
+                (Some(screen), None) => {
+                    orchestrator.stop_stream(screen).await?;
+                    println!("Stopped all streams on screen {}", screen);
+                }
+                (None, _) => {
+                    for s in [0, 1] {
+                        if orchestrator.get_state(s).await == Some(crate::core::state::StreamState::Playing) {
+                            orchestrator.stop_stream(s).await?;
+                            println!("Stopped screen {}", s);
+                        }
+                    }
+                }
+            }
+        }
+        Commands::StopAll => {
+            for s in [0, 1] {
+                if orchestrator.get_state(s).await == Some(crate::core::state::StreamState::Playing) {
+                    orchestrator.stop_stream(s).await?;
+                }
+            }
+            println!("Stopped all streams and exiting...");
+        }
+        Commands::List(cmd) => {
+            let queue_arc = orchestrator.get_queue();
+            let queue = queue_arc.lock().await;
+            println!("Active streams:");
+            for s in [0, 1] {
+                if orchestrator.get_state(s).await == Some(crate::core::state::StreamState::Playing) {
+                    if let Some(q) = queue.get_queue(s) {
+                        println!(" Screen {}: {} active", s, q.len());
+                        if cmd.verbose {
+                            for source in q.sources().iter().take(5) {
+                                println!("  - {} ({})", source.title.as_deref().unwrap_or("Unknown"), source.url);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Commands::StreamList(cmd) => {
             let queue_arc = orchestrator.get_queue();
             let queue = queue_arc.lock().await;
@@ -133,7 +220,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::StreamStop { screen } => {
             match screen {
                 Some(s) => {
-                    orchestrator.stop_stream(s).await?;
+                    orchestrator.stop_stream(*s).await?;
                     println!("Stream stopped on screen {}", s);
                 }
                 None => {
@@ -149,9 +236,9 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::StreamRestart { screen } => {
             match screen {
                 Some(s) => {
-                    orchestrator.stop_stream(s).await?;
+                    orchestrator.stop_stream(*s).await?;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    orchestrator.start_stream(s).await?;
+                    orchestrator.start_stream(*s).await?;
                     println!("Stream restarted on screen {}", s);
                 }
                 None => {
@@ -169,7 +256,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::StreamRefresh { screen } => {
             match screen {
                 Some(s) => {
-                    orchestrator.refresh_queue(s).await?;
+                    orchestrator.refresh_queue(*s).await?;
                     println!("Queue refreshed for screen {}", s);
                 }
                 None => {
@@ -222,7 +309,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::QueueClear { screen } => {
             let queue_arc = orchestrator.get_queue();
             let mut queue = queue_arc.lock().await;
-            queue.clear_queue(screen);
+            queue.clear_queue(*screen);
             println!("Queue {} cleared", screen);
         }
         Commands::QueueWatched { screen } => {
@@ -230,10 +317,10 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             let queue = queue_arc.lock().await;
             match screen {
                 Some(s) => {
-                    if let Some(q) = queue.get_queue(s) {
+                    if let Some(q) = queue.get_queue(*s) {
                         println!("Watched streams for screen {}:", s);
                         for source in q.sources().iter().filter(|s| q.is_watched(s)) {
-                            println!("  - {} ({})", source.title.as_deref().unwrap_or("Unknown"), source.url);
+                            println!(" - {} ({})", source.title.as_deref().unwrap_or("Unknown"), source.url);
                         }
                     }
                 }
@@ -263,7 +350,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::QueueClearWatched { screen } => {
             match screen {
                 Some(s) => {
-                    orchestrator.clear_watched(s).await;
+                    orchestrator.clear_watched(*s).await;
                     println!("Cleared watched history for screen {}", s);
                 }
                 None => {
@@ -309,20 +396,20 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             }
         }
         Commands::ScreenEnable { screen } => {
-            orchestrator.enable_screen(screen).await;
+            orchestrator.enable_screen(*screen).await;
             println!("Screen {} enabled", screen);
         }
         Commands::ScreenDisable { screen } => {
-            orchestrator.disable_screen(screen).await;
+            orchestrator.disable_screen(*screen).await;
             println!("Screen {} disabled", screen);
         }
         Commands::ScreenToggle { screen } => {
-            let enabled = orchestrator.is_screen_enabled(screen);
+            let enabled = orchestrator.is_screen_enabled(*screen);
             if enabled {
-                orchestrator.disable_screen(screen).await;
+                orchestrator.disable_screen(*screen).await;
                 println!("Screen {} disabled", screen);
             } else {
-                orchestrator.enable_screen(screen).await;
+                orchestrator.enable_screen(*screen).await;
                 println!("Screen {} enabled", screen);
             }
         }
@@ -344,34 +431,27 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
                 None => vec![1],
             };
             for s in screens {
-                orchestrator.player_set_volume(s, volume).await?;
+                orchestrator.player_set_volume(s, *volume).await?;
                 println!("Volume set to {} on screen {}", volume, s);
             }
         }
         Commands::PlayerSeek { seconds, screen } => {
-            orchestrator.player_seek(screen, seconds).await?;
+            orchestrator.player_seek(*screen, *seconds).await?;
             println!("Seek {}s on screen {}", seconds, screen);
         }
-        Commands::ServerStart => {
-            println!("Server start - use 'cargo run' to start the server");
-        }
-        Commands::ServerStop { all } => {
-            if all {
-                println!("Stopping server and all players...");
-            } else {
-                println!("Stopping server...");
-            }
-        }
         Commands::ServerStatus => {
+            let active = orchestrator.count_active_streams();
             println!("Server status: running");
-            println!("Use API at http://localhost:3001");
+            println!("Active streams: {}", active);
+            println!("Use API at http://localhost:{}", 3001);
         }
         Commands::Ochs => {
             let favorites = orchestrator.get_favorite_channels();
             println!("Organizations (from favorites):");
-            println!("  Holodex: {} channels", favorites.holodex.default.len());
-            println!("  Twitch: {} channels", favorites.twitch.default.len());
-            println!("  YouTube: {} channels", favorites.youtube.default.len());
+            println!(" Holodex: {} channels", favorites.holodex.default.len());
+            println!(" Twitch: {} channels", favorites.twitch.default.len());
+            println!(" YouTube: {} channels", favorites.youtube.default.len());
+            println!(" Kick: {} channels", favorites.kick.default.len());
         }
         Commands::Diagnostics => {
             let active = orchestrator.count_active_streams();
@@ -404,5 +484,54 @@ mod tests {
     fn test_parse_queue_add() {
         let cli = Cli::try_parse_from(["livelink", "queue-add", "1", "https://twitch.tv/xqc", "XQC"]);
         assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_screen_enable_command() {
+        let cli = Cli::try_parse_from(["livelink", "screen-enable", "1"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::ScreenEnable { screen } => assert_eq!(screen, 1),
+            _ => panic!("Expected ScreenEnable"),
+        }
+    }
+
+    #[test]
+    fn test_screen_disable_command() {
+        let cli = Cli::try_parse_from(["livelink", "screen-disable", "0"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::ScreenDisable { screen } => assert_eq!(screen, 0),
+            _ => panic!("Expected ScreenDisable"),
+        }
+    }
+
+    #[test]
+    fn test_screen_toggle_command() {
+        let cli = Cli::try_parse_from(["livelink", "screen-toggle", "1"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        match cli.command {
+            Commands::ScreenToggle { screen } => assert_eq!(screen, 1),
+            _ => panic!("Expected ScreenToggle"),
+        }
+    }
+
+    #[test]
+    fn test_global_config_dir() {
+        let cli = Cli::try_parse_from(["livelink", "--config-dir", "/custom/path", "list"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        assert_eq!(cli.config_dir, "/custom/path");
+    }
+
+    #[test]
+    fn test_global_port() {
+        let cli = Cli::try_parse_from(["livelink", "-P", "8080", "list"]);
+        assert!(cli.is_ok());
+        let cli = cli.unwrap();
+        assert_eq!(cli.port, 8080);
     }
 }
