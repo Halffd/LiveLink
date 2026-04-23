@@ -22,6 +22,7 @@ pub struct Config {
     pub player: PlayerConfig,
     pub mpv: MpvConfig,
     pub streamlink: StreamlinkConfig,
+    pub vlc: VlcConfig,
     pub filters: FiltersConfig,
 }
 
@@ -81,6 +82,7 @@ pub struct TwitchConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct YoutubeConfig {
     pub api_key: String,
+    pub favorite_channels: Vec<FavoriteChannel>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -90,7 +92,8 @@ pub struct KickConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlayerConfig {
-    pub prefer_streamlink: bool,
+    #[serde(default = "default_player_type")]
+    pub player_type: String,
     pub default_quality: String,
     pub default_volume: u8,
     pub window_maximized: bool,
@@ -100,6 +103,10 @@ pub struct PlayerConfig {
     pub force_player: bool,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
+}
+
+fn default_player_type() -> String {
+    "mpv".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -124,6 +131,12 @@ pub struct StreamlinkConfig {
     pub path: String,
     pub options: HashMap<String, serde_json::Value>,
     pub http_header: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VlcConfig {
+    pub path: String,
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -196,11 +209,15 @@ impl ConfigLoader {
             .try_load_json_file("mpv.json")
             .unwrap_or_else(|| self.default_mpv_config());
 
-        let streamlink: StreamlinkConfig = self
-            .try_load_json_file("streamlink.json")
-            .unwrap_or_else(|| self.default_streamlink_config());
+let streamlink: StreamlinkConfig = self
+        .try_load_json_file("streamlink.json")
+        .unwrap_or_else(|| self.default_streamlink_config());
 
-        let filters: FiltersConfig = self
+    let vlc: VlcConfig = self
+        .try_load_json_file("vlc.json")
+        .unwrap_or_else(|| self.default_vlc_config());
+
+    let filters: FiltersConfig = self
             .try_load_json_file("filters.json")
             .unwrap_or_else(|| FiltersConfig { filters: vec![] });
 
@@ -239,7 +256,20 @@ impl ConfigLoader {
                 },
                 streamers_file: "streamers.json".to_string(),
             },
-youtube: YoutubeConfig {
+youtube: {
+        let yt_config_path = self.config_dir.join("yt.json");
+        let yt_favorites: Vec<FavoriteChannel> = if yt_config_path.exists() {
+            match FavoriteChannels::load_from_file(&yt_config_path) {
+                Ok(fc) => fc.youtube.default.clone(),
+                Err(e) => {
+                    warn!("Failed to load yt.json: {}", e);
+                    vec![]
+                }
+            }
+        } else {
+            vec![]
+        };
+        YoutubeConfig {
             api_key: if let Some(ref key) = env.youtube_api_key {
                 key.clone()
             } else {
@@ -248,7 +278,9 @@ youtube: YoutubeConfig {
                     .and_then(|c| c.youtube.as_ref().map(|y| y.api_key.clone()))
                     .unwrap_or_default()
             },
-        },
+            favorite_channels: yt_favorites,
+        }
+    },
         kick: main_config
             .as_ref()
             .and_then(|c| c.kick.clone())
@@ -256,6 +288,7 @@ youtube: YoutubeConfig {
         player,
         mpv,
         streamlink,
+        vlc,
         filters,
     }
 }
@@ -271,7 +304,7 @@ fn default_favorites(&self) -> FavoriteChannels {
 
     fn default_player_config(&self) -> PlayerConfig {
         PlayerConfig {
-            prefer_streamlink: false,
+            player_type: "mpv".to_string(),
             default_quality: "best".to_string(),
             default_volume: 50,
             window_maximized: false,
@@ -347,6 +380,13 @@ fn default_favorites(&self) -> FavoriteChannels {
             path: String::new(),
             options: HashMap::new(),
             http_header: HashMap::new(),
+        }
+    }
+
+    fn default_vlc_config(&self) -> VlcConfig {
+        VlcConfig {
+            path: "vlc".to_string(),
+            extra_args: vec![],
         }
     }
 }

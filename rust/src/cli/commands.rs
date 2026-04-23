@@ -9,6 +9,8 @@ use crate::queue::queue::{Queue, StreamSource};
 pub struct Cli {
     #[arg(short, long, global = true, default_value = "config")]
     pub config_dir: String,
+    #[arg(long, global = true, default_value = "mpv_config")]
+    pub mpv_config_dir: String,
     #[arg(short = 'P', long, global = true, default_value_t = 3001)]
     pub port: u16,
     #[command(subcommand)]
@@ -57,7 +59,7 @@ pub enum Commands {
 pub struct StartCommand {
     #[arg(short, long, default_value_t = 1)]
     pub screen: u32,
-    #[arg(short, long, default_value_t = 1)]
+    #[arg(short = 'n', long, default_value_t = 1)]
     pub count: usize,
     #[arg(long, help = "Starting instance number (for multiple players per screen)")]
     pub instance_start: Option<u32>,
@@ -189,6 +191,41 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
                             }
                         }
                     }
+                }
+            }
+        }
+        Commands::SessionCreate { screen } => {
+            orchestrator.register_screen(*screen).await;
+            println!("Session/screen {} created", screen);
+        }
+        Commands::SessionDelete { screen } => {
+            orchestrator.unregister_screen(*screen).await;
+            println!("Session/screen {} deleted", screen);
+        }
+        Commands::SessionEnable { screen } => {
+            orchestrator.enable_screen(*screen).await;
+            println!("Session/screen {} enabled", screen);
+        }
+        Commands::SessionDisable { screen } => {
+            orchestrator.disable_screen(*screen).await;
+            println!("Session/screen {} disabled", screen);
+        }
+        Commands::SessionToggle { screen } => {
+            let enabled = orchestrator.is_screen_enabled(*screen);
+            if enabled {
+                orchestrator.disable_screen(*screen).await;
+                println!("Session/screen {} disabled", screen);
+            } else {
+                orchestrator.enable_screen(*screen).await;
+                println!("Session/screen {} enabled", screen);
+            }
+        }
+        Commands::SessionList => {
+            for s in 0..10 {
+                if orchestrator.get_state(s).await.is_some() {
+                    let state = orchestrator.get_state(s).await;
+                    let enabled = orchestrator.is_screen_enabled(s);
+                    println!("Screen {}: {:?} (enabled: {})", s, state, enabled);
                 }
             }
         }

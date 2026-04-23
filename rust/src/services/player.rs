@@ -31,6 +31,7 @@ pub enum PlayerType {
     Embedded,
     MpvProcess,
     Streamlink,
+    VlcProcess,
 }
 
 impl Default for PlayerType {
@@ -44,10 +45,17 @@ pub struct PlayerConfig {
     pub player_type: PlayerType,
     pub mpv_path: String,
     pub streamlink_path: String,
+    pub vlc_path: String,
     pub default_quality: String,
     pub default_volume: u8,
     pub window_maximized: bool,
     pub log_rotation: bool,
+    pub ipc_dir: String,
+    pub mpv_gpu_context: String,
+    pub mpv_priority: String,
+    pub mpv_extra_args: Vec<String>,
+    pub streamlink_options: std::collections::HashMap<String, serde_json::Value>,
+    pub streamlink_http_header: std::collections::HashMap<String, String>,
 }
 
 impl Default for PlayerConfig {
@@ -56,10 +64,17 @@ impl Default for PlayerConfig {
             player_type: PlayerType::MpvProcess,
             mpv_path: "mpv".to_string(),
             streamlink_path: "streamlink".to_string(),
+            vlc_path: "vlc".to_string(),
             default_quality: "best".to_string(),
             default_volume: 50,
             window_maximized: false,
             log_rotation: true,
+            ipc_dir: "/tmp".to_string(),
+            mpv_gpu_context: "auto".to_string(),
+            mpv_priority: "normal".to_string(),
+            mpv_extra_args: vec![],
+            streamlink_options: std::collections::HashMap::new(),
+            streamlink_http_header: std::collections::HashMap::new(),
         }
     }
 }
@@ -137,7 +152,7 @@ impl PlayerService {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
-        let ipc_path = format!("/tmp/mpv-ipc-{}-{}", screen, instance_id);
+        let ipc_path = format!("{}/mpv-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
 
         let mut args = vec![
             "--input-ipc-server".to_string(),
@@ -146,14 +161,19 @@ impl PlayerService {
             format!("{}x{}+{}+{}", width, height, x, y),
             "--volume".to_string(),
             self.config.default_volume.to_string(),
-            "--".to_string(),
-            url.to_string(),
+            "--gpu-context".to_string(),
+            self.config.mpv_gpu_context.clone(),
         ];
 
-        if self.config.window_maximized {
-            args.insert(4, "window-maximized".to_string());
-            args.insert(5, "yes".to_string());
+        if self.config.mpv_priority != "normal" {
+            args.push("--priority".to_string());
+            args.push(self.config.mpv_priority.clone());
         }
+
+        args.extend(self.config.mpv_extra_args.clone());
+
+        args.push("--".to_string());
+        args.push(url.to_string());
 
         let child = Command::new(&self.config.mpv_path)
             .args(&args)
@@ -189,7 +209,7 @@ impl PlayerService {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
-        let ipc_path = format!("/tmp/streamlink-ipc-{}-{}", screen, instance_id);
+        let ipc_path = format!("{}/streamlink-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
 
         let mpv_args = vec![
             "--input-ipc-server".to_string(),
@@ -228,6 +248,53 @@ impl PlayerService {
         Ok(pid)
     }
 
+    pub async fn start_vlc_process(
+        &self,
+        screen: u32,
+        instance_id: u32,
+        url: &str,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+    ) -> Result<u32, PlayerError> {
+        let key = (screen, instance_id);
+        if self.instances.contains_key(&key) {
+            return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
+        }
+
+        let mut args = vec![
+            "--no-video-title".to_string(),
+            "--volume".to_string(),
+            self.config.default_volume.to_string(),
+            "--geometry".to_string(),
+            format!("{}x{}+{}+{}", width, height, x, y),
+        ];
+
+        if self.config.window_maximized {
+            args.push("--fullscreen".to_string());
+        }
+
+        args.push(url.to_string());
+
+        let child = Command::new(&self.config.vlc_path)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| PlayerError::SpawnFailed(e.to_string()))?;
+
+        let pid = child.id().ok_or_else(|| PlayerError::SpawnFailed("Failed to get pid".to_string()))?;
+
+        let mut instance = PlayerInstance::new(screen, instance_id);
+        instance.process = Some(child);
+
+        self.instances.insert(key, instance);
+        info!(screen, instance_id, pid, url = %url, "Started VLC process");
+        Ok(pid)
+    }
+
     /// Start a player for the given screen and URL.
     /// Uses the configured player type (MpvProcess or Streamlink).
     /// instance_id allows multiple players per screen.
@@ -250,6 +317,9 @@ impl PlayerService {
             }
             PlayerType::Streamlink => {
                 self.start_streamlink(screen, instance_id, url, width, height, x, y).await
+            }
+            PlayerType::VlcProcess => {
+                self.start_vlc_process(screen, instance_id, url, width, height, x, y).await
             }
         }
     }

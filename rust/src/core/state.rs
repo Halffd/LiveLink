@@ -189,5 +189,13 @@ pub struct OrchestratorConfig {
     pub twitch_client_id: String,
     pub twitch_client_secret: String,
     pub youtube_api_key: String,
+    pub mpv_ipc_dir: String,
+    pub mpv_gpu_context: String,
+    pub mpv_priority: String,
+    pub mpv_extra_args: Vec<String>,
+    pub streamlink_path: String,
+    pub streamlink_options: std::collections::HashMap<String, serde_json::Value>,
+    pub vlc_path: String,
+    pub player_type: String,
 }
 

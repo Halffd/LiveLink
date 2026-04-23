@@ -38,15 +38,34 @@ impl Orchestrator {
         let (exit_sender, receiver) = mpsc::channel(100);
         drop(exit_receiver);
 
-        let player_config = PlayerConfig {
-            player_type: crate::services::player::PlayerType::MpvProcess,
-            mpv_path: "mpv".to_string(),
-            streamlink_path: "streamlink".to_string(),
-            default_quality: "best".to_string(),
-            default_volume: 50,
-            window_maximized: false,
-            log_rotation: true,
-        };
+let player_config = PlayerConfig {
+        player_type: match config.player_type.as_str() {
+            "streamlink" => crate::services::player::PlayerType::Streamlink,
+            "vlc" => crate::services::player::PlayerType::VlcProcess,
+            _ => crate::services::player::PlayerType::MpvProcess,
+        },
+        mpv_path: "mpv".to_string(),
+        streamlink_path: if config.streamlink_path.is_empty() {
+            "streamlink".to_string()
+        } else {
+            config.streamlink_path.clone()
+        },
+        vlc_path: if config.vlc_path.is_empty() {
+            "vlc".to_string()
+        } else {
+            config.vlc_path.clone()
+        },
+        default_quality: "best".to_string(),
+        default_volume: 50,
+        window_maximized: false,
+        log_rotation: true,
+        ipc_dir: config.mpv_ipc_dir.clone(),
+        mpv_gpu_context: config.mpv_gpu_context.clone(),
+        mpv_priority: config.mpv_priority.clone(),
+        mpv_extra_args: config.mpv_extra_args.clone(),
+        streamlink_options: config.streamlink_options.clone(),
+        streamlink_http_header: std::collections::HashMap::new(),
+    };
 let player = PlayerService::new(exit_sender, player_config);
     let queue = QueueService::new();
     let fallback_service = FallbackService::new(config.favorite_channels.clone());
@@ -135,6 +154,15 @@ async fn exit_listener(
         state.state = StreamState::Idle;
         self.state.insert(screen, state);
         info!(screen, "Screen registered");
+    }
+
+    pub async fn unregister_screen(&self, screen: u32) {
+        let lock = self.get_or_create_lock(screen).await;
+        let _guard = lock.lock().await;
+
+        self.state.remove(&screen);
+        self.locks.remove(&screen);
+        info!(screen, "Screen unregistered");
     }
 
     pub async fn set_queue(&self, screen: u32, sources: Vec<StreamSource>) {

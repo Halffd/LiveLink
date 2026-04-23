@@ -32,6 +32,14 @@ async fn main() {
 
     info!("LiveLink starting...");
 
+    let has_cli_args = std::env::args().len() > 1;
+    let (mpv_config_dir, _config_dir, port) = if has_cli_args {
+        let cli = cli::commands::parse_cli();
+        (cli.mpv_config_dir.clone(), cli.config_dir.clone(), cli.port)
+    } else {
+        ("mpv_config".to_string(), "config".to_string(), 3001u16)
+    };
+
     let _env = Env::load();
 
     let loader = ConfigLoader::new();
@@ -56,6 +64,19 @@ async fn main() {
         twitch_client_id: config.twitch.client_id,
         twitch_client_secret: config.twitch.client_secret,
         youtube_api_key: config.youtube.api_key,
+        mpv_ipc_dir: mpv_config_dir,
+        mpv_gpu_context: config.mpv.gpu_context,
+        mpv_priority: config.mpv.priority,
+        mpv_extra_args: config
+            .mpv
+            .extra
+            .iter()
+            .flat_map(|(k, v)| vec![k.clone(), v.to_string()])
+            .collect(),
+        streamlink_path: config.streamlink.path,
+        streamlink_options: config.streamlink.options,
+        vlc_path: config.vlc.path,
+        player_type: config.player.player_type,
     };
 
     let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
@@ -75,11 +96,9 @@ async fn main() {
     info!("LiveLink initialized");
     info!("Active streams: {}", orchestrator.count_active_streams());
 
-    let has_cli_args = std::env::args().len() > 1;
-
     if has_cli_args {
         let cli = cli::commands::parse_cli();
-        
+
         if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
             eprintln!("CLI error: {}", e);
         }
@@ -87,7 +106,6 @@ async fn main() {
         let orchestrator_for_api = orchestrator.clone();
         let app = api::routes::create_router(orchestrator_for_api);
 
-        let port = 3001;
         let addr = format!("0.0.0.0:{}", port);
         info!("Starting API server on {}", addr);
 
