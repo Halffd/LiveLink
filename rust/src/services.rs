@@ -1,6 +1,8 @@
 pub mod fallback;
 pub mod holodex;
+pub mod bilibili;
 pub mod kick;
+pub mod niconico;
 pub mod network;
 pub mod player;
 pub mod twitch;
