@@ -69,6 +69,8 @@ pub enum Platform {
     YouTube,
     Holodex,
     Kick,
+    Niconico,
+    Bilibili,
 }
 
 impl fmt::Display for Platform {
@@ -78,6 +80,8 @@ impl fmt::Display for Platform {
             Platform::YouTube => write!(f, "YouTube"),
             Platform::Holodex => write!(f, "Holodex"),
             Platform::Kick => write!(f, "Kick"),
+            Platform::Niconico => write!(f, "Niconico"),
+            Platform::Bilibili => write!(f, "Bilibili"),
         }
     }
 }

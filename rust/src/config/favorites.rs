@@ -8,6 +8,8 @@ pub struct FavoriteChannels {
     pub twitch: PlatformFavorites,
     pub youtube: PlatformFavorites,
     pub kick: PlatformFavorites,
+    pub niconico: PlatformFavorites,
+    pub bilibili: PlatformFavorites,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,20 +51,26 @@ impl FavoriteChannels {
             })
             .collect();
 
-        Ok(FavoriteChannels {
-            holodex: PlatformFavorites {
-                default: channels.clone(),
-            },
-            twitch: PlatformFavorites {
-                default: channels.clone(),
-            },
-            youtube: PlatformFavorites {
-                default: channels.clone(),
-            },
-            kick: PlatformFavorites {
-                default: channels,
-            },
-        })
+Ok(FavoriteChannels {
+    holodex: PlatformFavorites {
+        default: channels.clone(),
+    },
+    twitch: PlatformFavorites {
+        default: channels.clone(),
+    },
+    youtube: PlatformFavorites {
+        default: channels.clone(),
+    },
+    kick: PlatformFavorites {
+        default: channels.clone(),
+    },
+niconico: PlatformFavorites {
+        default: channels.clone(),
+    },
+    bilibili: PlatformFavorites {
+        default: channels,
+    },
+})
     }
 
     fn from_url_array(urls: Vec<String>) -> Self {
@@ -76,20 +84,26 @@ impl FavoriteChannels {
             })
             .collect();
 
-        Self {
-            holodex: PlatformFavorites {
-                default: channels.clone(),
-            },
-            twitch: PlatformFavorites {
-                default: channels.clone(),
-            },
-            youtube: PlatformFavorites {
-                default: channels.clone(),
-            },
-            kick: PlatformFavorites {
-                default: channels,
-            },
-        }
+Self {
+    holodex: PlatformFavorites {
+        default: channels.clone(),
+    },
+    twitch: PlatformFavorites {
+        default: channels.clone(),
+    },
+    youtube: PlatformFavorites {
+        default: channels.clone(),
+    },
+    kick: PlatformFavorites {
+        default: channels.clone(),
+    },
+    niconico: PlatformFavorites {
+        default: channels.clone(),
+    },
+    bilibili: PlatformFavorites {
+        default: channels,
+    },
+}
     }
 }
 
@@ -119,6 +133,8 @@ impl Default for FavoriteChannels {
             twitch: PlatformFavorites { default: vec![] },
             youtube: PlatformFavorites { default: vec![] },
             kick: PlatformFavorites { default: vec![] },
+            niconico: PlatformFavorites { default: vec![] },
+            bilibili: PlatformFavorites { default: vec![] },
         }
     }
 }
@@ -142,17 +158,21 @@ mod tests {
         assert_eq!(favs.twitch.default.len(), 2);
         assert_eq!(favs.youtube.default.len(), 2);
         assert_eq!(favs.holodex.default.len(), 2);
-        assert_eq!(favs.kick.default.len(), 2);
-    }
+assert_eq!(favs.kick.default.len(), 2);
+    assert_eq!(favs.niconico.default.len(), 2);
+    assert_eq!(favs.bilibili.default.len(), 2);
+}
 
     #[test]
     fn test_load_new_format() {
-        let json = r#"{
-            "holodex": {"default": [{"id": "UC1op", "name": "Test", "score": 100}]},
-            "twitch": {"default": []},
-            "youtube": {"default": []},
-            "kick": {"default": []}
-        }"#;
+let json = r#"{
+  "holodex": {"default": [{"id": "UC1op", "name": "Test", "score": 100}]},
+  "twitch": {"default": []},
+  "youtube": {"default": []},
+  "kick": {"default": []},
+  "niconico": {"default": []},
+  "bilibili": {"default": []}
+}"#;
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(json.as_bytes()).unwrap();
 
@@ -174,8 +194,10 @@ mod tests {
         assert_eq!(favs.twitch.default.len(), 3);
         assert_eq!(favs.youtube.default.len(), 3);
         assert_eq!(favs.holodex.default.len(), 3);
-        assert_eq!(favs.kick.default.len(), 3);
-        assert_eq!(favs.twitch.default[0].id, "https://twitch.tv/xqc");
+assert_eq!(favs.kick.default.len(), 3);
+    assert_eq!(favs.niconico.default.len(), 3);
+    assert_eq!(favs.bilibili.default.len(), 3);
+    assert_eq!(favs.twitch.default[0].id, "https://twitch.tv/xqc");
         assert_eq!(favs.twitch.default[0].score, 1000);
         assert_eq!(favs.youtube.default[1].name, "ludwig");
         assert_eq!(favs.kick.default[2].name, "snk");

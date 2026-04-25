@@ -19,6 +19,8 @@ pub struct Config {
     pub twitch: TwitchConfig,
     pub youtube: YoutubeConfig,
     pub kick: KickConfig,
+    pub niconico: NiconicoConfig,
+    pub bilibili: BilibiliConfig,
     pub player: PlayerConfig,
     pub mpv: MpvConfig,
     pub streamlink: StreamlinkConfig,
@@ -87,6 +89,16 @@ pub struct YoutubeConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct KickConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct NiconicoConfig {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BilibiliConfig {
     pub enabled: bool,
 }
 
@@ -281,11 +293,19 @@ youtube: {
             favorite_channels: yt_favorites,
         }
     },
-        kick: main_config
-            .as_ref()
-            .and_then(|c| c.kick.clone())
-            .unwrap_or(KickConfig { enabled: true }),
-        player,
+kick: main_config
+        .as_ref()
+        .and_then(|c| c.kick.clone())
+        .unwrap_or(KickConfig { enabled: true }),
+    niconico: main_config
+        .as_ref()
+        .and_then(|c| c.niconico.clone())
+        .unwrap_or(NiconicoConfig { enabled: true }),
+    bilibili: main_config
+        .as_ref()
+        .and_then(|c| c.bilibili.clone())
+        .unwrap_or(BilibiliConfig { enabled: true }),
+    player,
         mpv,
         streamlink,
         vlc,
@@ -299,6 +319,8 @@ fn default_favorites(&self) -> FavoriteChannels {
         twitch: PlatformFavorites { default: vec![] },
         youtube: PlatformFavorites { default: vec![] },
         kick: PlatformFavorites { default: vec![] },
+        niconico: PlatformFavorites { default: vec![] },
+        bilibili: PlatformFavorites { default: vec![] },
     }
 }
 
@@ -409,4 +431,6 @@ struct MainConfig {
     twitch: Option<TwitchConfig>,
     youtube: Option<YoutubeConfig>,
     kick: Option<KickConfig>,
+    niconico: Option<NiconicoConfig>,
+    bilibili: Option<BilibiliConfig>,
 }
