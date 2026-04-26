@@ -12,37 +12,71 @@ use config::{ConfigLoader, Env};
 use core::orchestrator::Orchestrator;
 use core::state::OrchestratorConfig;
 use services::network::{NetworkEvent, NetworkMonitor};
-use tracing::{info, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::info;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
 use std::sync::Arc;
+use std::path::PathBuf;
 
-#[tokio::main]
-async fn main() {
-    let subscriber = FmtSubscriber::builder()
-        .with_max_level(Level::DEBUG)
+fn setup_logging() {
+    let log_dir = std::env::var("LIVELINK_LOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("logs"));
+
+    std::fs::create_dir_all(&log_dir).ok();
+
+    let file_appender = RollingFileAppender::new(
+        Rotation::DAILY,
+        &log_dir,
+        "livelink.log",
+    );
+
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,livelink=debug"));
+
+    let file_layer = fmt::layer()
+        .with_writer(non_blocking)
+        .with_ansi(false)
         .with_target(true)
         .with_thread_ids(true)
         .with_file(true)
-        .with_line_number(true)
-        .finish();
+        .with_line_number(true);
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set tracing subscriber");
+    let console_layer = fmt::layer()
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(file_layer)
+        .with(console_layer)
+        .init();
+
+    Box::leak(Box::new(_guard));
+}
+
+#[tokio::main]
+async fn main() {
+    setup_logging();
 
     info!("LiveLink starting...");
 
-    let has_cli_args = std::env::args().len() > 1;
-    let (mpv_config_dir, _config_dir, port) = if has_cli_args {
-        let cli = cli::commands::parse_cli();
-        (cli.mpv_config_dir.clone(), cli.config_dir.clone(), cli.port)
-    } else {
-        ("mpv_config".to_string(), "config".to_string(), 3001u16)
-    };
+let has_cli_args = std::env::args().len() > 1;
+let (mpv_config_dir, config_dir, port) = if has_cli_args {
+    let cli = cli::commands::parse_cli();
+    (cli.mpv_config_dir.clone(), cli.config_dir.clone(), cli.port)
+} else {
+    ("mpv_config".to_string(), "config".to_string(), 3001u16)
+};
 
-    let _env = Env::load();
+let _env = Env::load();
 
-    let loader = ConfigLoader::new();
+let loader = ConfigLoader::with_base_path(&config_dir);
     let config = loader.load();
 
     info!(
