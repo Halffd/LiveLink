@@ -1,15 +1,16 @@
 use axum::{
-    extract::State,
-    http::StatusCode,
-    response::Json,
-    routing::{get, post},
-    Router,
+  extract::State,
+  http::StatusCode,
+  response::Json,
+  routing::{get, post},
+  Router,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::core::orchestrator::Orchestrator;
 use crate::core::state::StreamState;
+use crate::services::holodex::QueryOptions;
 
 #[derive(Clone)]
 struct AppState {
@@ -43,7 +44,17 @@ pub struct StopRequest {
 
 #[derive(Deserialize)]
 pub struct ClearWatchedRequest {
-    screen: Option<u32>,
+  pub screen: Option<u32>,
+}
+
+#[derive(Deserialize)]
+pub struct QueryRequest {
+  pub search: Option<String>,
+  pub category: Option<String>,
+  pub tag: Option<String>,
+  pub video_type: Option<String>,
+  pub status: Option<String>,
+  pub limit: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -132,33 +143,74 @@ async fn clear_watched(
 }
 
 async fn get_queues(
-    State(state): State<AppState>,
+  State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let queue_arc = state.orchestrator.get_queue();
-    let queue_service = queue_arc.lock().await;
-    let queues: Vec<QueueInfo> = queue_service
-        .get_all_queues()
+  let queue_arc = state.orchestrator.get_queue();
+  let queue_service = queue_arc.lock().await;
+  let queues: Vec<QueueInfo> = queue_service
+    .get_all_queues()
+    .iter()
+    .map(|(screen, q)| QueueInfo {
+      screen: *screen,
+      count: q.len(),
+      watched_count: q.get_watched_count(),
+    })
+    .collect();
+
+  Json(serde_json::json!({
+    "queues": queues
+  }))
+}
+
+async fn query_streams(
+  State(state): State<AppState>,
+  Json(req): Json<QueryRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+  let options = QueryOptions {
+    search: req.search,
+    category: req.category,
+    tag: req.tag,
+    video_type: req.video_type,
+    status: req.status,
+    limit: req.limit,
+  };
+
+  match state.orchestrator.query_streams(options).await {
+    Ok(streams) => {
+      let results: Vec<serde_json::Value> = streams
         .iter()
-        .map(|(screen, q)| QueueInfo {
-            screen: *screen,
-            count: q.len(),
-            watched_count: q.get_watched_count(),
+        .map(|s| {
+          serde_json::json!({
+            "url": s.url,
+            "title": s.title,
+            "platform": s.platform,
+            "channel_id": s.channel_id,
+            "channel": s.channel,
+            "viewer_count": s.viewer_count,
+            "is_live": s.is_live,
+          })
         })
         .collect();
 
-    Json(serde_json::json!({
-        "queues": queues
-    }))
+      Ok(Json(serde_json::json!({
+        "success": true,
+        "count": results.len(),
+        "results": results
+      })))
+    }
+    Err(e) => Err(StatusCode::NOT_FOUND),
+  }
 }
 
 pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
-    let app_state = AppState { orchestrator };
+  let app_state = AppState { orchestrator };
 
-    Router::new()
-        .route("/status", get(get_status))
-        .route("/stream/start", post(start_stream))
-        .route("/stream/stop", post(stop_stream))
-        .route("/queue/clear-watched", post(clear_watched))
-        .route("/queues", get(get_queues))
-        .with_state(app_state)
+  Router::new()
+    .route("/status", get(get_status))
+    .route("/stream/start", post(start_stream))
+    .route("/stream/stop", post(stop_stream))
+    .route("/queue/clear-watched", post(clear_watched))
+    .route("/queues", get(get_queues))
+    .route("/query", post(query_streams))
+    .with_state(app_state)
 }

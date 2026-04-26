@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::sync::Arc;
 use crate::core::orchestrator::Orchestrator;
 use crate::queue::queue::{Queue, StreamSource};
+use crate::services::holodex::QueryOptions;
 
 #[derive(Parser)]
 #[command(name = "livelink")]
@@ -19,40 +20,41 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    Start(StartCommand),
-    Stop(StopCommand),
-    StopAll,
-    List(ListCommand),
-    SessionCreate { screen: u32 },
-    SessionDelete { screen: u32 },
-    SessionEnable { screen: u32 },
-    SessionDisable { screen: u32 },
-    SessionToggle { screen: u32 },
-    SessionList,
-    StreamList(StreamListCommand),
-    StreamStart(StreamStartCommand),
-    StreamStop { screen: Option<u32> },
-    StreamRestart { screen: Option<u32> },
-    StreamRefresh { screen: Option<u32> },
-    QueueShow(QueueShowCommand),
-    QueueAdd(QueueAddCommand),
-    QueueRemove(QueueRemoveCommand),
-    QueueClear { screen: u32 },
-    QueueWatched { screen: Option<u32> },
-    QueueMarkWatched { url: String },
-    QueueClearWatched { screen: Option<u32> },
-    QueueSort(QueueSortCommand),
-    QueueFilter(QueueFilterCommand),
-    ScreenList,
-    ScreenEnable { screen: u32 },
-    ScreenDisable { screen: u32 },
-    ScreenToggle { screen: u32 },
-    PlayerPause { screen: Option<String> },
-    PlayerVolume { volume: u8, screen: Option<String> },
-    PlayerSeek { seconds: i64, screen: u32 },
-    ServerStatus,
-    Ochs,
-    Diagnostics,
+  Start(StartCommand),
+  Stop(StopCommand),
+  StopAll,
+  List(ListCommand),
+  SessionCreate { screen: u32 },
+  SessionDelete { screen: u32 },
+  SessionEnable { screen: u32 },
+  SessionDisable { screen: u32 },
+  SessionToggle { screen: u32 },
+  SessionList,
+  StreamList(StreamListCommand),
+  StreamStart(StreamStartCommand),
+  StreamStop { screen: Option<u32> },
+  StreamRestart { screen: Option<u32> },
+  StreamRefresh { screen: Option<u32> },
+  QueueShow(QueueShowCommand),
+  QueueAdd(QueueAddCommand),
+  QueueRemove(QueueRemoveCommand),
+  QueueClear { screen: u32 },
+  QueueWatched { screen: Option<u32> },
+  QueueMarkWatched { url: String },
+  QueueClearWatched { screen: Option<u32> },
+  QueueSort(QueueSortCommand),
+  QueueFilter(QueueFilterCommand),
+  ScreenList,
+  ScreenEnable { screen: u32 },
+  ScreenDisable { screen: u32 },
+  ScreenToggle { screen: u32 },
+  PlayerPause { screen: Option<String> },
+  PlayerVolume { volume: u8, screen: Option<String> },
+  PlayerSeek { seconds: i64, screen: u32 },
+  Query(QueryCommand),
+  ServerStatus,
+  Ochs,
+  Diagnostics,
 }
 
 #[derive(Parser)]
@@ -125,11 +127,27 @@ pub struct QueueSortCommand {
 
 #[derive(Parser)]
 pub struct QueueFilterCommand {
-    pub screen: u32,
-    #[arg(short, long)]
-    pub platform: Option<String>,
-    #[arg(short, long)]
-    pub min_viewers: Option<u64>,
+  pub screen: u32,
+  #[arg(short, long)]
+  pub platform: Option<String>,
+  #[arg(short, long)]
+  pub min_viewers: Option<u64>,
+}
+
+#[derive(Parser)]
+pub struct QueryCommand {
+  #[arg(short, long, help = "Search query text")]
+  pub search: Option<String>,
+  #[arg(long, help = "Filter by category/topic")]
+  pub category: Option<String>,
+  #[arg(long, help = "Filter by tag")]
+  pub tag: Option<String>,
+  #[arg(long, help = "Video type: stream, video, clip")]
+  pub video_type: Option<String>,
+  #[arg(long, help = "Status: live, upcoming, past")]
+  pub status: Option<String>,
+  #[arg(short, long, default_value_t = 25, help = "Maximum results")]
+  pub limit: u32,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -472,11 +490,33 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
                 println!("Volume set to {} on screen {}", volume, s);
             }
         }
-        Commands::PlayerSeek { seconds, screen } => {
-            orchestrator.player_seek(*screen, *seconds).await?;
-            println!("Seek {}s on screen {}", seconds, screen);
+Commands::PlayerSeek { seconds, screen } => {
+    orchestrator.player_seek(*screen, *seconds).await?;
+    println!("Seek {}s on screen {}", seconds, screen);
+  }
+  Commands::Query(cmd) => {
+    let options = QueryOptions {
+      search: cmd.search.clone(),
+      category: cmd.category.clone(),
+      tag: cmd.tag.clone(),
+      video_type: cmd.video_type.clone(),
+      status: cmd.status.clone(),
+      limit: Some(cmd.limit),
+    };
+    match orchestrator.query_streams(options).await {
+      Ok(streams) => {
+        println!("Found {} streams:", streams.len());
+        for (i, stream) in streams.iter().enumerate().take(20) {
+          let status = if stream.is_live { "[LIVE]" } else { "" };
+          println!(" {}. {} {} - {}", i + 1, status, stream.title.as_deref().unwrap_or("Unknown"), stream.url);
         }
-        Commands::ServerStatus => {
+      }
+      Err(e) => {
+        println!("Query failed: {}", e);
+      }
+    }
+  }
+  Commands::ServerStatus => {
             let active = orchestrator.count_active_streams();
             println!("Server status: running");
             println!("Active streams: {}", active);

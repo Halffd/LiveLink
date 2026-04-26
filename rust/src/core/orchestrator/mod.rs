@@ -1,11 +1,12 @@
 pub mod clone_impl;
 pub mod fetch_ops;
 pub mod lock_ops;
+pub mod player_ops;
+pub mod query_ops;
 pub mod queue_ops;
 pub mod recovery_ops;
 pub mod state_ops;
 pub mod stream_ops;
-pub mod player_ops;
 
 use crate::core::state::{OrchestratorConfig, ScreenState, StreamState};
 use crate::queue::queue::{QueueService, StreamSource};
