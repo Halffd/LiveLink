@@ -1,4 +1,5 @@
 use crate::queue::queue::StreamSource;
+use crate::services::holodex::QueryOptions;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -104,10 +105,15 @@ impl BilibiliService {
         Ok(sources)
     }
 
-    pub async fn check_channel(&self, room_id: &str) -> Result<bool, BilibiliError> {
-        let rooms = self.get_live_streams(&[room_id.to_string()]).await?;
-        Ok(!rooms.is_empty())
-    }
+pub async fn check_channel(&self, room_id: &str) -> Result<bool, BilibiliError> {
+    let rooms = self.get_live_streams(&[room_id.to_string()]).await?;
+    Ok(!rooms.is_empty())
+  }
+
+  pub async fn query(&self, _options: &QueryOptions) -> Result<Vec<StreamSource>, BilibiliError> {
+    info!("Bilibili search not implemented - returning empty results");
+    Ok(Vec::new())
+  }
 }
 
 impl Default for BilibiliService {

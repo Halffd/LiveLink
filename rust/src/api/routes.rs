@@ -54,6 +54,7 @@ pub struct QueryRequest {
   pub tag: Option<String>,
   pub video_type: Option<String>,
   pub status: Option<String>,
+  pub platform: Option<String>,
   pub limit: Option<u32>,
 }
 
@@ -172,6 +173,7 @@ async fn query_streams(
     tag: req.tag,
     video_type: req.video_type,
     status: req.status,
+    platform: req.platform,
     limit: req.limit,
   };
 

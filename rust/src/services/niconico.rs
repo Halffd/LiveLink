@@ -1,4 +1,5 @@
 use crate::queue::queue::StreamSource;
+use crate::services::holodex::QueryOptions;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -105,13 +106,18 @@ impl NiconicoService {
         Ok(None)
     }
 
-    pub async fn check_channel(&self, channel_id: &str) -> Result<bool, NiconicoError> {
-        match self.get_channel_status(channel_id).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Ok(false),
-            Err(e) => Err(e),
-        }
+pub async fn check_channel(&self, channel_id: &str) -> Result<bool, NiconicoError> {
+    match self.get_channel_status(channel_id).await {
+      Ok(Some(_)) => Ok(true),
+      Ok(None) => Ok(false),
+      Err(e) => Err(e),
     }
+  }
+
+  pub async fn query(&self, _options: &QueryOptions) -> Result<Vec<StreamSource>, NiconicoError> {
+    info!("Niconico search not implemented - returning empty results");
+    Ok(Vec::new())
+  }
 }
 
 impl Default for NiconicoService {

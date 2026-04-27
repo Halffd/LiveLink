@@ -146,6 +146,8 @@ pub struct QueryCommand {
   pub video_type: Option<String>,
   #[arg(long, help = "Status: live, upcoming, past")]
   pub status: Option<String>,
+  #[arg(long, help = "Platform: holodex, twitch, youtube, kick, niconico, bilibili")]
+  pub platform: Option<String>,
   #[arg(short, long, default_value_t = 25, help = "Maximum results")]
   pub limit: u32,
 }
@@ -501,6 +503,7 @@ Commands::PlayerSeek { seconds, screen } => {
       tag: cmd.tag.clone(),
       video_type: cmd.video_type.clone(),
       status: cmd.status.clone(),
+      platform: cmd.platform.clone(),
       limit: Some(cmd.limit),
     };
     match orchestrator.query_streams(options).await {

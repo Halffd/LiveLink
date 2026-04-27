@@ -1,4 +1,5 @@
 use crate::queue::queue::StreamSource;
+use crate::services::holodex::QueryOptions;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
@@ -180,9 +181,109 @@ impl TwitchService {
             })
             .collect();
 
-        info!(count = sources.len(), "Fetched live streams from Twitch");
-        Ok(sources)
+info!(count = sources.len(), "Fetched live streams from Twitch");
+    Ok(sources)
+  }
+
+  pub async fn query(&mut self, options: &QueryOptions) -> Result<Vec<StreamSource>, TwitchError> {
+    let access_token = self
+      .access_token
+      .as_ref()
+      .ok_or_else(|| TwitchError::Auth("Not authenticated with Twitch".into()))?;
+
+    let search_query = options.search.as_deref().unwrap_or("");
+    let limit = options.limit.unwrap_or(25) as usize;
+
+    let url = format!(
+      "https://api.twitch.tv/helix/search/channels?query={}&first={}",
+      urlencoding::encode(search_query),
+      limit.min(100)
+    );
+
+    let response = self
+      .http_client
+      .get(&url)
+      .header("Client-ID", &self.client_id)
+      .header("Authorization", format!("Bearer {}", access_token))
+      .send()
+      .await
+      .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+    if !response.status().is_success() {
+      return Err(TwitchError::Api(format!(
+        "Search failed: {}",
+        response.status()
+      )));
     }
+
+    #[derive(serde::Deserialize)]
+    struct HelixResponse {
+      data: Vec<TwitchSearchChannel>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TwitchSearchChannel {
+      broadcaster_login: String,
+      display_name: String,
+      game_id: String,
+      game_name: String,
+      is_live: bool,
+      tags: Vec<String>,
+      thumbnail_url: String,
+      title: String,
+      started_at: Option<String>,
+    }
+
+    let helix_response: HelixResponse = response
+      .json()
+      .await
+      .map_err(|e| TwitchError::Api(e.to_string()))?;
+
+    let search_lower = options.search.as_ref().map(|s| s.to_lowercase());
+    let tag_filter = options.tag.as_ref().map(|t| t.to_lowercase());
+
+    let sources: Vec<StreamSource> = helix_response
+      .data
+      .into_iter()
+      .filter(|ch| ch.is_live)
+      .filter(|ch| {
+        if let Some(ref search) = search_lower {
+          if !ch.display_name.to_lowercase().contains(search) && !ch.title.to_lowercase().contains(search) {
+            return false;
+          }
+        }
+        if let Some(ref tag) = tag_filter {
+          if !ch.tags.iter().any(|t| t.to_lowercase().contains(tag)) {
+            return false;
+          }
+        }
+        true
+      })
+      .map(|ch| {
+        let url = format!("https://twitch.tv/{}", ch.broadcaster_login);
+        let start_time = ch.started_at.as_ref().and_then(|s| {
+          chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+        });
+
+        StreamSource {
+          url,
+          title: Some(ch.title),
+          platform: Some("twitch".to_string()),
+          channel_id: None,
+          channel: Some(ch.broadcaster_login),
+          viewer_count: None,
+          start_time,
+          priority: None,
+          is_live: ch.is_live,
+          ..Default::default()
+        }
+      })
+      .collect();
+
+    info!(count = sources.len(), "Searched streams from Twitch");
+    Ok(sources)
+  }
 }
 
 impl Default for TwitchService {

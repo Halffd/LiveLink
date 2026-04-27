@@ -15,20 +15,22 @@ pub struct QueryOptions {
     pub video_type: Option<String>,
     pub status: Option<String>,
     pub limit: Option<u32>,
+    pub platform: Option<String>,
 }
 
 impl Default for QueryOptions {
     fn default() -> Self {
-        Self {
-            search: None,
-            category: None,
-            tag: None,
-            video_type: Some("stream".to_string()),
-            status: Some("live".to_string()),
-            limit: Some(25),
-        }
+      Self {
+        search: None,
+        category: None,
+        tag: None,
+        video_type: Some("stream".to_string()),
+        status: Some("live".to_string()),
+        platform: None,
+        limit: Some(25),
+      }
     }
-}
+  }
 
 #[derive(Error, Debug)]
 pub enum HolodexError {

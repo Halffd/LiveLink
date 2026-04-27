@@ -1,4 +1,5 @@
 use crate::queue::queue::StreamSource;
+use crate::services::holodex::QueryOptions;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -290,13 +291,91 @@ impl YouTubeService {
             }
         }
 
-        // Quota exhausted or API failed entirely → use RSS for everything
-        debug!(
-            quota_remaining = %self.quota_remaining,
-            "API quota exhausted, falling back to RSS"
-        );
-        self.check_multiple_via_rss(channel_ids).await
+// Quota exhausted or API failed entirely → use RSS for everything
+    debug!(
+      quota_remaining = %self.quota_remaining,
+      "API quota exhausted, falling back to RSS"
+    );
+    self.check_multiple_via_rss(channel_ids).await
+  }
+
+  pub async fn query(&mut self, options: &QueryOptions) -> Result<Vec<StreamSource>, YouTubeError> {
+    let search_query = options.search.as_deref().unwrap_or("");
+    let limit = options.limit.unwrap_or(25) as usize;
+
+    if !self.is_enabled() || !self.has_quota_remaining() {
+      return Err(YouTubeError::Config("YouTube API not available".into()));
     }
+
+    let url = format!(
+      "https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&q={}&eventType=live&maxResults={}&key={}",
+      urlencoding::encode(search_query),
+      limit.min(50),
+      self.developer_key
+    );
+
+    let response = self.http_client
+      .get(&url)
+      .send()
+      .await
+      .map_err(|e| YouTubeError::Network(e.to_string()))?;
+
+    if !response.status().is_success() {
+      return Err(YouTubeError::Api(format!("Search failed: {}", response.status())));
+    }
+
+    #[derive(serde::Deserialize)]
+    struct YouTubeSearchResponse {
+      items: Vec<YouTubeSearchItem>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct YouTubeSearchItem {
+      id: YouTubeVideoId,
+      snippet: YouTubeSnippet,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct YouTubeVideoId {
+      video_id: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct YouTubeSnippet {
+      channel_title: String,
+      channel_id: String,
+      title: String,
+      description: Option<String>,
+    }
+
+    let search_response: YouTubeSearchResponse = response
+      .json()
+      .await
+      .map_err(|e| YouTubeError::Api(e.to_string()))?;
+
+    let sources: Vec<StreamSource> = search_response
+      .items
+      .iter()
+      .map(|item| {
+        let url = format!("https://www.youtube.com/watch?v={}", item.id.video_id);
+        StreamSource {
+          url,
+          title: Some(item.snippet.title.clone()),
+          platform: Some("youtube".to_string()),
+          channel_id: Some(item.snippet.channel_id.clone()),
+          channel: Some(item.snippet.channel_title.clone()),
+          viewer_count: None,
+          start_time: None,
+          priority: None,
+          is_live: true,
+          ..Default::default()
+        }
+      })
+      .collect();
+
+    info!(count = sources.len(), "Searched streams from YouTube");
+    Ok(sources)
+  }
 }
 
 impl Default for YouTubeService {

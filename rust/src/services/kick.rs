@@ -1,4 +1,5 @@
 use crate::queue::queue::StreamSource;
+use crate::services::holodex::QueryOptions;
 use kick_rust::KickApiClient;
 use thiserror::Error;
 use tracing::{debug, info, warn};
@@ -69,12 +70,17 @@ impl KickService {
         Ok(sources)
     }
 
-    pub async fn check_channel(&self, channel_name: &str) -> Result<bool, KickError> {
-        match self.client.get_channel(channel_name).await {
-            Ok(channel) => Ok(channel.is_live),
-            Err(e) => Err(KickError::Api(e.to_string())),
-        }
+pub async fn check_channel(&self, channel_name: &str) -> Result<bool, KickError> {
+    match self.client.get_channel(channel_name).await {
+      Ok(channel) => Ok(channel.is_live),
+      Err(e) => Err(KickError::Api(e.to_string())),
     }
+  }
+
+  pub async fn query(&self, _options: &QueryOptions) -> Result<Vec<StreamSource>, KickError> {
+    info!("Kick search not implemented - returning empty results");
+    Ok(Vec::new())
+  }
 }
 
 impl Default for KickService {
