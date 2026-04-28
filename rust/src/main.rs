@@ -119,15 +119,20 @@ let loader = ConfigLoader::with_base_path(&config_dir);
         network_monitor.start().await;
     });
 
-    orchestrator.register_screen(0).await;
-    orchestrator.register_screen(1).await;
+orchestrator.register_screen(0).await;
+  orchestrator.register_screen(1).await;
 
-    let sources = orchestrator.fetch_streams_for_screen(0).await;
-    if !sources.is_empty() {
-        orchestrator.set_queue(0, sources).await;
-    }
+  let sources_0 = orchestrator.fetch_streams_for_screen(0).await;
+  if !sources_0.is_empty() {
+    orchestrator.set_queue(0, sources_0).await;
+  }
 
-    info!("LiveLink initialized");
+  let sources_1 = orchestrator.fetch_streams_for_screen(1).await;
+  if !sources_1.is_empty() {
+    orchestrator.set_queue(1, sources_1).await;
+  }
+
+  info!("LiveLink initialized");
     info!("Active streams: {}", orchestrator.count_active_streams());
 
     if has_cli_args {
