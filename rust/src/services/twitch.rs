@@ -216,6 +216,13 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
       )));
     }
 
+    let text = response
+      .text()
+      .await
+      .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+    debug!(response = %text, "Twitch search response");
+
     #[derive(serde::Deserialize)]
     struct HelixResponse {
       data: Vec<TwitchSearchChannel>,
@@ -226,19 +233,17 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
     struct TwitchSearchChannel {
       broadcaster_login: String,
       display_name: String,
-      game_id: String,
-      game_name: String,
-      is_live: bool,
-      tags: Vec<String>,
-      thumbnail_url: String,
-      title: String,
+      game_id: Option<String>,
+      game_name: Option<String>,
+      is_live: Option<bool>,
+      tags: Option<Vec<String>>,
+      thumbnail_url: Option<String>,
+      title: Option<String>,
       started_at: Option<String>,
     }
 
-    let helix_response: HelixResponse = response
-      .json()
-      .await
-      .map_err(|e| TwitchError::Api(e.to_string()))?;
+    let helix_response: HelixResponse = serde_json::from_str(&text)
+      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, &text[..text.len().min(500)])))?;
 
     let search_lower = options.search.as_ref().map(|s| s.to_lowercase());
     let tag_filter = options.tag.as_ref().map(|t| t.to_lowercase());
@@ -246,15 +251,17 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
     let sources: Vec<StreamSource> = helix_response
       .data
       .into_iter()
-      .filter(|ch| ch.is_live)
+      .filter(|ch| ch.is_live.unwrap_or(false))
       .filter(|ch| {
         if let Some(ref search) = search_lower {
-          if !ch.display_name.to_lowercase().contains(search) && !ch.title.to_lowercase().contains(search) {
+          let name_match = ch.display_name.to_lowercase().contains(search);
+          let title_match = ch.title.as_ref().map(|t| t.to_lowercase().contains(search)).unwrap_or(false);
+          if !name_match && !title_match {
             return false;
           }
         }
         if let Some(ref tag) = tag_filter {
-          if !ch.tags.iter().any(|t| t.to_lowercase().contains(tag)) {
+          if !ch.tags.as_ref().map(|t| t.iter().any(|tg| tg.to_lowercase().contains(tag))).unwrap_or(false) {
             return false;
           }
         }
@@ -268,14 +275,14 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
 
         StreamSource {
           url,
-          title: Some(ch.title),
+          title: ch.title,
           platform: Some("twitch".to_string()),
           channel_id: None,
           channel: Some(ch.broadcaster_login),
           viewer_count: None,
           start_time,
           priority: None,
-          is_live: ch.is_live,
+          is_live: ch.is_live.unwrap_or(false),
           ..Default::default()
         }
       })
