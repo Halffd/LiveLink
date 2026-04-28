@@ -352,7 +352,7 @@ impl PlayerService {
         }
 
         let screen_for_event = instance.screen;
-        let instance_for_event = instance.instance_id;
+        let _instance_for_event = instance.instance_id;
         let sender = self.event_sender.clone();
         tokio::spawn(async move {
             let exit = ProcessExit {
@@ -398,7 +398,7 @@ impl PlayerService {
 /// Poll for process exits and send events for any that have terminated.
     pub fn poll_exits(&self) {
         let keys: Vec<(u32, u32)> = self.instances.iter().map(|r| *r.key()).collect();
-        let sender = self.event_sender.clone();
+        let _sender = self.event_sender.clone();
         let instances = self.instances.clone();
 
         for key in keys {

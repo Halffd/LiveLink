@@ -1,7 +1,7 @@
 use crate::queue::queue::StreamSource;
 use crate::services::holodex::QueryOptions;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[derive(Error, Debug)]
 pub enum BilibiliError {

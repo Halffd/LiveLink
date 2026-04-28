@@ -200,7 +200,7 @@ async fn query_streams(
         "results": results
       })))
     }
-    Err(e) => Err(StatusCode::NOT_FOUND),
+    Err(_e) => Err(StatusCode::NOT_FOUND),
   }
 }
 

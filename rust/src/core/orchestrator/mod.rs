@@ -9,7 +9,7 @@ pub mod state_ops;
 pub mod stream_ops;
 
 use crate::core::state::{OrchestratorConfig, ScreenState, StreamState};
-use crate::queue::queue::{QueueService, StreamSource};
+use crate::queue::queue::QueueService;
 use crate::services::fallback::FallbackService;
 use crate::services::holodex::HolodexService;
 use crate::services::kick::KickService;
@@ -22,7 +22,7 @@ use crate::services::youtube::YouTubeService;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info, warn};
+use tracing::info;
 
 pub struct Orchestrator {
     pub config: OrchestratorConfig,

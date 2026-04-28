@@ -67,7 +67,7 @@ impl Orchestrator {
         let url_clone = url.clone();
 
         tokio::spawn(async move {
-            let mut player_guard = player.lock().await;
+            let player_guard = player.lock().await;
             if let Err(e) = player_guard.start(player_screen, player_instance, &url_clone, 1280, 720, 0, 0).await {
                 error!(screen = player_screen, error = %e, "Failed to start process");
             }
@@ -105,7 +105,7 @@ impl Orchestrator {
 
         let player = self.player.clone();
         tokio::spawn(async move {
-            let mut player_guard = player.lock().await;
+            let player_guard = player.lock().await;
             if let Err(e) = player_guard.stop(screen, 0).await {
                 warn!(screen, error = %e, "Failed to stop process");
             }
@@ -212,7 +212,7 @@ impl Orchestrator {
 
         let player = self.player.clone();
         tokio::spawn(async move {
-            let mut player_guard = player.lock().await;
+            let player_guard = player.lock().await;
             if let Err(e) = player_guard.start(screen, instance_id, &url_for_spawn, 1280, 720, 0, 0).await {
                 error!(screen, instance_id, error = %e, "Failed to start instance");
             }
@@ -228,7 +228,7 @@ impl Orchestrator {
 
         let player = self.player.clone();
         tokio::spawn(async move {
-            let mut player_guard = player.lock().await;
+            let player_guard = player.lock().await;
             if let Err(e) = player_guard.stop(screen, instance_id).await {
                 warn!(screen, instance_id, error = %e, "Failed to stop instance");
             }
