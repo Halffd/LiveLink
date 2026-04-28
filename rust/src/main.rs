@@ -132,25 +132,34 @@ orchestrator.register_screen(0).await;
     orchestrator.set_queue(1, sources_1).await;
   }
 
-  info!("LiveLink initialized");
-    info!("Active streams: {}", orchestrator.count_active_streams());
+info!("LiveLink initialized");
+  info!("Active streams: {}", orchestrator.count_active_streams());
 
-    if has_cli_args {
-        let cli = cli::commands::parse_cli();
+  if has_cli_args {
+    let cli = cli::commands::parse_cli();
 
-        if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
-            eprintln!("CLI error: {}", e);
-        }
-    } else {
-        let orchestrator_for_api = orchestrator.clone();
+    let run_server_after = matches!(
+      cli.command,
+      cli::commands::Commands::Start(_) | cli::commands::Commands::StreamStart(_)
+    );
+
+    if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
+      eprintln!("CLI error: {}", e);
+    }
+
+    if !run_server_after {
+      return;
+    }
+  }
+
+  let orchestrator_for_api = orchestrator.clone();
         let app = api::routes::create_router(orchestrator_for_api);
 
         let addr = format!("0.0.0.0:{}", port);
         info!("Starting API server on {}", addr);
 
-        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
-    }
+let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+  axum::serve(listener, app).await.unwrap();
 
     info!("LiveLink shutting down");
 }
