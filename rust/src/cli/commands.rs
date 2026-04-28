@@ -136,8 +136,10 @@ pub struct QueueFilterCommand {
 
 #[derive(Parser)]
 pub struct QueryCommand {
-  #[arg(short, long, help = "Search query text")]
+  #[arg(help = "Search query text")]
   pub search: Option<String>,
+  #[arg(short = 's', long, help = "Search query text")]
+  pub query: Option<String>,
   #[arg(long, help = "Filter by category/topic")]
   pub category: Option<String>,
   #[arg(long, help = "Filter by tag")]
@@ -148,6 +150,8 @@ pub struct QueryCommand {
   pub status: Option<String>,
   #[arg(long, help = "Platform: holodex, twitch, youtube, kick, niconico, bilibili")]
   pub platform: Option<String>,
+  #[arg(long, alias = "provider", help = "Platform: holodex, twitch, youtube, kick, niconico, bilibili")]
+  pub provider: Option<String>,
   #[arg(short, long, default_value_t = 25, help = "Maximum results")]
   pub limit: u32,
 }
@@ -497,13 +501,15 @@ Commands::PlayerSeek { seconds, screen } => {
     println!("Seek {}s on screen {}", seconds, screen);
   }
   Commands::Query(cmd) => {
+    let search = cmd.search.clone().or(cmd.query.clone());
+    let platform = cmd.platform.clone().or(cmd.provider.clone());
     let options = QueryOptions {
-      search: cmd.search.clone(),
+      search,
       category: cmd.category.clone(),
       tag: cmd.tag.clone(),
       video_type: cmd.video_type.clone(),
       status: cmd.status.clone(),
-      platform: cmd.platform.clone(),
+      platform,
       limit: Some(cmd.limit),
     };
     match orchestrator.query_streams(options).await {
