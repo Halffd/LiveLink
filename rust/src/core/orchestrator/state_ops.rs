@@ -3,11 +3,15 @@ use crate::core::state::StreamState;
 use super::Orchestrator;
 
 impl Orchestrator {
-    pub async fn get_state(&self, screen: u32) -> Option<StreamState> {
-        self.state.get(&screen).map(|s| s.state)
-    }
+  pub async fn get_state(&self, screen: u32) -> Option<StreamState> {
+    self.state.get(&screen).map(|s| s.state)
+  }
 
-    pub fn count_active_streams(&self) -> usize {
+  pub fn get_state_sync(&self, screen: u32) -> Option<StreamState> {
+    self.state.get(&screen).map(|s| s.state)
+  }
+
+  pub fn count_active_streams(&self) -> usize {
         self.count_active_streams_internal()
     }
 

@@ -4,6 +4,7 @@ mod config;
 mod core;
 mod queue;
 mod services;
+mod ui;
 
 #[cfg(test)]
 mod core_test;

@@ -55,6 +55,7 @@ pub enum Commands {
   ServerStatus,
   Ochs,
   Diagnostics,
+  Ui,
 }
 
 #[derive(Parser)]
@@ -539,16 +540,32 @@ Commands::PlayerSeek { seconds, screen } => {
             println!(" YouTube: {} channels", favorites.youtube.default.len());
             println!(" Kick: {} channels", favorites.kick.default.len());
         }
-        Commands::Diagnostics => {
-            let active = orchestrator.count_active_streams();
-            let state = orchestrator.get_state(1).await;
-            println!("=== LiveLink Diagnostics ===");
-            println!("Active streams: {}", active);
-            println!("Primary screen state: {:?}", state);
-            println!("Network: online");
-            println!("Player service: running");
-        }
-    }
+Commands::Diagnostics => {
+    let active = orchestrator.count_active_streams();
+    let state = orchestrator.get_state(1).await;
+    println!("=== LiveLink Diagnostics ===");
+    println!("Active streams: {}", active);
+    println!("Primary screen state: {:?}", state);
+    println!("Network: online");
+    println!("Player service: running");
+  }
+  Commands::Ui => {
+    println!("Launching UI...");
+    let orch = orchestrator.clone();
+    std::thread::spawn(move || {
+      let rt = tokio::runtime::Runtime::new().unwrap();
+      rt.block_on(async {
+        let app = crate::ui::LiveLinkApp::new(orch);
+        eframe::run_native(
+          "LiveLink",
+          eframe::NativeOptions::default(),
+          Box::new(|_cc| Ok(Box::new(app))),
+        ).unwrap();
+      });
+    });
+    println!("UI launched");
+  }
+}
     Ok(())
 }
 
