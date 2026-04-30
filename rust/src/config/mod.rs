@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ pub struct Config {
     pub filters: FiltersConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScreenConfig {
     pub id: u32,
     pub screen: u32,
@@ -49,7 +49,7 @@ pub struct ScreenConfig {
     pub skip_watched_streams: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceConfig {
     #[serde(rename = "type")]
     pub type_: String,
@@ -61,7 +61,7 @@ pub struct SourceConfig {
     pub tags: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SortingConfig {
     pub field: String,
     pub order: String,
@@ -69,40 +69,47 @@ pub struct SortingConfig {
     pub ignore: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HolodexConfig {
-    pub api_key: String,
+  pub api_key: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TwitchConfig {
-    pub client_id: String,
-    pub client_secret: String,
-    pub streamers_file: String,
+  pub client_id: String,
+  pub client_secret: String,
+  #[serde(default)]
+  pub streamers_file: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct YoutubeConfig {
-    pub api_key: String,
-    pub favorite_channels: Vec<FavoriteChannel>,
+  pub api_key: String,
+  #[serde(default)]
+  pub favorite_channels: Vec<FavoriteChannel>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KickConfig {
-    pub enabled: bool,
+  #[serde(default = "default_true")]
+  pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+fn default_true() -> bool { true }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NiconicoConfig {
-    pub enabled: bool,
+  #[serde(default = "default_true")]
+  pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BilibiliConfig {
-    pub enabled: bool,
+  #[serde(default = "default_true")]
+  pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlayerConfig {
     #[serde(default = "default_player_type")]
     pub player_type: String,
@@ -121,7 +128,7 @@ fn default_player_type() -> String {
     "mpv".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoggingConfig {
     pub enabled: bool,
     pub level: String,
@@ -407,10 +414,24 @@ fn default_favorites(&self) -> FavoriteChannels {
 
     fn default_vlc_config(&self) -> VlcConfig {
         VlcConfig {
-            path: "vlc".to_string(),
-            extra_args: vec![],
-        }
-    }
+path: "vlc".to_string(),
+    extra_args: vec![],
+  }
+  }
+
+  pub fn save_json_file<T: Serialize>(&self, filename: &str, data: &T) -> Result<(), String> {
+    let path = self.config_dir.join(filename);
+    let content = serde_json::to_string_pretty(data)
+      .map_err(|e| format!("Failed to serialize {}: {}", filename, e))?;
+    fs::write(&path, content)
+      .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+    info!("Saved config file: {}", path.display());
+    Ok(())
+  }
+
+  pub fn save_main_config(&self, config: &MainConfig) -> Result<(), String> {
+    self.save_json_file("config.json", config)
+  }
 }
 
 impl Default for ConfigLoader {
@@ -425,12 +446,13 @@ struct StreamsFile {
     organizations: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct MainConfig {
-    holodex: Option<HolodexConfig>,
-    twitch: Option<TwitchConfig>,
-    youtube: Option<YoutubeConfig>,
-    kick: Option<KickConfig>,
-    niconico: Option<NiconicoConfig>,
-    bilibili: Option<BilibiliConfig>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MainConfig {
+  pub holodex: Option<HolodexConfig>,
+  pub twitch: Option<TwitchConfig>,
+  pub youtube: Option<YoutubeConfig>,
+  pub kick: Option<KickConfig>,
+  pub niconico: Option<NiconicoConfig>,
+  pub bilibili: Option<BilibiliConfig>,
+  pub player: Option<PlayerConfig>,
 }

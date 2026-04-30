@@ -183,11 +183,55 @@ impl Orchestrator {
         info!(screen, "Screen unregistered");
     }
 
-    pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
-        self.config.favorite_channels.clone()
-    }
+pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
+    self.config.favorite_channels.clone()
+  }
 
-    #[cfg(test)]
+  pub fn save_config(&self, config_dir: &str) -> Result<(), String> {
+    use crate::config::MainConfig;
+    use crate::config::ConfigLoader;
+
+    let loader = ConfigLoader::with_base_path(config_dir);
+
+    let main_config = MainConfig {
+      holodex: Some(crate::config::HolodexConfig {
+        api_key: self.config.holodex_api_key.clone(),
+      }),
+      twitch: Some(crate::config::TwitchConfig {
+        client_id: self.config.twitch_client_id.clone(),
+        client_secret: self.config.twitch_client_secret.clone(),
+        streamers_file: String::new(),
+      }),
+      youtube: Some(crate::config::YoutubeConfig {
+        api_key: self.config.youtube_api_key.clone(),
+        favorite_channels: vec![],
+      }),
+      kick: Some(crate::config::KickConfig { enabled: true }),
+      niconico: Some(crate::config::NiconicoConfig { enabled: true }),
+      bilibili: Some(crate::config::BilibiliConfig { enabled: true }),
+      player: Some(crate::config::PlayerConfig {
+        player_type: self.config.player_type.clone(),
+        default_quality: "best".to_string(),
+        default_volume: 50,
+        window_maximized: false,
+        max_streams: self.max_streams,
+        auto_start: false,
+        disable_heartbeat: false,
+        force_player: false,
+        logging: crate::config::LoggingConfig {
+          enabled: true,
+          level: "info".to_string(),
+          max_size_mb: 10,
+          max_files: 5,
+        },
+        screens: vec![],
+      }),
+    };
+
+    loader.save_main_config(&main_config)
+  }
+
+  #[cfg(test)]
     pub fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
         self.state.get(&screen).map(|r| r.clone())
     }

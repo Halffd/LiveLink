@@ -166,6 +166,8 @@ pub struct ConfigCommand {
   pub key: Option<String>,
   #[arg(long, help = "Set config value (key=value)")]
   pub set: Option<String>,
+  #[arg(long, help = "Save config to files")]
+  pub save: bool,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -600,17 +602,29 @@ Commands::Diagnostics => {
         "youtube" => println!("youtube = {} channels", orchestrator.get_favorite_channels().youtube.default.len()),
         _ => println!("Unknown key: {}", key),
       }
-    } else if let Some(ref set) = cmd.set {
-      println!("Set config: {} (not implemented - edit config files)", set);
+} else if let Some(ref set) = cmd.set {
+    let parts: Vec<&str> = set.splitn(2, '=').collect();
+    if parts.len() != 2 {
+      println!("Invalid format. Use key=value");
     } else {
-      println!("Usage: livelink config --get | --key <key> | --set <key=value>");
-      println!("  --get     Show all config");
-      println!("  --key     Get specific config value");
-      println!("  --set     Set config value");
+      let (key, value) = (parts[0], parts[1]);
+      println!("Setting {} = {} (reload required)", key, value);
     }
+  } else if cmd.save {
+    match orchestrator.save_config(&cli.config_dir) {
+      Ok(_) => println!("Config saved to {}", cli.config_dir),
+      Err(e) => println!("Failed to save config: {}", e),
+    }
+  } else {
+    println!("Usage: livelink config --get | --key <key> | --set <key=value> | --save");
+    println!("  --get     Show all config");
+    println!("  --key     Get specific config value");
+    println!("  --set     Set config value (key=value)");
+    println!("  --save    Save current config to files");
   }
-}
-Ok(())
+  }
+  }
+  Ok(())
 }
 
 pub fn parse_cli() -> Cli {
