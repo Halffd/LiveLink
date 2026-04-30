@@ -4,24 +4,42 @@ use crate::core::orchestrator::Orchestrator;
 use crate::core::state::StreamState;
 use crate::queue::queue::StreamSource;
 
+enum Tab {
+    Streams,
+    Config,
+}
+
 pub struct LiveLinkApp {
     orchestrator: Arc<Orchestrator>,
     selected_screen: u32,
     volume: u8,
     search_query: String,
     show_multi_view: bool,
+    current_tab: Tab,
+    config_holodex_key: String,
+    config_twitch_client_id: String,
+    config_twitch_secret: String,
+    config_youtube_key: String,
+    config_max_streams: usize,
     cached_state_0: StreamState,
     cached_state_1: StreamState,
 }
 
 impl LiveLinkApp {
     pub fn new(orchestrator: Arc<Orchestrator>) -> Self {
+        let max_streams = orchestrator.max_streams;
         Self {
             orchestrator,
             selected_screen: 0,
             volume: 50,
             search_query: String::new(),
             show_multi_view: false,
+            current_tab: Tab::Streams,
+            config_holodex_key: String::new(),
+            config_twitch_client_id: String::new(),
+            config_twitch_secret: String::new(),
+            config_youtube_key: String::new(),
+            config_max_streams: max_streams,
             cached_state_0: StreamState::Idle,
             cached_state_1: StreamState::Idle,
         }
@@ -132,6 +150,70 @@ impl LiveLinkApp {
             });
         }
     }
+
+    fn render_config_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Configuration");
+        ui.separator();
+
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.group(|ui| {
+                ui.heading("API Keys");
+                ui.horizontal(|ui| {
+                    ui.label("Holodex API Key:");
+                    ui.text_edit_singleline(&mut self.config_holodex_key);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Twitch Client ID:");
+                    ui.text_edit_singleline(&mut self.config_twitch_client_id);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Twitch Client Secret:");
+                    ui.text_edit_singleline(&mut self.config_twitch_secret);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("YouTube API Key:");
+                    ui.text_edit_singleline(&mut self.config_youtube_key);
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.group(|ui| {
+                ui.heading("Player Settings");
+                ui.horizontal(|ui| {
+                    ui.label("Max Streams:");
+                    ui.add(egui::Slider::new(&mut self.config_max_streams, 1..=8));
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.group(|ui| {
+                ui.heading("Actions");
+                ui.horizontal(|ui| {
+                    if ui.button("Save Config").clicked() {
+                        ui.label("Config saved (not implemented - edit config files)");
+                    }
+                    if ui.button("Reset to Defaults").clicked() {
+                        self.config_max_streams = 4;
+                        self.config_holodex_key.clear();
+                        self.config_twitch_client_id.clear();
+                        self.config_twitch_secret.clear();
+                        self.config_youtube_key.clear();
+                    }
+                });
+            });
+
+            ui.add_space(20.0);
+
+            ui.group(|ui| {
+                ui.heading("About");
+                ui.label("LiveLink v0.1.0");
+                ui.label("Stream management for VTubers");
+                ui.hyperlink_to("GitHub", "https://github.com/livelink");
+            });
+        });
+    }
 }
 
 impl eframe::App for LiveLinkApp {
@@ -144,8 +226,23 @@ impl eframe::App for LiveLinkApp {
 
                 ui.separator();
 
-                ui.label("Search:");
-                ui.text_edit_singleline(&mut self.search_query);
+                match self.current_tab {
+                    Tab::Streams => {
+                        if ui.button("Streams").clicked() {}
+                        if ui.button("⚙ Config").clicked() {
+                            self.current_tab = Tab::Config;
+                        }
+                        ui.separator();
+                        ui.label("Search:");
+                        ui.text_edit_singleline(&mut self.search_query);
+                    }
+                    Tab::Config => {
+                        if ui.button("Streams").clicked() {
+                            self.current_tab = Tab::Streams;
+                        }
+                        if ui.button("⚙ Config").clicked() {}
+                    }
+                }
 
                 ui.separator();
 
@@ -200,6 +297,11 @@ impl eframe::App for LiveLinkApp {
                     });
                 }
             });
+
+            match self.current_tab {
+                Tab::Streams => {}
+                Tab::Config => self.render_config_panel(ui),
+            }
         });
 
         egui::SidePanel::right("info_panel").show(ctx, |ui| {
