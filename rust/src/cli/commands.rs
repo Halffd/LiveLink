@@ -56,6 +56,7 @@ pub enum Commands {
   Ochs,
   Diagnostics,
   Ui,
+  Config(ConfigCommand),
 }
 
 #[derive(Parser)]
@@ -155,6 +156,16 @@ pub struct QueryCommand {
   pub provider: Option<String>,
   #[arg(short, long, default_value_t = 25, help = "Maximum results")]
   pub limit: u32,
+}
+
+#[derive(Parser)]
+pub struct ConfigCommand {
+  #[arg(long, help = "Get all config")]
+  pub get: bool,
+  #[arg(long, help = "Get config value by key")]
+  pub key: Option<String>,
+  #[arg(long, help = "Set config value (key=value)")]
+  pub set: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -562,11 +573,44 @@ Commands::Diagnostics => {
           Box::new(|_cc| Ok(Box::new(app))),
         ).unwrap();
       });
-    });
+});
     println!("UI launched");
   }
+  Commands::Config(cmd) => {
+    if cmd.get {
+      let config = orchestrator.get_favorite_channels();
+      println!("=== Configuration ===");
+      println!("Max Streams: {}", orchestrator.max_streams);
+      println!();
+      println!("Favorite Channels:");
+      println!("  Holodex: {} channels", config.holodex.default.len());
+      println!("  Twitch: {} channels", config.twitch.default.len());
+      println!("  YouTube: {} channels", config.youtube.default.len());
+      println!("  Kick: {} channels", config.kick.default.len());
+      println!("  Niconico: {} channels", config.niconico.default.len());
+      println!("  Bilibili: {} channels", config.bilibili.default.len());
+      for ch in config.holodex.default.iter().take(5) {
+        println!("    - {}", ch.id);
+      }
+    } else if let Some(ref key) = cmd.key {
+      match key.as_str() {
+        "max_streams" => println!("max_streams = {}", orchestrator.max_streams),
+        "holodex" => println!("holodex = {} channels", orchestrator.get_favorite_channels().holodex.default.len()),
+        "twitch" => println!("twitch = {} channels", orchestrator.get_favorite_channels().twitch.default.len()),
+        "youtube" => println!("youtube = {} channels", orchestrator.get_favorite_channels().youtube.default.len()),
+        _ => println!("Unknown key: {}", key),
+      }
+    } else if let Some(ref set) = cmd.set {
+      println!("Set config: {} (not implemented - edit config files)", set);
+    } else {
+      println!("Usage: livelink config --get | --key <key> | --set <key=value>");
+      println!("  --get     Show all config");
+      println!("  --key     Get specific config value");
+      println!("  --set     Set config value");
+    }
+  }
 }
-    Ok(())
+Ok(())
 }
 
 pub fn parse_cli() -> Cli {
