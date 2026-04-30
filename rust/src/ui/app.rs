@@ -21,6 +21,18 @@ pub struct LiveLinkApp {
     config_twitch_secret: String,
     config_youtube_key: String,
     config_max_streams: usize,
+    config_player_type: String,
+    config_default_quality: String,
+    config_default_volume: u8,
+    config_auto_start: bool,
+    config_disable_heartbeat: bool,
+    config_screen0_width: u32,
+    config_screen0_height: u32,
+    config_screen0_quality: String,
+    config_screen1_width: u32,
+    config_screen1_height: u32,
+    config_screen1_quality: String,
+    config_log_level: String,
     cached_state_0: StreamState,
     cached_state_1: StreamState,
 }
@@ -40,6 +52,18 @@ impl LiveLinkApp {
             config_twitch_secret: String::new(),
             config_youtube_key: String::new(),
             config_max_streams: max_streams,
+            config_player_type: "mpv".to_string(),
+            config_default_quality: "best".to_string(),
+            config_default_volume: 50,
+            config_auto_start: false,
+            config_disable_heartbeat: false,
+            config_screen0_width: 1280,
+            config_screen0_height: 720,
+            config_screen0_quality: "best".to_string(),
+            config_screen1_width: 1280,
+            config_screen1_height: 720,
+            config_screen1_quality: "best".to_string(),
+            config_log_level: "info".to_string(),
             cached_state_0: StreamState::Idle,
             cached_state_1: StreamState::Idle,
         }
@@ -181,8 +205,77 @@ impl LiveLinkApp {
             ui.group(|ui| {
                 ui.heading("Player Settings");
                 ui.horizontal(|ui| {
+                    ui.label("Player:");
+                    egui::ComboBox::from_id_salt("player_type")
+                        .selected_text(&self.config_player_type)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.config_player_type, "mpv".to_string(), "mpv");
+                            ui.selectable_value(&mut self.config_player_type, "streamlink".to_string(), "streamlink");
+                            ui.selectable_value(&mut self.config_player_type, "vlc".to_string(), "vlc");
+                        });
+                });
+                ui.horizontal(|ui| {
                     ui.label("Max Streams:");
                     ui.add(egui::Slider::new(&mut self.config_max_streams, 1..=8));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Default Quality:");
+                    ui.text_edit_singleline(&mut self.config_default_quality);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Default Volume:");
+                    ui.add(egui::Slider::new(&mut self.config_default_volume, 0..=100));
+                });
+                ui.checkbox(&mut self.config_auto_start, "Auto Start");
+                ui.checkbox(&mut self.config_disable_heartbeat, "Disable Heartbeat");
+            });
+
+            ui.add_space(10.0);
+
+            ui.group(|ui| {
+                ui.heading("Screen 0 Settings");
+                ui.horizontal(|ui| {
+                    ui.label("Resolution:");
+                    ui.add(egui::Slider::new(&mut self.config_screen0_width, 640..=3840));
+                    ui.label("x");
+                    ui.add(egui::Slider::new(&mut self.config_screen0_height, 360..=2160));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Quality:");
+                    ui.text_edit_singleline(&mut self.config_screen0_quality);
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.group(|ui| {
+                ui.heading("Screen 1 Settings");
+                ui.horizontal(|ui| {
+                    ui.label("Resolution:");
+                    ui.add(egui::Slider::new(&mut self.config_screen1_width, 640..=3840));
+                    ui.label("x");
+                    ui.add(egui::Slider::new(&mut self.config_screen1_height, 360..=2160));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Quality:");
+                    ui.text_edit_singleline(&mut self.config_screen1_quality);
+                });
+            });
+
+            ui.add_space(10.0);
+
+            ui.group(|ui| {
+                ui.heading("Logging");
+                ui.horizontal(|ui| {
+                    ui.label("Log Level:");
+                    egui::ComboBox::from_id_salt("log_level")
+                        .selected_text(&self.config_log_level)
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.config_log_level, "debug".to_string(), "debug");
+                            ui.selectable_value(&mut self.config_log_level, "info".to_string(), "info");
+                            ui.selectable_value(&mut self.config_log_level, "warn".to_string(), "warn");
+                            ui.selectable_value(&mut self.config_log_level, "error".to_string(), "error");
+                        });
                 });
             });
 
@@ -196,6 +289,18 @@ impl LiveLinkApp {
                     }
                     if ui.button("Reset to Defaults").clicked() {
                         self.config_max_streams = 4;
+                        self.config_player_type = "mpv".to_string();
+                        self.config_default_quality = "best".to_string();
+                        self.config_default_volume = 50;
+                        self.config_auto_start = false;
+                        self.config_disable_heartbeat = false;
+                        self.config_screen0_width = 1280;
+                        self.config_screen0_height = 720;
+                        self.config_screen0_quality = "best".to_string();
+                        self.config_screen1_width = 1280;
+                        self.config_screen1_height = 720;
+                        self.config_screen1_quality = "best".to_string();
+                        self.config_log_level = "info".to_string();
                         self.config_holodex_key.clear();
                         self.config_twitch_client_id.clear();
                         self.config_twitch_secret.clear();
@@ -210,6 +315,7 @@ impl LiveLinkApp {
                 ui.heading("About");
                 ui.label("LiveLink v0.1.0");
                 ui.label("Stream management for VTubers");
+                ui.label("Supports: Holodex, Twitch, YouTube, Kick, Niconico, Bilibili");
                 ui.hyperlink_to("GitHub", "https://github.com/livelink");
             });
         });
