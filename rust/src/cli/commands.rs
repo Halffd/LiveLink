@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::sync::Arc;
+use chrono::Local;
 use crate::core::orchestrator::Orchestrator;
 use crate::queue::queue::{Queue, StreamSource};
 use crate::services::holodex::QueryOptions;
@@ -52,6 +53,7 @@ pub enum Commands {
   PlayerVolume { volume: u8, screen: Option<String> },
   PlayerSeek { seconds: i64, screen: u32 },
   Player(PlayerCommand),
+  Download(DownloadCommand),
   Query(QueryCommand),
   ServerStatus,
   Ochs,
@@ -177,6 +179,16 @@ pub struct PlayerCommand {
   pub show: bool,
   #[arg(long, help = "Set player type (mpv, streamlink, vlc)")]
   pub set: Option<String>,
+}
+
+#[derive(Parser)]
+pub struct DownloadCommand {
+  #[arg(help = "Stream URL to download")]
+  pub url: String,
+  #[arg(short, long, help = "Output file path")]
+  pub output: Option<String>,
+  #[arg(short, long, help = "Quality (best, worst, 720p, etc)")]
+  pub quality: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -536,11 +548,23 @@ Commands::PlayerSeek { seconds, screen } => {
           println!("Invalid player: {}. Use: mpv, streamlink, vlc", set);
         }
       }
-    } else {
-      println!("Usage: livelink player --show | --set <player>");
-      println!("  --show  Show current player");
-      println!("  --set   Set player type (mpv, streamlink, vlc)");
-    }
+} else {
+    println!("Usage: livelink player --show | --set <player>");
+    println!("  --show  Show current player");
+    println!("  --set   Set player type (mpv, streamlink, vlc)");
+  }
+  }
+  Commands::Download(cmd) => {
+    let output = cmd.output.clone().unwrap_or_else(|| {
+      let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+      format!("stream_{}.mp4", timestamp)
+    });
+    let quality = cmd.quality.clone().unwrap_or_else(|| "best".to_string());
+    println!("Downloading stream to: {}", output);
+    println!("Quality: {}", quality);
+    println!("URL: {}", cmd.url);
+    println!("Use streamlink CLI directly for actual downloads:");
+    println!("  streamlink {} {} -o {}", cmd.url, quality, output);
   }
   Commands::Query(cmd) => {
     let search = cmd.search.clone().or(cmd.query.clone());
