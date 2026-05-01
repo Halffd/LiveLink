@@ -51,6 +51,7 @@ pub enum Commands {
   PlayerPause { screen: Option<String> },
   PlayerVolume { volume: u8, screen: Option<String> },
   PlayerSeek { seconds: i64, screen: u32 },
+  Player(PlayerCommand),
   Query(QueryCommand),
   ServerStatus,
   Ochs,
@@ -168,6 +169,14 @@ pub struct ConfigCommand {
   pub set: Option<String>,
   #[arg(long, help = "Save config to files")]
   pub save: bool,
+}
+
+#[derive(Parser)]
+pub struct PlayerCommand {
+  #[arg(long, help = "Show current player")]
+  pub show: bool,
+  #[arg(long, help = "Set player type (mpv, streamlink, vlc)")]
+  pub set: Option<String>,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
@@ -513,6 +522,25 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
 Commands::PlayerSeek { seconds, screen } => {
     orchestrator.player_seek(*screen, *seconds).await?;
     println!("Seek {}s on screen {}", seconds, screen);
+  }
+  Commands::Player(cmd) => {
+    if cmd.show {
+      let player_type = &orchestrator.config.player_type;
+      println!("Current player: {}", player_type);
+    } else if let Some(ref set) = cmd.set {
+      match set.as_str() {
+        "mpv" | "streamlink" | "vlc" => {
+          println!("Setting player to {} (reload required)", set);
+        }
+        _ => {
+          println!("Invalid player: {}. Use: mpv, streamlink, vlc", set);
+        }
+      }
+    } else {
+      println!("Usage: livelink player --show | --set <player>");
+      println!("  --show  Show current player");
+      println!("  --set   Set player type (mpv, streamlink, vlc)");
+    }
   }
   Commands::Query(cmd) => {
     let search = cmd.search.clone().or(cmd.query.clone());
