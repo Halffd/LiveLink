@@ -195,14 +195,14 @@ impl YouTubeService {
             video_id: String,
         }
 
-        #[derive(serde::Deserialize)]
-        struct YouTubeSnippet {
-            title: String,
-            channel_title: String,
-            channel_id: String,
-            #[serde(rename = "publishedAt")]
-            published_at: String,
-        }
+#[derive(serde::Deserialize)]
+struct YouTubeSnippet {
+  title: String,
+  channel_title: String,
+  channel_id: String,
+  #[serde(rename = "publishedAt")]
+  _published_at: String,
+}
 
         let api_response: YouTubeApiResponse = response
             .json()
@@ -340,13 +340,14 @@ impl YouTubeService {
       video_id: String,
     }
 
-    #[derive(serde::Deserialize)]
-    struct YouTubeSnippet {
-      channel_title: String,
-      channel_id: String,
-      title: String,
-      description: Option<String>,
-    }
+#[derive(serde::Deserialize)]
+struct YouTubeSnippet {
+  channel_title: String,
+  channel_id: String,
+  title: String,
+  #[allow(dead_code)]
+  description: Option<String>,
+}
 
     let search_response: YouTubeSearchResponse = response
       .json()

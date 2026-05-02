@@ -171,23 +171,24 @@ assert_eq!(favs.kick.default.len(), 2);
     assert_eq!(favs.bilibili.default.len(), 2);
 }
 
-    #[test]
-    fn test_load_new_format() {
-let json = r#"{
+#[test]
+fn test_load_new_format() {
+  let json = r#"{
   "holodex": {"default": [{"id": "UC1op", "name": "Test", "score": 100}]},
   "twitch": {"default": []},
   "youtube": {"default": []},
   "kick": {"default": []},
   "niconico": {"default": []},
-  "bilibili": {"default": []}
+  "bilibili": {"default": []},
+  "facebook": {"default": []}
 }"#;
-        let mut file = NamedTempFile::new().unwrap();
-        file.write_all(json.as_bytes()).unwrap();
+  let mut file = NamedTempFile::new().unwrap();
+  file.write_all(json.as_bytes()).unwrap();
 
-        let result = FavoriteChannels::load_from_file(&file.path().to_path_buf());
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().holodex.default[0].score, 100);
-    }
+  let result = FavoriteChannels::load_from_file(&file.path().to_path_buf());
+  assert!(result.is_ok());
+  assert_eq!(result.unwrap().holodex.default[0].score, 100);
+}
 
     #[test]
     fn test_load_array_of_strings() {

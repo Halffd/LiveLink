@@ -146,8 +146,9 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn test_check_channel_returns_bool() {
+#[tokio::test]
+#[ignore = "Requires network access to external API"]
+async fn test_check_channel_returns_bool() {
         let service = create_test_service();
         let result = service.check_channel("6").await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
