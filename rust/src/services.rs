@@ -1,6 +1,7 @@
+pub mod bilibili;
+pub mod facebook;
 pub mod fallback;
 pub mod holodex;
-pub mod bilibili;
 pub mod kick;
 pub mod niconico;
 pub mod network;

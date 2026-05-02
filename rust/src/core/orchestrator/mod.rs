@@ -209,6 +209,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
       kick: Some(crate::config::KickConfig { enabled: true }),
       niconico: Some(crate::config::NiconicoConfig { enabled: true }),
       bilibili: Some(crate::config::BilibiliConfig { enabled: true }),
+      facebook: Some(crate::config::FacebookConfig { enabled: true }),
       player: Some(crate::config::PlayerConfig {
         player_type: self.config.player_type.clone(),
         default_quality: "best".to_string(),

@@ -110,6 +110,12 @@ pub struct BilibiliConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FacebookConfig {
+  #[serde(default = "default_true")]
+  pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlayerConfig {
     #[serde(default = "default_player_type")]
     pub player_type: String,
@@ -322,14 +328,15 @@ kick: main_config
 
 fn default_favorites(&self) -> FavoriteChannels {
     FavoriteChannels {
-        holodex: PlatformFavorites { default: vec![] },
-        twitch: PlatformFavorites { default: vec![] },
-        youtube: PlatformFavorites { default: vec![] },
-        kick: PlatformFavorites { default: vec![] },
-        niconico: PlatformFavorites { default: vec![] },
-        bilibili: PlatformFavorites { default: vec![] },
+      holodex: PlatformFavorites { default: vec![] },
+      twitch: PlatformFavorites { default: vec![] },
+      youtube: PlatformFavorites { default: vec![] },
+      kick: PlatformFavorites { default: vec![] },
+      niconico: PlatformFavorites { default: vec![] },
+      bilibili: PlatformFavorites { default: vec![] },
+      facebook: PlatformFavorites { default: vec![] },
     }
-}
+  }
 
     fn default_player_config(&self) -> PlayerConfig {
         PlayerConfig {
@@ -454,5 +461,6 @@ pub struct MainConfig {
   pub kick: Option<KickConfig>,
   pub niconico: Option<NiconicoConfig>,
   pub bilibili: Option<BilibiliConfig>,
+  pub facebook: Option<FacebookConfig>,
   pub player: Option<PlayerConfig>,
 }

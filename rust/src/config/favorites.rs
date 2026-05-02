@@ -4,12 +4,13 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FavoriteChannels {
-    pub holodex: PlatformFavorites,
-    pub twitch: PlatformFavorites,
-    pub youtube: PlatformFavorites,
-    pub kick: PlatformFavorites,
-    pub niconico: PlatformFavorites,
-    pub bilibili: PlatformFavorites,
+  pub holodex: PlatformFavorites,
+  pub twitch: PlatformFavorites,
+  pub youtube: PlatformFavorites,
+  pub kick: PlatformFavorites,
+  pub niconico: PlatformFavorites,
+  pub bilibili: PlatformFavorites,
+  pub facebook: PlatformFavorites,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,58 +54,64 @@ impl FavoriteChannels {
 
 Ok(FavoriteChannels {
     holodex: PlatformFavorites {
-        default: channels.clone(),
+      default: channels.clone(),
     },
     twitch: PlatformFavorites {
-        default: channels.clone(),
+      default: channels.clone(),
     },
     youtube: PlatformFavorites {
-        default: channels.clone(),
+      default: channels.clone(),
     },
     kick: PlatformFavorites {
-        default: channels.clone(),
-    },
-niconico: PlatformFavorites {
-        default: channels.clone(),
-    },
-    bilibili: PlatformFavorites {
-        default: channels,
-    },
-})
-    }
-
-    fn from_url_array(urls: Vec<String>) -> Self {
-        let channels: Vec<FavoriteChannel> = urls
-            .into_iter()
-            .enumerate()
-            .map(|(idx, url)| FavoriteChannel {
-                id: url.clone(),
-                name: extract_name_from_url(&url),
-                score: (1000 - idx) as u32,
-            })
-            .collect();
-
-Self {
-    holodex: PlatformFavorites {
-        default: channels.clone(),
-    },
-    twitch: PlatformFavorites {
-        default: channels.clone(),
-    },
-    youtube: PlatformFavorites {
-        default: channels.clone(),
-    },
-    kick: PlatformFavorites {
-        default: channels.clone(),
+      default: channels.clone(),
     },
     niconico: PlatformFavorites {
-        default: channels.clone(),
+      default: channels.clone(),
     },
     bilibili: PlatformFavorites {
-        default: channels,
+      default: channels.clone(),
     },
-}
+    facebook: PlatformFavorites {
+      default: channels,
+    },
+  })
     }
+
+fn from_url_array(urls: Vec<String>) -> Self {
+    let channels: Vec<FavoriteChannel> = urls
+      .into_iter()
+      .enumerate()
+      .map(|(idx, url)| FavoriteChannel {
+        id: url.clone(),
+        name: extract_name_from_url(&url),
+        score: (1000 - idx) as u32,
+      })
+      .collect();
+
+    Self {
+      holodex: PlatformFavorites {
+        default: channels.clone(),
+      },
+      twitch: PlatformFavorites {
+        default: channels.clone(),
+      },
+      youtube: PlatformFavorites {
+        default: channels.clone(),
+      },
+      kick: PlatformFavorites {
+        default: channels.clone(),
+      },
+      niconico: PlatformFavorites {
+        default: channels.clone(),
+      },
+      bilibili: PlatformFavorites {
+        default: channels.clone(),
+      },
+      facebook: PlatformFavorites {
+        default: channels,
+      },
+    }
+  }
 }
 
 fn extract_name_from_url(url: &str) -> String {
@@ -127,16 +134,17 @@ struct LegacyFavorites {
 }
 
 impl Default for FavoriteChannels {
-    fn default() -> Self {
-        Self {
-            holodex: PlatformFavorites { default: vec![] },
-            twitch: PlatformFavorites { default: vec![] },
-            youtube: PlatformFavorites { default: vec![] },
-            kick: PlatformFavorites { default: vec![] },
-            niconico: PlatformFavorites { default: vec![] },
-            bilibili: PlatformFavorites { default: vec![] },
-        }
+  fn default() -> Self {
+    Self {
+      holodex: PlatformFavorites { default: vec![] },
+      twitch: PlatformFavorites { default: vec![] },
+      youtube: PlatformFavorites { default: vec![] },
+      kick: PlatformFavorites { default: vec![] },
+      niconico: PlatformFavorites { default: vec![] },
+      bilibili: PlatformFavorites { default: vec![] },
+      facebook: PlatformFavorites { default: vec![] },
     }
+  }
 }
 
 #[cfg(test)]
