@@ -81,7 +81,7 @@ impl FacebookService {
     url.contains("facebook.com") || url.contains("fb.watch")
   }
 
-  pub async fn query(&self, options: QueryOptions) -> Result<Vec<StreamSource>, FacebookError> {
+  pub async fn query(&self, options: &QueryOptions) -> Result<Vec<StreamSource>, FacebookError> {
     if !self.enabled {
       return Ok(vec![]);
     }

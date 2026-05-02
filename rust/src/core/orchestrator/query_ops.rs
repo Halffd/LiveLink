@@ -85,21 +85,35 @@ impl Orchestrator {
             }
         }
 
-        if platform_filter.is_none() || platform_filter == Some("bilibili") {
-            if self.bilibili_service.is_enabled() {
-                match self.bilibili_service.query(&options).await {
-                    Ok(sources) => {
-                        info!(count = sources.len(), source = "bilibili", "Queried streams from Bilibili");
-                        all_sources.extend(sources);
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Bilibili query failed");
-                    }
-                }
-            }
+if platform_filter.is_none() || platform_filter == Some("bilibili") {
+    if self.bilibili_service.is_enabled() {
+      match self.bilibili_service.query(&options).await {
+        Ok(sources) => {
+          info!(count = sources.len(), source = "bilibili", "Queried streams from Bilibili");
+          all_sources.extend(sources);
         }
+        Err(e) => {
+          tracing::warn!(error = %e, "Bilibili query failed");
+        }
+      }
+    }
+  }
 
-        if all_sources.is_empty() {
+  if platform_filter.is_none() || platform_filter == Some("facebook") || platform_filter == Some("fb") {
+    if self.facebook_service.is_enabled() {
+      match self.facebook_service.query(&options).await {
+        Ok(sources) => {
+          info!(count = sources.len(), source = "facebook", "Queried streams from Facebook");
+          all_sources.extend(sources);
+        }
+        Err(e) => {
+          tracing::warn!(error = %e, "Facebook query failed");
+        }
+      }
+    }
+  }
+
+  if all_sources.is_empty() {
             return Err("No streams found for the given query".to_string());
         }
 

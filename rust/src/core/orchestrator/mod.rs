@@ -10,11 +10,12 @@ pub mod stream_ops;
 
 use crate::core::state::{OrchestratorConfig, ScreenState, StreamState};
 use crate::queue::queue::QueueService;
+use crate::services::bilibili::BilibiliService;
+use crate::services::facebook::FacebookService;
 use crate::services::fallback::FallbackService;
 use crate::services::holodex::HolodexService;
 use crate::services::kick::KickService;
 use crate::services::niconico::NiconicoService;
-use crate::services::bilibili::BilibiliService;
 use crate::services::network::{NetworkEvent, NetworkState};
 use crate::services::player::{PlayerConfig, PlayerService, ProcessExit};
 use crate::services::twitch::TwitchService;
@@ -34,10 +35,11 @@ pub struct Orchestrator {
     holodex_service: Arc<HolodexService>,
     twitch_service: Arc<Mutex<TwitchService>>,
     youtube_service: Arc<Mutex<YouTubeService>>,
-    kick_service: Arc<KickService>,
-    niconico_service: Arc<NiconicoService>,
-    bilibili_service: Arc<BilibiliService>,
-    pub max_streams: usize,
+kick_service: Arc<KickService>,
+  niconico_service: Arc<NiconicoService>,
+  bilibili_service: Arc<BilibiliService>,
+  facebook_service: Arc<FacebookService>,
+  pub max_streams: usize,
 }
 
 impl Orchestrator {
@@ -84,25 +86,27 @@ impl Orchestrator {
         let holodex_service = HolodexService::new(config.holodex_api_key.clone());
         let twitch_service = TwitchService::new(config.twitch_client_id.clone(), config.twitch_client_secret.clone());
         let youtube_service = YouTubeService::new(config.youtube_api_key.clone());
-        let kick_service = KickService::new();
-        let niconico_service = NiconicoService::new();
-        let bilibili_service = BilibiliService::new();
+let kick_service = KickService::new();
+  let niconico_service = NiconicoService::new();
+  let bilibili_service = BilibiliService::new();
+  let facebook_service = FacebookService::new();
 
-        let orchestrator = Self {
-            config: config.clone(),
-            state: DashMap::new(),
-            locks: DashMap::new(),
-            player: Arc::new(Mutex::new(player)),
-            queue: Arc::new(Mutex::new(queue)),
-            fallback_service: Arc::new(fallback_service),
-            holodex_service: Arc::new(holodex_service),
-            twitch_service: Arc::new(Mutex::new(twitch_service)),
-            youtube_service: Arc::new(Mutex::new(youtube_service)),
-            kick_service: Arc::new(kick_service),
-            niconico_service: Arc::new(niconico_service),
-            bilibili_service: Arc::new(bilibili_service),
-            max_streams,
-        };
+  let orchestrator = Self {
+    config: config.clone(),
+    state: DashMap::new(),
+    locks: DashMap::new(),
+    player: Arc::new(Mutex::new(player)),
+    queue: Arc::new(Mutex::new(queue)),
+    fallback_service: Arc::new(fallback_service),
+    holodex_service: Arc::new(holodex_service),
+    twitch_service: Arc::new(Mutex::new(twitch_service)),
+    youtube_service: Arc::new(Mutex::new(youtube_service)),
+    kick_service: Arc::new(kick_service),
+    niconico_service: Arc::new(niconico_service),
+    bilibili_service: Arc::new(bilibili_service),
+    facebook_service: Arc::new(facebook_service),
+    max_streams,
+  };
 
         let orchestrator_clone = Arc::new(orchestrator.clone_inner());
         let orchestrator_for_exit = orchestrator_clone.clone();
@@ -119,23 +123,24 @@ impl Orchestrator {
         orchestrator
     }
 
-    fn clone_inner(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            state: DashMap::new(),
-            locks: DashMap::new(),
-            player: self.player.clone(),
-            queue: self.queue.clone(),
-            fallback_service: self.fallback_service.clone(),
-            holodex_service: self.holodex_service.clone(),
-            twitch_service: self.twitch_service.clone(),
-            youtube_service: self.youtube_service.clone(),
-            kick_service: self.kick_service.clone(),
-            niconico_service: self.niconico_service.clone(),
-            bilibili_service: self.bilibili_service.clone(),
-            max_streams: self.max_streams,
-        }
+fn clone_inner(&self) -> Self {
+    Self {
+      config: self.config.clone(),
+      state: DashMap::new(),
+      locks: DashMap::new(),
+      player: self.player.clone(),
+      queue: self.queue.clone(),
+      fallback_service: self.fallback_service.clone(),
+      holodex_service: self.holodex_service.clone(),
+      twitch_service: self.twitch_service.clone(),
+      youtube_service: self.youtube_service.clone(),
+      kick_service: self.kick_service.clone(),
+      niconico_service: self.niconico_service.clone(),
+      bilibili_service: self.bilibili_service.clone(),
+      facebook_service: self.facebook_service.clone(),
+      max_streams: self.max_streams,
     }
+  }
 
     async fn exit_listener(
         mut receiver: mpsc::Receiver<ProcessExit>,
@@ -300,10 +305,11 @@ impl Clone for Orchestrator {
             holodex_service: self.holodex_service.clone(),
             twitch_service: self.twitch_service.clone(),
             youtube_service: self.youtube_service.clone(),
-            kick_service: self.kick_service.clone(),
-            niconico_service: self.niconico_service.clone(),
-            bilibili_service: self.bilibili_service.clone(),
-            max_streams: self.max_streams,
-        }
+kick_service: self.kick_service.clone(),
+      niconico_service: self.niconico_service.clone(),
+      bilibili_service: self.bilibili_service.clone(),
+      facebook_service: self.facebook_service.clone(),
+      max_streams: self.max_streams,
     }
+  }
 }

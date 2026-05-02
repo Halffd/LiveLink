@@ -643,17 +643,19 @@ Commands::Diagnostics => {
       println!("  Kick: {} channels", config.kick.default.len());
       println!("  Niconico: {} channels", config.niconico.default.len());
       println!("  Bilibili: {} channels", config.bilibili.default.len());
+      println!("  Facebook: {} channels", config.facebook.default.len());
       for ch in config.holodex.default.iter().take(5) {
         println!("    - {}", ch.id);
       }
-    } else if let Some(ref key) = cmd.key {
-      match key.as_str() {
-        "max_streams" => println!("max_streams = {}", orchestrator.max_streams),
-        "holodex" => println!("holodex = {} channels", orchestrator.get_favorite_channels().holodex.default.len()),
-        "twitch" => println!("twitch = {} channels", orchestrator.get_favorite_channels().twitch.default.len()),
-        "youtube" => println!("youtube = {} channels", orchestrator.get_favorite_channels().youtube.default.len()),
-        _ => println!("Unknown key: {}", key),
-      }
+} else if let Some(ref key) = cmd.key {
+    match key.as_str() {
+      "max_streams" => println!("max_streams = {}", orchestrator.max_streams),
+      "holodex" => println!("holodex = {} channels", orchestrator.get_favorite_channels().holodex.default.len()),
+      "twitch" => println!("twitch = {} channels", orchestrator.get_favorite_channels().twitch.default.len()),
+      "youtube" => println!("youtube = {} channels", orchestrator.get_favorite_channels().youtube.default.len()),
+      "facebook" | "fb" => println!("facebook = {} channels", orchestrator.get_favorite_channels().facebook.default.len()),
+      _ => println!("Unknown key: {}", key),
+    }
 } else if let Some(ref set) = cmd.set {
     let parts: Vec<&str> = set.splitn(2, '=').collect();
     if parts.len() != 2 {
