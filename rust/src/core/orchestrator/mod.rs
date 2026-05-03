@@ -115,13 +115,23 @@ let kick_service = KickService::new();
             Self::exit_listener(receiver, orchestrator_for_exit).await;
         });
 
-        let orchestrator_for_network = Arc::new(orchestrator.clone_inner());
-        tokio::spawn(async move {
-            Self::network_listener(network_receiver, orchestrator_for_network).await;
-        });
+let orchestrator_for_network = Arc::new(orchestrator.clone_inner());
+  tokio::spawn(async move {
+    Self::network_listener(network_receiver, orchestrator_for_network).await;
+  });
 
-        orchestrator
+  let orchestrator_for_poll = Arc::new(orchestrator.clone_inner());
+  tokio::spawn(async move {
+    loop {
+      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+      let player = orchestrator_for_poll.player.clone();
+      let player_guard = player.lock().await;
+      player_guard.poll_exits();
     }
+  });
+
+  orchestrator
+}
 
 fn clone_inner(&self) -> Self {
     Self {
