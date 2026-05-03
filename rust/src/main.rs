@@ -68,12 +68,19 @@ async fn main() {
     info!("LiveLink starting...");
 
 let has_cli_args = std::env::args().len() > 1;
-let (mpv_config_dir, config_dir, port) = if has_cli_args {
+  let (mpv_config_dir, config_dir, port, debug, mpv_debug, player_debug) = if has_cli_args {
     let cli = cli::commands::parse_cli();
-    (cli.mpv_config_dir.clone(), cli.config_dir.clone(), cli.port)
-} else {
-    ("mpv_config".to_string(), "config".to_string(), 3001u16)
-};
+    (
+      cli.mpv_config_dir.clone(),
+      cli.config_dir.clone(),
+      cli.port,
+      cli.debug,
+      cli.mpv_debug,
+      cli.player_debug,
+    )
+  } else {
+    ("mpv_config".to_string(), "config".to_string(), 3001u16, false, false, false)
+  };
 
 let _env = Env::load();
 
@@ -108,11 +115,14 @@ let loader = ConfigLoader::with_base_path(&config_dir);
             .iter()
             .flat_map(|(k, v)| vec![k.clone(), v.to_string()])
             .collect(),
-        streamlink_path: config.streamlink.path,
-        streamlink_options: config.streamlink.options,
-        vlc_path: config.vlc.path,
-        player_type: config.player.player_type,
-    };
+streamlink_path: config.streamlink.path,
+    streamlink_options: config.streamlink.options,
+    vlc_path: config.vlc.path,
+    player_type: config.player.player_type,
+    debug,
+    mpv_debug,
+    player_debug,
+  };
 
     let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
 

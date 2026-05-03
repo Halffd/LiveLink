@@ -8,14 +8,20 @@ use crate::services::holodex::QueryOptions;
 #[command(name = "livelink")]
 #[command(about = "LiveLink streaming manager", long_about = None)]
 pub struct Cli {
-    #[arg(short, long, global = true, default_value = "config")]
-    pub config_dir: String,
-    #[arg(long, global = true, default_value = "mpv_config")]
-    pub mpv_config_dir: String,
-    #[arg(short = 'P', long, global = true, default_value_t = 3001)]
-    pub port: u16,
-    #[command(subcommand)]
-    pub command: Commands,
+  #[arg(short, long, global = true, default_value = "config")]
+  pub config_dir: String,
+  #[arg(long, global = true, default_value = "mpv_config")]
+  pub mpv_config_dir: String,
+  #[arg(short = 'P', long, global = true, default_value_t = 3001)]
+  pub port: u16,
+  #[arg(short = 'd', long, global = true, help = "Enable debug logging")]
+  pub debug: bool,
+  #[arg(long, global = true, help = "Enable mpv debug output")]
+  pub mpv_debug: bool,
+  #[arg(long, global = true, help = "Enable player debug output")]
+  pub player_debug: bool,
+  #[command(subcommand)]
+  pub command: Commands,
 }
 
 #[derive(Subcommand)]
