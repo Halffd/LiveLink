@@ -68,7 +68,7 @@ async fn main() {
     info!("LiveLink starting...");
 
 let has_cli_args = std::env::args().len() > 1;
-  let (mpv_config_dir, config_dir, port, debug, mpv_debug, player_debug) = if has_cli_args {
+  let (mpv_config_dir, config_dir, port, debug, mpv_debug, player_debug, log_level, log_file, log_dir) = if has_cli_args {
     let cli = cli::commands::parse_cli();
     (
       cli.mpv_config_dir.clone(),
@@ -77,9 +77,12 @@ let has_cli_args = std::env::args().len() > 1;
       cli.debug,
       cli.mpv_debug,
       cli.player_debug,
+      cli.log_level.unwrap_or_else(|| "info".to_string()),
+      cli.log_file.unwrap_or_else(|| "player.log".to_string()),
+      cli.log_dir.unwrap_or_else(|| "logs".to_string()),
     )
   } else {
-    ("mpv_config".to_string(), "config".to_string(), 3001u16, false, false, false)
+    ("mpv_config".to_string(), "config".to_string(), 3001u16, false, false, false, "info".to_string(), "player.log".to_string(), "logs".to_string())
   };
 
 let _env = Env::load();
@@ -122,6 +125,9 @@ streamlink_path: config.streamlink.path,
     debug,
     mpv_debug,
     player_debug,
+    log_level,
+    log_file,
+    log_dir,
   };
 
     let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));

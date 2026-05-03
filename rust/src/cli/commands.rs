@@ -20,6 +20,12 @@ pub struct Cli {
   pub mpv_debug: bool,
   #[arg(long, global = true, help = "Enable player debug output")]
   pub player_debug: bool,
+  #[arg(long, global = true, help = "Player log level (error, warn, info, debug, trace)")]
+  pub log_level: Option<String>,
+  #[arg(long, global = true, help = "Player log file name")]
+  pub log_file: Option<String>,
+  #[arg(long, global = true, help = "Player log directory")]
+  pub log_dir: Option<String>,
   #[command(subcommand)]
   pub command: Commands,
 }

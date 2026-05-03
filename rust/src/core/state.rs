@@ -204,5 +204,8 @@ pub struct OrchestratorConfig {
   pub debug: bool,
   pub mpv_debug: bool,
   pub player_debug: bool,
+  pub log_level: String,
+  pub log_file: String,
+  pub log_dir: String,
 }
 
