@@ -3,6 +3,7 @@ pub mod facebook;
 pub mod fallback;
 pub mod holodex;
 pub mod kick;
+pub mod mpv;
 pub mod niconico;
 pub mod network;
 pub mod player;
