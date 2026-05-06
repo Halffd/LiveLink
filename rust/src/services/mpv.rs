@@ -1,23 +1,29 @@
-use mpv::{MpvHandler, MpvHandlerBuilder, Event, Format, LogLevel};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::os::unix::process::CommandExt;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 
 #[derive(Error, Debug)]
 pub enum MpvError {
-    #[error("MPV creation failed: {0}")]
-    Creation(String),
-    #[error("MPV command failed: {0}")]
-    Command(String),
-    #[error("MPV event error: {0}")]
-    Event(String),
-    #[error("MPV property error: {0}")]
-    Property(String),
+    #[error("Failed to fork: {0}")]
+    Fork(String),
+    #[error("Failed to spawn mpv: {0}")]
+    Spawn(String),
+    #[error("MPV process error: {0}")]
+    Process(String),
+    #[error("IPC error: {0}")]
+    Ipc(String),
+    #[error("Not running")]
+    NotRunning,
+    #[error("Timeout")]
+    Timeout,
 }
 
 pub struct MpvInstance {
-    handler: MpvHandler,
+    child_pid: Option<libc::pid_t>,
+    ipc_path: PathBuf,
     paused: bool,
     playback_time: f64,
     width: u32,
@@ -30,19 +36,12 @@ pub struct MpvInstance {
 
 impl MpvInstance {
     pub fn new() -> Result<Self, MpvError> {
-        let mut builder = MpvHandlerBuilder::new()
-            .map_err(|e| MpvError::Creation(e.to_string()))?;
-
-        builder.set_option("idle", "yes")
-            .map_err(|e| MpvError::Creation(e.to_string()))?;
-        builder.set_option("no-terminal", "")
-            .map_err(|e| MpvError::Creation(e.to_string()))?;
-
-        let handler = builder.build()
-            .map_err(|e| MpvError::Creation(e.to_string()))?;
+        let ipc_dir = std::env::temp_dir();
+        let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}", std::process::id()));
 
         Ok(Self {
-            handler,
+            child_pid: None,
+            ipc_path,
             paused: false,
             playback_time: 0.0,
             width: 1280,
@@ -60,57 +59,86 @@ impl MpvInstance {
         self.x = x;
         self.y = y;
         self.volume = volume;
-
-        let geo = format!("{}x{}+{}+{}", width, height, x, y);
-        self.handler.set_option("geometry", geo.as_str())
-            .map_err(|e| MpvError::Property(e.to_string()))?;
-
-        self.handler.set_property("volume", volume as f64)
-            .map_err(|e| MpvError::Property(e.to_string()))?;
-
         Ok(())
     }
 
-    pub fn play(&mut self, url: &str) -> Result<(), MpvError> {
-        self.url = Some(url.to_string());
-        self.handler.command(&["loadfile", url, "replace"])
-            .map_err(|e| MpvError::Command(e.to_string()))?;
-        self.paused = false;
-        info!(url, "Started playback");
+    pub fn play(&mut self, url: &str, mpv_path: &str, extra_args: &[String]) -> Result<(), MpvError> {
+        if self.child_pid.is_some() {
+            self.stop()?;
+        }
+
+        let ipc_server = format!("{}", self.ipc_path.display());
+        let ipc_for_child = ipc_server.clone();
+
+        match unsafe { libc::fork() } {
+            -1 => return Err(MpvError::Fork("fork() failed".to_string())),
+            0 => {
+                unsafe { libc::setsid(); };
+                let mut args = vec![
+                    "--input-ipc-server".to_string(),
+                    ipc_server,
+                    "--geometry".to_string(),
+                    format!("{}x{}+{}+{}", self.width, self.height, self.x, self.y),
+                    "--volume".to_string(),
+                    self.volume.to_string(),
+                    "--idle".to_string(),
+                ];
+                args.extend(extra_args.iter().cloned());
+                args.push("--".to_string());
+                args.push(url.to_string());
+
+                let err = Command::new(mpv_path)
+                    .args(&args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .exec();
+
+                std::process::exit(1);
+            }
+            pid => {
+                self.child_pid = Some(pid);
+                self.url = Some(url.to_string());
+                self.paused = false;
+                self.playback_time = 0.0;
+                info!(url, pid, "Started mpv subprocess via fork");
+            }
+        }
+
         Ok(())
     }
 
     pub fn pause(&mut self) -> Result<(), MpvError> {
-        self.handler.set_property("pause", true)
-            .map_err(|e| MpvError::Property(e.to_string()))?;
+        self.send_ipc_command("set pause yes")?;
         self.paused = true;
         Ok(())
     }
 
     pub fn resume(&mut self) -> Result<(), MpvError> {
-        self.handler.set_property("pause", false)
-            .map_err(|e| MpvError::Property(e.to_string()))?;
+        self.send_ipc_command("set pause no")?;
         self.paused = false;
         Ok(())
     }
 
     pub fn stop(&mut self) -> Result<(), MpvError> {
-        self.handler.command(&["stop"])
-            .map_err(|e| MpvError::Command(e.to_string()))?;
+        if let Some(pid) = self.child_pid {
+            let _ = self.send_ipc_command("quit");
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+            let _ = std::fs::remove_file(&self.ipc_path);
+        }
+        self.child_pid = None;
         self.url = None;
         Ok(())
     }
 
     pub fn seek(&mut self, seconds: f64) -> Result<(), MpvError> {
-        self.handler.command(&["seek", &seconds.to_string(), "relative"])
-            .map_err(|e| MpvError::Command(e.to_string()))?;
+        self.send_ipc_command(&format!("seek {} relative", seconds))?;
         Ok(())
     }
 
     pub fn set_volume(&mut self, volume: u8) -> Result<(), MpvError> {
         self.volume = volume;
-        self.handler.set_property("volume", volume as f64)
-            .map_err(|e| MpvError::Property(e.to_string()))?;
+        self.send_ipc_command(&format!("set volume {}", volume))?;
         Ok(())
     }
 
@@ -123,76 +151,45 @@ impl MpvInstance {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.url.is_some() && !self.paused
+        self.url.is_some() && self.child_pid.is_some()
     }
 
     pub fn current_url(&self) -> Option<&str> {
         self.url.as_deref()
     }
 
-    pub fn poll_event(&mut self, timeout_ms: u64) -> Result<Option<MpvEvent>, MpvError> {
-        let timeout_secs = timeout_ms as f64 / 1000.0;
-        match self.handler.wait_event(timeout_secs) {
-            None => Ok(None),
-            Some(Event::LogMessage { text, log_level, .. }) => {
-                let level = log_level as i32;
-                if level <= 20 {
-                    error!("mpv: {}", text);
-                } else if level <= 30 {
-                    warn!("mpv: {}", text);
-                } else if level <= 40 {
-                    info!("mpv: {}", text);
-                } else {
-                    debug!(level = ?log_level, "mpv: {}", text);
-                }
-                Ok(None)
-            }
-            Some(Event::PropertyChange { name, change, .. }) => {
-                if name == "playback-time" {
-                    match change {
-                        Format::Double(pt) => self.playback_time = pt,
-                        Format::Int(pt) => self.playback_time = pt as f64,
-                        _ => {}
-                    }
-                }
-                Ok(None)
-            }
-            Some(Event::Idle) => Ok(Some(MpvEvent::Idle)),
-            Some(Event::StartFile) => Ok(Some(MpvEvent::StartFile)),
-            Some(Event::FileLoaded) => Ok(Some(MpvEvent::FileLoaded)),
-            Some(Event::EndFile(_)) => Ok(Some(MpvEvent::EndFile)),
-            Some(Event::Pause) => {
-                self.paused = true;
-                Ok(Some(MpvEvent::Pause))
-            }
-            Some(Event::Unpause) => {
-                self.paused = false;
-                Ok(Some(MpvEvent::Unpause))
-            }
-            Some(Event::Shutdown) => Ok(Some(MpvEvent::Shutdown)),
-            Some(Event::AudioReconfig) => Ok(Some(MpvEvent::AudioReconfig)),
-            Some(Event::VideoReconfig) => Ok(Some(MpvEvent::VideoReconfig)),
-            Some(Event::Seek) => Ok(None),
-            Some(Event::PlaybackRestart) => Ok(None),
-            Some(other) => {
-                debug!(event = ?other, "MPV event");
-                Ok(None)
+    pub fn pid(&self) -> Option<i32> {
+        self.child_pid
+    }
+
+    pub fn poll_event(&mut self, _timeout_ms: u64) -> Result<Option<MpvEvent>, MpvError> {
+        if let Some(pid) = self.child_pid {
+            let status = unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) };
+            if status == pid as i32 {
+                self.child_pid = None;
+                let _ = std::fs::remove_file(&self.ipc_path);
+                info!("MPV subprocess exited");
+                return Ok(Some(MpvEvent::EndFile));
             }
         }
+        Ok(None)
     }
 
-    pub fn command(&mut self, cmd: &[&str]) -> Result<(), MpvError> {
-        self.handler.command(cmd).map_err(|e| MpvError::Command(e.to_string()))
-    }
+    fn send_ipc_command(&self, command: &str) -> Result<(), MpvError> {
+        if self.child_pid.is_none() {
+            return Err(MpvError::NotRunning);
+        }
 
-    pub fn get_property(&self, name: &str) -> Result<String, MpvError> {
-        let val: f64 = self.handler.get_property(name)
-            .map_err(|e| MpvError::Property(e.to_string()))?;
-        Ok(val.to_string())
-    }
+        let ipc_socket = self.ipc_path.to_str().unwrap();
+        let full_cmd = format!("echo '{}' | socat - UNIX-CONNECT:{}", command, ipc_socket);
 
-    pub fn set_property<T: mpv::MpvFormat>(&mut self, name: &str, value: T) -> Result<(), MpvError> {
-        self.handler.set_property(name, value).map_err(|e| MpvError::Property(e.to_string()))
+        match Command::new("sh")
+            .args(&["-c", &full_cmd])
+            .output()
+        {
+            Ok(_) => Ok(()),
+            Err(e) => Err(MpvError::Ipc(e.to_string())),
+        }
     }
 
     pub fn width(&self) -> u32 { self.width }
@@ -201,8 +198,8 @@ impl MpvInstance {
     pub fn y(&self) -> i32 { self.y }
     pub fn volume(&self) -> u8 { self.volume }
 
-    pub fn detach(&mut self) {
-        let _ = self.handler.command(&["quit"]);
+    pub fn destroy(&mut self) {
+        let _ = self.stop();
     }
 }
 
@@ -223,18 +220,31 @@ pub enum MpvEvent {
 #[derive(Clone)]
 pub struct MpvController {
     inner: Arc<Mutex<MpvInstance>>,
+    mpv_path: String,
+    extra_args: Vec<String>,
 }
 
 impl MpvController {
-    pub fn new() -> Result<Self, MpvError> {
+    pub fn new(mpv_path: &str) -> Result<Self, MpvError> {
         let instance = MpvInstance::new()?;
         Ok(Self {
             inner: Arc::new(Mutex::new(instance)),
+            mpv_path: mpv_path.to_string(),
+            extra_args: Vec::new(),
+        })
+    }
+
+    pub fn with_extra_args(mpv_path: &str, extra_args: Vec<String>) -> Result<Self, MpvError> {
+        let instance = MpvInstance::new()?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(instance)),
+            mpv_path: mpv_path.to_string(),
+            extra_args,
         })
     }
 
     pub fn play(&self, url: &str) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().play(url)
+        self.inner.lock().unwrap().play(url, &self.mpv_path, &self.extra_args)
     }
 
     pub fn pause(&self) -> Result<(), MpvError> {
@@ -270,15 +280,11 @@ impl MpvController {
     }
 
     pub fn command(&self, cmd: &[&str]) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().command(cmd)
-    }
-
-    pub fn set_property<T: mpv::MpvFormat>(&self, name: &str, value: T) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().set_property(name, value)
-    }
-
-    pub fn get_property(&self, name: &str) -> Result<String, MpvError> {
-        self.inner.lock().unwrap().get_property(name)
+        if cmd.is_empty() {
+            return Ok(());
+        }
+        let full_cmd = cmd.join(" ");
+        self.inner.lock().unwrap().send_ipc_command(&full_cmd)
     }
 
     pub fn is_paused(&self) -> bool {
@@ -293,6 +299,10 @@ impl MpvController {
         self.inner.lock().unwrap().current_url().map(String::from)
     }
 
+    pub fn pid(&self) -> Option<i32> {
+        self.inner.lock().unwrap().pid()
+    }
+
     pub fn geometry(&self) -> (u32, u32, i32, i32) {
         let inst = self.inner.lock().unwrap();
         (inst.width, inst.height, inst.x, inst.y)
@@ -303,14 +313,37 @@ impl MpvController {
     }
 
     pub fn destroy(&self) {
-        if let Ok(mut inst) = self.inner.try_lock() {
-            inst.detach();
-        }
+        self.inner.lock().unwrap().destroy();
+    }
+
+    pub fn run_event_loop(&self) -> std::thread::JoinHandle<()> {
+        let inner = Arc::clone(&self.inner);
+        std::thread::spawn(move || {
+            loop {
+                let event = {
+                    let mut inst = match inner.lock() {
+                        Ok(i) => i,
+                        Err(_) => break,
+                    };
+                    match inst.poll_event(100) {
+                        Ok(Some(e)) => e,
+                        Ok(None) => continue,
+                        Err(e) => {
+                            error!("Event poll error: {}", e);
+                            break;
+                        }
+                    }
+                };
+                if matches!(event, MpvEvent::EndFile) {
+                    break;
+                }
+            }
+        })
     }
 }
 
 impl Default for MpvController {
     fn default() -> Self {
-        Self::new().expect("Failed to create default mpv controller")
+        Self::new("mpv").expect("Failed to create default mpv controller")
     }
 }
