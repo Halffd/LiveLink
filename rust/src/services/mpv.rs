@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 #[derive(Error, Debug)]
 pub enum MpvError {
@@ -68,7 +68,6 @@ impl MpvInstance {
         }
 
         let ipc_server = format!("{}", self.ipc_path.display());
-        let ipc_for_child = ipc_server.clone();
 
         match unsafe { libc::fork() } {
             -1 => return Err(MpvError::Fork("fork() failed".to_string())),
@@ -87,7 +86,7 @@ impl MpvInstance {
                 args.push("--".to_string());
                 args.push(url.to_string());
 
-                let err = Command::new(mpv_path)
+                let _ = Command::new(mpv_path)
                     .args(&args)
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())

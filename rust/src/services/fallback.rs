@@ -100,6 +100,7 @@ impl FallbackService {
             && self.favorite_channels.holodex.default.is_empty()
     }
 
+    #[allow(deprecated)]
     pub fn all_streams(&self) -> Vec<StreamSource> {
         let mut streams = self.get_holodex_streams();
         streams.extend(self.get_twitch_streams());

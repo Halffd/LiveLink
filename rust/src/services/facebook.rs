@@ -1,7 +1,7 @@
 use crate::queue::queue::StreamSource;
 use crate::services::holodex::QueryOptions;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 #[derive(Error, Debug)]
 pub enum FacebookError {
@@ -93,7 +93,7 @@ impl FacebookService {
       }
     }
 
-    let mut sources = vec![];
+    let sources = vec![];
 
     if let Some(search) = &options.search {
       debug!(search = %search, "Facebook search not fully implemented");
