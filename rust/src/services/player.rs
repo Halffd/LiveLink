@@ -227,6 +227,14 @@ impl PlayerService {
             mpv_args.join(" "),
         ];
 
+        debug!(
+            streamlink_path = %self.config.streamlink_path,
+            args = ?streamlink_args,
+            url = %url,
+            quality = %self.config.default_quality,
+            "Streamlink command"
+        );
+
         let child = Command::new(&self.config.streamlink_path)
             .args(&streamlink_args)
             .stdin(Stdio::null())

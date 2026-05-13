@@ -36,7 +36,7 @@ fn setup_logging() {
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,livelink=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("debug,livelink=debug,services=debug"));
 
     let file_layer = fmt::layer()
         .with_writer(non_blocking)
@@ -59,6 +59,8 @@ fn setup_logging() {
         .init();
 
     Box::leak(Box::new(_guard));
+
+    info!(log_dir = %log_dir.display(), log_file = "livelink.log", "Logging initialized");
 }
 
 #[tokio::main]

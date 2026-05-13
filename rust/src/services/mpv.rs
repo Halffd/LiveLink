@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[derive(Error, Debug)]
 pub enum MpvError {
@@ -68,24 +68,31 @@ impl MpvInstance {
         }
 
         let ipc_server = format!("{}", self.ipc_path.display());
+        let mut args = vec![
+            "--input-ipc-server".to_string(),
+            ipc_server.clone(),
+            "--geometry".to_string(),
+            format!("{}x{}+{}+{}", self.width, self.height, self.x, self.y),
+            "--volume".to_string(),
+            self.volume.to_string(),
+            "--idle".to_string(),
+        ];
+        args.extend(extra_args.iter().cloned());
+        args.push("--".to_string());
+        args.push(url.to_string());
+
+        debug!(
+            mpv_path = %mpv_path,
+            args = ?args,
+            url = %url,
+            ipc_server = %ipc_server,
+            "MPV command"
+        );
 
         match unsafe { libc::fork() } {
             -1 => return Err(MpvError::Fork("fork() failed".to_string())),
             0 => {
                 unsafe { libc::setsid(); };
-                let mut args = vec![
-                    "--input-ipc-server".to_string(),
-                    ipc_server,
-                    "--geometry".to_string(),
-                    format!("{}x{}+{}+{}", self.width, self.height, self.x, self.y),
-                    "--volume".to_string(),
-                    self.volume.to_string(),
-                    "--idle".to_string(),
-                ];
-                args.extend(extra_args.iter().cloned());
-                args.push("--".to_string());
-                args.push(url.to_string());
-
                 let _ = Command::new(mpv_path)
                     .args(&args)
                     .stdin(Stdio::null())
