@@ -8,6 +8,8 @@ use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, Notify};
 use tracing::{debug, error, info, warn};
 
+use crate::services::mpv::MpvController;
+
 #[derive(Error, Debug)]
 pub enum PlayerError {
     #[error("IO error: {0}")]
@@ -24,6 +26,8 @@ pub enum PlayerError {
     SpawnFailed(String),
     #[error("Process exited unexpectedly: {0}")]
     ProcessExited(String),
+    #[error("MPV error: {0}")]
+    Mpv(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +90,7 @@ pub struct PlayerInstance {
     process: Option<Child>,
     ipc_path: Option<PathBuf>,
     playback_time: f64,
+    is_mpv: bool,
 }
 
 impl PlayerInstance {
@@ -96,6 +101,7 @@ impl PlayerInstance {
             process: None,
             ipc_path: None,
             playback_time: 0.0,
+            is_mpv: false,
         }
     }
 }
@@ -118,6 +124,7 @@ pub enum PlayerEvent {
 
 pub struct PlayerService {
     instances: Arc<DashMap<(u32, u32), PlayerInstance>>,
+    mpv_controllers: Arc<DashMap<(u32, u32), MpvController>>,
     config: PlayerConfig,
     event_sender: mpsc::Sender<ProcessExit>,
     shutdown_notify: Arc<Notify>,
@@ -127,6 +134,7 @@ impl PlayerService {
     pub fn new(event_sender: mpsc::Sender<ProcessExit>, config: PlayerConfig) -> Self {
         Self {
             instances: Arc::new(DashMap::new()),
+            mpv_controllers: Arc::new(DashMap::new()),
             config,
             event_sender,
             shutdown_notify: Arc::new(Notify::new()),
@@ -152,45 +160,35 @@ impl PlayerService {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
-        let ipc_path = format!("{}/mpv-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
-
-        let mut args = vec![
-            "--input-ipc-server".to_string(),
-            ipc_path.clone(),
-            "--geometry".to_string(),
-            format!("{}x{}+{}+{}", width, height, x, y),
-            "--volume".to_string(),
-            self.config.default_volume.to_string(),
+        let mut extra_args = vec![
             "--gpu-context".to_string(),
             self.config.mpv_gpu_context.clone(),
         ];
-
         if self.config.mpv_priority != "normal" {
-            args.push("--priority".to_string());
-            args.push(self.config.mpv_priority.clone());
+            extra_args.push("--priority".to_string());
+            extra_args.push(self.config.mpv_priority.clone());
         }
+        extra_args.extend(self.config.mpv_extra_args.clone());
 
-        args.extend(self.config.mpv_extra_args.clone());
+        let controller = MpvController::with_extra_args(&self.config.mpv_path, extra_args)
+            .map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
-        args.push("--".to_string());
-        args.push(url.to_string());
+        controller.configure(width, height, x, y, self.config.default_volume)
+            .map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
-        let child = Command::new(&self.config.mpv_path)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| PlayerError::SpawnFailed(e.to_string()))?;
+        controller.play(url)
+            .map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
-        let pid = child.id().ok_or_else(|| PlayerError::SpawnFailed("Failed to get pid".to_string()))?;
+        let pid = controller.pid().unwrap_or(0) as u32;
 
         let mut instance = PlayerInstance::new(screen, instance_id);
-        instance.process = Some(child);
-        instance.ipc_path = Some(PathBuf::from(&ipc_path));
+        instance.is_mpv = true;
+        instance.playback_time = 0.0;
 
         self.instances.insert(key, instance);
-        info!(screen, instance_id, pid, url = %url, "Started mpv process");
+        self.mpv_controllers.insert(key, controller);
+
+        info!(screen, instance_id, pid, url = %url, "Started mpv process via MpvController");
         Ok(pid)
     }
 
@@ -337,16 +335,22 @@ impl PlayerService {
             None => return Err(PlayerError::NoPlayerInstance(screen, instance_id)),
         };
 
-        if let Some(ref mut child) = instance.process {
-            if let Err(e) = child.kill().await {
-                warn!(screen, instance_id, "Error killing process: {}", e);
+        if instance.is_mpv {
+            if let Some((_, controller)) = self.mpv_controllers.remove(&key) {
+                controller.destroy();
             }
-        }
+        } else {
+            if let Some(ref mut child) = instance.process {
+                if let Err(e) = child.kill().await {
+                    warn!(screen, instance_id, "Error killing process: {}", e);
+                }
+            }
 
-        if let Some(path) = instance.ipc_path {
-            if path.exists() {
-                if let Err(e) = tokio::fs::remove_file(&path).await {
-                    debug!(screen, instance_id, path = %path.display(), "Failed to remove IPC file: {}", e);
+            if let Some(path) = instance.ipc_path {
+                if path.exists() {
+                    if let Err(e) = tokio::fs::remove_file(&path).await {
+                        debug!(screen, instance_id, path = %path.display(), "Failed to remove IPC file: {}", e);
+                    }
                 }
             }
         }
@@ -390,20 +394,43 @@ impl PlayerService {
     }
 
     pub fn get_pid(&self, screen: u32, instance_id: u32) -> Option<u32> {
-        self.instances.get(&(screen, instance_id)).and_then(|inst| {
-            inst.process.as_ref().and_then(|p| p.id())
-        })
+        let key = (screen, instance_id);
+        if let Some(inst) = self.instances.get(&key) {
+            if inst.is_mpv {
+                self.mpv_controllers.get(&key).and_then(|c| c.pid()).map(|p| p as u32)
+            } else {
+                inst.process.as_ref().and_then(|p| p.id())
+            }
+        } else {
+            None
+        }
     }
 
 /// Poll for process exits and send events for any that have terminated.
     pub fn poll_exits(&self) {
         let keys: Vec<(u32, u32)> = self.instances.iter().map(|r| *r.key()).collect();
-        let _sender = self.event_sender.clone();
         let instances = self.instances.clone();
+        let mpv_controllers = self.mpv_controllers.clone();
 
         for key in keys {
             let should_remove = if let Some(mut inst_ref) = instances.get_mut(&key) {
-                if let Some(ref mut child) = inst_ref.process {
+                if inst_ref.is_mpv {
+                    if let Some(controller) = mpv_controllers.get(&key) {
+                        match controller.poll_event(0) {
+                            Ok(Some(_)) => {
+                                info!(screen = key.0, instance = key.1, "MPV process exited");
+                                true
+                            }
+                            Ok(None) => false,
+                            Err(e) => {
+                                warn!(screen = key.0, instance = key.1, "Error polling mpv: {}", e);
+                                true
+                            }
+                        }
+                    } else {
+                        true
+                    }
+                } else if let Some(ref mut child) = inst_ref.process {
                     match child.try_wait() {
                         Ok(Some(status)) => {
                             let code = status.code();
@@ -428,6 +455,11 @@ impl PlayerService {
                 if let Some((_, inst)) = instances.remove(&key) {
                     let playback_time = inst.playback_time;
                     let screen_for_event = inst.screen;
+                    if inst.is_mpv {
+                        if let Some((_, c)) = mpv_controllers.remove(&key) {
+                            c.destroy();
+                        }
+                    }
                     let sender = self.event_sender.clone();
                     tokio::spawn(async move {
                         let exit = ProcessExit {
@@ -452,66 +484,93 @@ impl PlayerService {
 
     /// Set volume for a screen via IPC command to mpv
     pub async fn set_volume(&self, screen: u32, instance_id: u32, volume: u8) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&(screen, instance_id))
-            .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
+        let key = (screen, instance_id);
+        let is_mpv = self.instances.get(&key).map(|i| i.is_mpv).unwrap_or(false);
 
-        let script = format!(
-            "echo 'set property volume {}' | socat - {}",
-            volume,
-            ipc_path.display()
-        );
+        if is_mpv {
+            if let Some(controller) = self.mpv_controllers.get(&key) {
+                controller.set_volume(volume)
+                    .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+            }
+        } else {
+            let ipc_path = self.instances.get(&key)
+                .and_then(|inst| inst.ipc_path.clone())
+                .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
-        tokio::process::Command::new("sh")
-            .args(&["-c", &script])
-            .output()
-            .await
-            .map_err(|e| PlayerError::Io(e))?;
+            let script = format!(
+                "echo 'set property volume {}' | socat - {}",
+                volume,
+                ipc_path.display()
+            );
 
+            tokio::process::Command::new("sh")
+                .args(&["-c", &script])
+                .output()
+                .await
+                .map_err(|e| PlayerError::Io(e))?;
+        }
         Ok(())
     }
 
     /// Send a property set command to mpv via IPC
     pub async fn set_property(&self, screen: u32, instance_id: u32, property: &str, value: &str) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&(screen, instance_id))
-            .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
+        let key = (screen, instance_id);
+        let is_mpv = self.instances.get(&key).map(|i| i.is_mpv).unwrap_or(false);
 
-        let script = format!(
-            "echo 'set property {} {}' | socat - {}",
-            property,
-            value,
-            ipc_path.display()
-        );
+        if is_mpv {
+            if let Some(controller) = self.mpv_controllers.get(&key) {
+                controller.command(&["set", property, value])
+                    .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+            }
+        } else {
+            let ipc_path = self.instances.get(&key)
+                .and_then(|inst| inst.ipc_path.clone())
+                .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
-        tokio::process::Command::new("sh")
-            .args(&["-c", &script])
-            .output()
-            .await
-            .map_err(|e| PlayerError::Io(e))?;
+            let script = format!(
+                "echo 'set property {} {}' | socat - {}",
+                property,
+                value,
+                ipc_path.display()
+            );
 
+            tokio::process::Command::new("sh")
+                .args(&["-c", &script])
+                .output()
+                .await
+                .map_err(|e| PlayerError::Io(e))?;
+        }
         Ok(())
     }
 
     /// Send a command to mpv via IPC
     pub async fn command(&self, screen: u32, instance_id: u32, cmd: &[&str]) -> Result<(), PlayerError> {
-        let ipc_path = self.instances.get(&(screen, instance_id))
-            .and_then(|inst| inst.ipc_path.clone())
-            .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
+        let key = (screen, instance_id);
+        let is_mpv = self.instances.get(&key).map(|i| i.is_mpv).unwrap_or(false);
 
-        let cmd_str = cmd.join(" ");
-        let script = format!(
-            "echo '{}' | socat - {}",
-            cmd_str,
-            ipc_path.display()
-        );
+        if is_mpv {
+            if let Some(controller) = self.mpv_controllers.get(&key) {
+                controller.command(cmd)
+                    .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+            }
+        } else {
+            let ipc_path = self.instances.get(&key)
+                .and_then(|inst| inst.ipc_path.clone())
+                .ok_or(PlayerError::NoPlayerInstance(screen, instance_id))?;
 
-        tokio::process::Command::new("sh")
-            .args(&["-c", &script])
-            .output()
-            .await
-            .map_err(|e| PlayerError::Io(e))?;
+            let cmd_str = cmd.join(" ");
+            let script = format!(
+                "echo '{}' | socat - {}",
+                cmd_str,
+                ipc_path.display()
+            );
 
+            tokio::process::Command::new("sh")
+                .args(&["-c", &script])
+                .output()
+                .await
+                .map_err(|e| PlayerError::Io(e))?;
+        }
         Ok(())
     }
 
