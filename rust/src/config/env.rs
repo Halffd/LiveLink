@@ -16,7 +16,7 @@ pub struct Env {
 
 impl Env {
     pub fn load() -> Self {
-        load_dotenv();
+        dotenv::dotenv().ok();
 
         Self {
             node_env: env::var("NODE_ENV").unwrap_or_else(|_| "development".into()),
@@ -32,24 +32,6 @@ impl Env {
             twitch_client_secret: env::var("TWITCH_CLIENT_SECRET").unwrap_or_default(),
             youtube_api_key: env::var("YOUTUBE_API_KEY").ok(),
             livelink_config_dir: env::var("LIVELINK_CONFIG").ok(),
-        }
-    }
-}
-
-fn load_dotenv() {
-    if let Ok(content) = std::fs::read_to_string(".env") {
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if let Some((key, value)) = line.split_once('=') {
-                let key = key.trim();
-                let value = value.trim();
-                if env::var(key).is_err() {
-                    env::set_var(key, value);
-                }
-            }
         }
     }
 }

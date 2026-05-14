@@ -13,7 +13,7 @@ use config::{ConfigLoader, Env};
 use core::orchestrator::Orchestrator;
 use core::state::OrchestratorConfig;
 use services::network::{NetworkEvent, NetworkMonitor};
-use tracing::info;
+use tracing::{debug, info};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
@@ -89,11 +89,20 @@ let has_cli_args = std::env::args().len() > 1;
 
 let _env = Env::load();
 
-let loader = ConfigLoader::with_base_path(&config_dir);
+    debug!(
+        holodex_api_key = if _env.holodex_api_key.is_empty() { "not set" } else { "***" },
+        twitch_client_id = if _env.twitch_client_id.is_empty() { "not set" } else { "***" },
+        youtube_api_key = if _env.youtube_api_key.is_some() { "***" } else { "not set" },
+        "Environment variables loaded"
+    );
+
+    let loader = ConfigLoader::with_base_path(&config_dir);
     let config = loader.load();
 
-    info!(
-        max_streams = config.player.max_streams,
+    debug!(
+        config_dir = %config_dir,
+        config_holodex_api_key = if config.holodex.api_key.is_empty() { "not set" } else { "***" },
+        config_twitch_client_id = if config.twitch.client_id.is_empty() { "not set" } else { "***" },
         "Configuration loaded"
     );
 
