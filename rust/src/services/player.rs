@@ -161,12 +161,10 @@ impl PlayerService {
         }
 
         let mut extra_args = vec![
-            "--gpu-context".to_string(),
-            self.config.mpv_gpu_context.clone(),
+            format!("--gpu-context={}", self.config.mpv_gpu_context),
         ];
         if self.config.mpv_priority != "normal" {
-            extra_args.push("--priority".to_string());
-            extra_args.push(self.config.mpv_priority.clone());
+            extra_args.push(format!("--priority={}", self.config.mpv_priority));
         }
         extra_args.extend(self.config.mpv_extra_args.clone());
 

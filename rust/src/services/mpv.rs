@@ -68,14 +68,12 @@ impl MpvInstance {
         }
 
         let ipc_server = format!("{}", self.ipc_path.display());
-        let mut args = vec![
-            format!("--input-ipc-server={}", ipc_server),
-            format!("--geometry={}x{}+{}+{}", self.width, self.height, self.x, self.y),
-            format!("--volume={}", self.volume),
-            "--idle".to_string(),
-        ];
+        let mut args = vec![url.to_string()];
+        args.push(format!("--input-ipc-server={}", ipc_server));
+        args.push(format!("--geometry={}x{}+{}+{}", self.width, self.height, self.x, self.y));
+        args.push(format!("--volume={}", self.volume));
+        args.push("--idle".to_string());
         args.extend(extra_args.iter().cloned());
-        args.push(url.to_string());
 
         debug!(
             mpv_path = %mpv_path,
