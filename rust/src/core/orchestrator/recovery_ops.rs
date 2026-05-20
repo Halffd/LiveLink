@@ -61,7 +61,7 @@ impl Orchestrator {
 
             tokio::spawn(async move {
                 let player_guard = player.lock().await;
-                match player_guard.start(player_screen, player_instance, &url, 1280, 720, 0, 0).await {
+                match player_guard.start(player_screen, player_instance, &url).await {
                     Ok(_) => info!(screen, url = %url, "Stream recovered successfully"),
                     Err(e) => error!(screen, url = %url, error = %e, "Failed to recover stream"),
                 }

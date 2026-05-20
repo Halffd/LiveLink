@@ -79,6 +79,7 @@ impl Orchestrator {
             mpv_extra_args: config.mpv_extra_args.clone(),
             streamlink_options: config.streamlink_options.clone(),
             streamlink_http_header: std::collections::HashMap::new(),
+            screens: config.screens.clone(),
         };
         let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();

@@ -60,6 +60,7 @@ pub struct PlayerConfig {
     pub mpv_extra_args: Vec<String>,
     pub streamlink_options: std::collections::HashMap<String, serde_json::Value>,
     pub streamlink_http_header: std::collections::HashMap<String, String>,
+    pub screens: Vec<crate::config::ScreenConfig>,
 }
 
 impl Default for PlayerConfig {
@@ -79,6 +80,7 @@ impl Default for PlayerConfig {
             mpv_extra_args: vec![],
             streamlink_options: std::collections::HashMap::new(),
             streamlink_http_header: std::collections::HashMap::new(),
+            screens: vec![],
         }
     }
 }
@@ -150,15 +152,16 @@ impl PlayerService {
         screen: u32,
         instance_id: u32,
         url: &str,
-        width: u32,
-        height: u32,
-        x: i32,
-        y: i32,
     ) -> Result<u32, PlayerError> {
         let key = (screen, instance_id);
         if self.instances.contains_key(&key) {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
+
+        let screen_config = self.config.screens
+            .iter()
+            .find(|s| s.screen == screen)
+            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
 
         let mut extra_args = vec![
             format!("--gpu-context={}", self.config.mpv_gpu_context),
@@ -171,8 +174,13 @@ impl PlayerService {
         let controller = MpvController::with_extra_args(&self.config.mpv_path, extra_args)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
-        controller.configure(width, height, x, y, self.config.default_volume)
-            .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+        controller.configure(
+            screen_config.width,
+            screen_config.height,
+            screen_config.x,
+            screen_config.y,
+            screen_config.volume,
+        ).map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
         controller.play(url)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
@@ -195,21 +203,22 @@ impl PlayerService {
         screen: u32,
         instance_id: u32,
         url: &str,
-        width: u32,
-        height: u32,
-        x: i32,
-        y: i32,
     ) -> Result<u32, PlayerError> {
         let key = (screen, instance_id);
         if self.instances.contains_key(&key) {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
+        let screen_config = self.config.screens
+            .iter()
+            .find(|s| s.screen == screen)
+            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
+
         let ipc_path = format!("{}/streamlink-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
 
         let mpv_args = vec![
             format!("--input-ipc-server={}", ipc_path),
-            format!("--geometry={}x{}+{}+{}", width, height, x, y),
+            format!("--geometry={}x{}+{}+{}", screen_config.width, screen_config.height, screen_config.x, screen_config.y),
             format!("--volume={}", self.config.default_volume),
         ];
 
@@ -222,19 +231,12 @@ impl PlayerService {
             mpv_args.join(" "),
         ];
 
-        debug!(
-            streamlink_path = %self.config.streamlink_path,
-            args = ?streamlink_args,
-            url = %url,
-            quality = %self.config.default_quality,
-            "Streamlink command"
-        );
-
-        let child = Command::new(&self.config.streamlink_path)
+        let mut child = Command::new(&self.config.streamlink_path)
             .args(&streamlink_args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true) // Ensures child is killed when Child handle is dropped
             .spawn()
             .map_err(|e| PlayerError::SpawnFailed(e.to_string()))?;
 
@@ -254,22 +256,21 @@ impl PlayerService {
         screen: u32,
         instance_id: u32,
         url: &str,
-        width: u32,
-        height: u32,
-        x: i32,
-        y: i32,
     ) -> Result<u32, PlayerError> {
         let key = (screen, instance_id);
         if self.instances.contains_key(&key) {
             return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
         }
 
+        let screen_config = self.config.screens
+            .iter()
+            .find(|s| s.screen == screen)
+            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
+
         let mut args = vec![
             "--no-video-title".to_string(),
-            "--volume".to_string(),
-            self.config.default_volume.to_string(),
-            "--geometry".to_string(),
-            format!("{}x{}+{}+{}", width, height, x, y),
+            format!("--volume={}", self.config.default_volume),
+            format!("--geometry={}x{}+{}+{}", screen_config.width, screen_config.height, screen_config.x, screen_config.y),
         ];
 
         if self.config.window_maximized {
@@ -278,11 +279,12 @@ impl PlayerService {
 
         args.push(url.to_string());
 
-        let child = Command::new(&self.config.vlc_path)
+        let mut child = Command::new(&self.config.vlc_path)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true) // Ensures child is killed when Child handle is dropped
             .spawn()
             .map_err(|e| PlayerError::SpawnFailed(e.to_string()))?;
 
@@ -296,6 +298,8 @@ impl PlayerService {
         Ok(pid)
     }
 
+
+
     /// Start a player for the given screen and URL.
     /// Uses the configured player type (MpvProcess or Streamlink).
     /// instance_id allows multiple players per screen.
@@ -304,23 +308,19 @@ impl PlayerService {
         screen: u32,
         instance_id: u32,
         url: &str,
-        width: u32,
-        height: u32,
-        x: i32,
-        y: i32,
     ) -> Result<u32, PlayerError> {
         match self.config.player_type {
             PlayerType::Embedded => {
-                self.start_mpv_process(screen, instance_id, url, width, height, x, y).await
+                self.start_mpv_process(screen, instance_id, url).await
             }
             PlayerType::MpvProcess => {
-                self.start_mpv_process(screen, instance_id, url, width, height, x, y).await
+                self.start_mpv_process(screen, instance_id, url).await
             }
             PlayerType::Streamlink => {
-                self.start_streamlink(screen, instance_id, url, width, height, x, y).await
+                self.start_streamlink(screen, instance_id, url).await
             }
             PlayerType::VlcProcess => {
-                self.start_vlc_process(screen, instance_id, url, width, height, x, y).await
+                self.start_vlc_process(screen, instance_id, url).await
             }
         }
     }
