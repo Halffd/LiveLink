@@ -69,9 +69,9 @@ impl Orchestrator {
             } else {
                 config.vlc_path.clone()
             },
-            default_quality: "best".to_string(),
-            default_volume: 50,
-            window_maximized: false,
+            default_quality: config.default_quality.clone(),
+            default_volume: config.default_volume,
+            window_maximized: config.window_maximized,
             log_rotation: true,
             ipc_dir: config.mpv_ipc_dir.clone(),
             mpv_gpu_context: config.mpv_gpu_context.clone(),

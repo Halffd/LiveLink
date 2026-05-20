@@ -129,17 +129,21 @@ let _env = Env::load();
             .iter()
             .flat_map(|(k, v)| vec![k.clone(), v.to_string()])
             .collect(),
-streamlink_path: config.streamlink.path,
-    streamlink_options: config.streamlink.options,
-    vlc_path: config.vlc.path,
-    player_type: config.player.player_type,
-    debug,
-    mpv_debug,
-    player_debug,
-    log_level,
-    log_file,
-    log_dir,
-  };
+        streamlink_path: config.streamlink.path,
+        streamlink_options: config.streamlink.options,
+        vlc_path: config.vlc.path,
+        player_type: config.player.player_type,
+        default_volume: config.player.default_volume,
+        default_quality: config.player.default_quality,
+        window_maximized: config.player.window_maximized,
+        debug,
+        mpv_debug,
+        player_debug,
+        log_level,
+        log_file,
+        log_dir,
+        screens: config.player.screens,
+    };
 
     let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
 
