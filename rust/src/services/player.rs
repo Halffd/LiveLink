@@ -210,12 +210,9 @@ impl PlayerService {
         let ipc_path = format!("{}/streamlink-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
 
         let mpv_args = vec![
-            "--input-ipc-server".to_string(),
-            ipc_path.clone(),
-            "--geometry".to_string(),
-            format!("{}x{}+{}+{}", width, height, x, y),
-            "--volume".to_string(),
-            self.config.default_volume.to_string(),
+            format!("--input-ipc-server={}", ipc_path),
+            format!("--geometry={}x{}+{}+{}", width, height, x, y),
+            format!("--volume={}", self.config.default_volume),
         ];
 
         let streamlink_args = vec![
