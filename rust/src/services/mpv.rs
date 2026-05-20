@@ -75,7 +75,6 @@ impl MpvInstance {
             "--idle".to_string(),
         ];
         args.extend(extra_args.iter().cloned());
-        args.push("--".to_string());
         args.push(url.to_string());
 
         debug!(
