@@ -3,7 +3,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
 use thiserror::Error;
-use tracing::{error, info, trace};
+use tracing::{error, info, trace, warn};
 
 #[derive(Error, Debug)]
 #[allow(dead_code)]
@@ -220,6 +220,7 @@ pub struct MpvController {
     inner: Arc<Mutex<MpvInstance>>,
     mpv_path: String,
     extra_args: Vec<String>,
+    exit_callback: Arc<std::sync::Mutex<Option<Box<dyn Send + Sync + Fn() + 'static>>>>,
 }
 
 impl MpvController {
@@ -229,6 +230,7 @@ impl MpvController {
             inner: Arc::new(Mutex::new(instance)),
             mpv_path: mpv_path.to_string(),
             extra_args: Vec::new(),
+            exit_callback: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 
@@ -238,11 +240,56 @@ impl MpvController {
             inner: Arc::new(Mutex::new(instance)),
             mpv_path: mpv_path.to_string(),
             extra_args,
+            exit_callback: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 
+    pub fn set_exit_callback<F>(&self, callback: F)
+    where
+        F: Send + Sync + 'static + Fn(),
+    {
+        *self.exit_callback.lock().unwrap() = Some(Box::new(callback));
+    }
+
     pub fn play(&self, url: &str) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().play(url, &self.mpv_path, &self.extra_args)
+        {
+            let mut inst = self.inner.lock().unwrap();
+            inst.play(url, &self.mpv_path, &self.extra_args)
+        }?;
+
+        let inner = self.inner.clone();
+        let exit_callback = self.exit_callback.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let should_exit = {
+                    let mut inst = match inner.lock() {
+                        Ok(i) => i,
+                        Err(_) => break,
+                    };
+                    match inst.poll_event(100) {
+                        Ok(Some(MpvEvent::EndFile)) => {
+                            info!("MPV process exited (wait thread)");
+                            true
+                        }
+                        Ok(Some(_)) => false,
+                        Ok(None) => false,
+                        Err(_) => {
+                            warn!("Error polling mpv in wait thread");
+                            true
+                        }
+                    }
+                };
+                if should_exit {
+                    if let Some(callback) = exit_callback.lock().unwrap().take() {
+                        callback();
+                    }
+                    break;
+                }
+            }
+        });
+
+        Ok(())
     }
 
     pub fn pause(&self) -> Result<(), MpvError> {
