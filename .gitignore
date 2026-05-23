@@ -1,6 +1,8 @@
 test-results
 node_modules
 coverage
+src-tauri/target
+rust/Cargo.lock
 rust/target
 rust/logs
 # Output
@@ -71,3 +73,4 @@ scripts/mpv
 # Generated WM configs (auto-generated from player.json)
 generated-wm-configs/livelink-*src-tauri/target
 src-tauri/gen
+.opencode
