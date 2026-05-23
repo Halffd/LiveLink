@@ -35,8 +35,23 @@ fn setup_logging() {
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("debug,livelink=debug,services=debug"));
+    let base_filter = if std::env::var("RUST_LOG").is_ok() {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    } else {
+        EnvFilter::new("warn,livelink=debug,services=debug,core=debug,queue=debug,config=debug,orchestrator=debug,api=debug,cli=debug,ui=debug")
+    };
+
+    let env_filter = base_filter
+        .add_directive("reqwest::connect=warn".parse().unwrap())
+        .add_directive("reqwest::response=warn".parse().unwrap())
+        .add_directive("rustls::=warn".parse().unwrap())
+        .add_directive("hyper::=warn".parse().unwrap())
+        .add_directive("h2::=warn".parse().unwrap())
+        .add_directive("tower::=warn".parse().unwrap())
+        .add_directive("tonic::=warn".parse().unwrap())
+        .add_directive("ureq::=warn".parse().unwrap())
+        .add_directive("tower_layer::=warn".parse().unwrap())
+        .add_directive("want::=warn".parse().unwrap());
 
     let file_layer = fmt::layer()
         .with_writer(non_blocking)
@@ -115,20 +130,16 @@ let _env = Env::load();
         max_streams: config.player.max_streams,
         startup_cooldown_ms: 5000,
         crash_threshold_seconds: 3,
+        skip_threshold_seconds: 2,
         favorite_channels: config.favorite_channels.clone(),
         holodex_api_key: config.holodex.api_key,
         twitch_client_id: config.twitch.client_id,
         twitch_client_secret: config.twitch.client_secret,
         youtube_api_key: config.youtube.api_key,
         mpv_ipc_dir: mpv_config_dir,
-        mpv_gpu_context: config.mpv.gpu_context,
-        mpv_priority: config.mpv.priority,
-        mpv_extra_args: config
-            .mpv
-            .extra
-            .iter()
-            .flat_map(|(k, v)| vec![k.clone(), v.to_string()])
-            .collect(),
+        mpv_gpu_context: config.mpv.gpu_context.clone(),
+        mpv_priority: config.mpv.priority.clone(),
+        mpv_extra_args: config.mpv.to_args(),
         streamlink_path: config.streamlink.path,
         streamlink_options: config.streamlink.options,
         vlc_path: config.vlc.path,
@@ -143,6 +154,7 @@ let _env = Env::load();
         log_file,
         log_dir,
         screens: config.player.screens,
+        filters: config.filters,
     };
 
     let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
@@ -174,6 +186,36 @@ info!("LiveLink initialized");
       cli.command,
       cli::commands::Commands::Start(_) | cli::commands::Commands::StreamStart(_)
     );
+
+    let cli_is_read_only = matches!(
+      cli.command,
+      cli::commands::Commands::StreamList(_)
+        | cli::commands::Commands::QueueShow(_)
+        | cli::commands::Commands::List(_)
+        | cli::commands::Commands::SessionList
+        | cli::commands::Commands::ScreenList
+        | cli::commands::Commands::ServerStatus
+        | cli::commands::Commands::Diagnostics
+        | cli::commands::Commands::Ochs
+    );
+
+    if cli_is_read_only {
+      let addr = format!("http://localhost:{}/api/queues", port);
+      match reqwest::get(&addr).await {
+        Ok(resp) if resp.status() == 200 => {
+          match resp.text().await {
+            Ok(body) => {
+              println!("Connected to running server on port {}", port);
+              println!("{}", body);
+              return;
+            }
+            Err(_) => {}
+          }
+        }
+        _ => {}
+      }
+      eprintln!("No server running on port {}. Starting one...", port);
+    }
 
     if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
       eprintln!("CLI error: {}", e);

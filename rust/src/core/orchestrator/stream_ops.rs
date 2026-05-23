@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::core::state::{Platform, StreamInfo, StreamState};
 use crate::queue::queue::StreamSource;
 use crate::services::player::ProcessExit;
@@ -59,6 +61,7 @@ impl Orchestrator {
 
         screen_state.start_stream(stream_info);
 
+        debug!(screen, state = ?self.state.get(&screen).map(|s| s.state), "Stream state after start_stream");
         drop(screen_state);
 
         let player = self.player.clone();
@@ -126,21 +129,16 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub async fn handle_process_exit(&self, exit: ProcessExit) {
+    pub async fn handle_process_exit(self: Arc<Self>, exit: ProcessExit) {
         let screen = exit.screen;
-        let lock = match self.locks.get(&screen) {
-            Some(l) => l.value().clone(),
-            None => {
-                warn!(screen, "Process exit but no lock, ignoring");
-                return;
-            }
-        };
+        let lock = self.get_or_create_lock(screen).await;
 
         let _guard = lock.lock().await;
 
         let mut screen_state = match self.state.get_mut(&screen) {
             Some(s) => s,
             None => {
+                debug!(screen, state_keys = ?self.state.iter().map(|r| *r.key()).collect::<Vec<_>>(), "Process exit but no screen state");
                 warn!(screen, "Process exit but no screen state");
                 return;
             }
@@ -165,7 +163,36 @@ impl Orchestrator {
 
         let url = screen_state.stream.as_ref().map(|s| s.url.clone()).unwrap_or_default();
 
-        if runtime < self.config.crash_threshold_seconds {
+        let skip_threshold = self.config.skip_threshold_seconds;
+        let is_soft_skip = runtime < skip_threshold && playback_seconds < skip_threshold;
+
+        if is_soft_skip {
+            let url_for_queue = url.clone();
+            screen_state.finish_stop();
+
+            drop(screen_state);
+
+            if !url_for_queue.is_empty() {
+                let mut queue = self.queue.lock().await;
+                queue.mark_stream_watched(screen, &StreamSource {
+                    url: url_for_queue.clone(),
+                    ..Default::default()
+                });
+            }
+
+            info!(screen, url = %url, runtime, "Stream skipped (members-only or unplayable)");
+
+            drop(_guard);
+
+            let screen_for_start = screen;
+            let orchestrator = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                if let Err(e) = orchestrator.start_stream(screen_for_start).await {
+                    debug!(screen = screen_for_start, error = %e, "No more streams in queue after skip");
+                }
+            });
+        } else if runtime < self.config.crash_threshold_seconds {
             let error_msg = if let Some(e) = exit.error {
                 format!("Crash after {}s: {}", runtime, e)
             } else {
@@ -182,12 +209,23 @@ impl Orchestrator {
             if !url_for_queue.is_empty() {
                 let mut queue = self.queue.lock().await;
                 queue.mark_stream_watched(screen, &StreamSource {
-                    url: url_for_queue,
+                    url: url_for_queue.clone(),
                     ..Default::default()
                 });
             }
 
             info!(screen, url = %url, runtime, "Stream ended normally");
+
+            drop(_guard);
+
+            let screen_for_start = screen;
+            let orchestrator = self.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(orchestrator.config.startup_cooldown_ms)).await;
+                if let Err(e) = orchestrator.start_stream(screen_for_start).await {
+                    debug!(screen = screen_for_start, error = %e, "No more streams in queue after exit");
+                }
+            });
         }
     }
 

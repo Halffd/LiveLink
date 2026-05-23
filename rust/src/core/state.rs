@@ -1,4 +1,4 @@
-use crate::config::{FavoriteChannels, ScreenConfig};
+use crate::config::{FavoriteChannels, FiltersConfig, ScreenConfig};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::debug;
@@ -24,6 +24,7 @@ impl fmt::Display for StreamState {
     }
 }
 
+#[allow(dead_code)]
 impl StreamState {
     pub fn can_start(&self) -> bool {
         matches!(self, StreamState::Idle)
@@ -96,6 +97,7 @@ pub struct ScreenState {
     pub enabled: bool,
 }
 
+#[allow(dead_code)]
 impl ScreenState {
     pub fn new(screen: u32) -> Self {
         Self {
@@ -184,10 +186,12 @@ impl ScreenState {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(unused)]
 pub struct OrchestratorConfig {
     pub max_streams: usize,
     pub startup_cooldown_ms: u64,
     pub crash_threshold_seconds: u64,
+    pub skip_threshold_seconds: u64,
     pub favorite_channels: FavoriteChannels,
     pub holodex_api_key: String,
     pub twitch_client_id: String,
@@ -211,4 +215,5 @@ pub struct OrchestratorConfig {
     pub log_file: String,
     pub log_dir: String,
     pub screens: Vec<ScreenConfig>,
+    pub filters: FiltersConfig,
 }

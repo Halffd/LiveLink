@@ -23,7 +23,7 @@ use crate::services::youtube::YouTubeService;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::info;
+use tracing::{debug, info};
 
 pub struct Orchestrator {
     pub config: OrchestratorConfig,
@@ -80,6 +80,7 @@ impl Orchestrator {
             streamlink_options: config.streamlink_options.clone(),
             streamlink_http_header: std::collections::HashMap::new(),
             screens: config.screens.clone(),
+            debug: config.debug,
         };
         let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();
@@ -159,7 +160,7 @@ fn clone_inner(&self) -> Self {
     ) {
         while let Some(exit) = receiver.recv().await {
             info!(screen = exit.screen, pid = exit.pid, code = ?exit.exit_code, playback_time = exit.playback_time, "Process exit received");
-            orchestrator.handle_process_exit(exit).await;
+            Arc::clone(&orchestrator).handle_process_exit(exit).await;
         }
     }
 
@@ -187,6 +188,7 @@ fn clone_inner(&self) -> Self {
         let mut state = ScreenState::new(screen);
         state.state = StreamState::Idle;
         self.state.insert(screen, state);
+        debug!(screen, state_keys = ?self.state.iter().map(|r| *r.key()).collect::<Vec<_>>(), "Screen registered");
         info!(screen, "Screen registered");
     }
 
@@ -304,23 +306,24 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
     }
 }
 
-impl Clone for Orchestrator {
-    fn clone(&self) -> Self {
-        Self {
-            config: self.config.clone(),
-            state: DashMap::new(),
-            locks: DashMap::new(),
-            player: self.player.clone(),
-            queue: self.queue.clone(),
-            fallback_service: self.fallback_service.clone(),
-            holodex_service: self.holodex_service.clone(),
-            twitch_service: self.twitch_service.clone(),
-            youtube_service: self.youtube_service.clone(),
-kick_service: self.kick_service.clone(),
-      niconico_service: self.niconico_service.clone(),
-      bilibili_service: self.bilibili_service.clone(),
-      facebook_service: self.facebook_service.clone(),
-      max_streams: self.max_streams,
-    }
-  }
-}
+// Clone removed - use Arc<Orchestrator> for sharing
+// impl Clone for Orchestrator {
+//     fn clone(&self) -> Self {
+//         Self {
+//             config: self.config.clone(),
+//             state: DashMap::new(),
+//             locks: DashMap::new(),
+//             player: self.player.clone(),
+//             queue: self.queue.clone(),
+//             fallback_service: self.fallback_service.clone(),
+//             holodex_service: self.holodex_service.clone(),
+//             twitch_service: self.twitch_service.clone(),
+//             youtube_service: self.youtube_service.clone(),
+//             kick_service: self.kick_service.clone(),
+//             niconico_service: self.niconico_service.clone(),
+//             bilibili_service: self.bilibili_service.clone(),
+//             facebook_service: self.facebook_service.clone(),
+//             max_streams: self.max_streams,
+//         }
+//     }
+// }

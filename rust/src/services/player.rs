@@ -6,11 +6,12 @@ use dashmap::DashMap;
 use thiserror::Error;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, Notify};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::services::mpv::MpvController;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum PlayerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -31,6 +32,7 @@ pub enum PlayerError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum PlayerType {
     Embedded,
     MpvProcess,
@@ -45,6 +47,7 @@ impl Default for PlayerType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub struct PlayerConfig {
     pub player_type: PlayerType,
     pub mpv_path: String,
@@ -61,6 +64,7 @@ pub struct PlayerConfig {
     pub streamlink_options: std::collections::HashMap<String, serde_json::Value>,
     pub streamlink_http_header: std::collections::HashMap<String, String>,
     pub screens: Vec<crate::config::ScreenConfig>,
+    pub debug: bool,
 }
 
 impl Default for PlayerConfig {
@@ -81,6 +85,7 @@ impl Default for PlayerConfig {
             streamlink_options: std::collections::HashMap::new(),
             streamlink_http_header: std::collections::HashMap::new(),
             screens: vec![],
+            debug: false,
         }
     }
 }
@@ -117,6 +122,7 @@ pub struct ProcessExit {
     pub error: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
     Started { screen: u32, url: String },
@@ -124,6 +130,7 @@ pub enum PlayerEvent {
     Error { screen: u32, error: String, is_network: bool },
 }
 
+#[allow(unused)]
 pub struct PlayerService {
     instances: Arc<DashMap<(u32, u32), PlayerInstance>>,
     mpv_controllers: Arc<DashMap<(u32, u32), MpvController>>,
@@ -170,6 +177,18 @@ impl PlayerService {
             extra_args.push(format!("--priority={}", self.config.mpv_priority));
         }
         extra_args.extend(self.config.mpv_extra_args.clone());
+
+        if self.config.debug {
+            let ipc_dir = std::env::temp_dir();
+            let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}", std::process::id()));
+            let mut cmd_args = vec![url.to_string()];
+            cmd_args.push(format!("--input-ipc-server={}", ipc_path.display()));
+            cmd_args.push(format!("--geometry={}x{}+{}+{}", screen_config.width, screen_config.height, screen_config.x, screen_config.y));
+            cmd_args.push(format!("--volume={}", screen_config.volume));
+            cmd_args.push("--idle".to_string());
+            cmd_args.extend(extra_args.iter().cloned());
+            debug!(screen, url = %url, mpv_path = %self.config.mpv_path, cmd = %format!("{} {}", self.config.mpv_path, cmd_args.join(" ")), "MPV command");
+        }
 
         let controller = MpvController::with_extra_args(&self.config.mpv_path, extra_args)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
@@ -231,7 +250,7 @@ impl PlayerService {
             mpv_args.join(" "),
         ];
 
-        let mut child = Command::new(&self.config.streamlink_path)
+        let child = Command::new(&self.config.streamlink_path)
             .args(&streamlink_args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -279,7 +298,7 @@ impl PlayerService {
 
         args.push(url.to_string());
 
-        let mut child = Command::new(&self.config.vlc_path)
+        let child = Command::new(&self.config.vlc_path)
             .args(&args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -352,7 +371,7 @@ impl PlayerService {
             if let Some(path) = instance.ipc_path {
                 if path.exists() {
                     if let Err(e) = tokio::fs::remove_file(&path).await {
-                        debug!(screen, instance_id, path = %path.display(), "Failed to remove IPC file: {}", e);
+                        trace!(screen, instance_id, "Failed to remove IPC file: {}", e);
                     }
                 }
             }
@@ -591,6 +610,7 @@ impl Default for PlayerService {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ExitReason {
     Normal,
