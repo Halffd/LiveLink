@@ -2,12 +2,13 @@ use crate::queue::queue::StreamSource;
 use crate::services::holodex::QueryOptions;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 
 const YOUTUBE_API_QUOTA_MAX: u32 = 10_000;
 const YOUTUBE_API_COST_PER_CALL: u32 = 100;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum YouTubeError {
     #[error("API error: {0}")]
     Api(String),
@@ -242,7 +243,7 @@ struct YouTubeSnippet {
     pub async fn get_live_streams(&mut self, channel_ids: &[String]) -> Result<Vec<StreamSource>, YouTubeError> {
         // If no API key, use RSS directly
         if !self.is_enabled() {
-            debug!("No YouTube API key, using RSS fallback");
+            trace!("No YouTube API key, using RSS fallback");
             return self.check_multiple_via_rss(channel_ids).await;
         }
 

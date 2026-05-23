@@ -4,6 +4,7 @@ use thiserror::Error;
 use tracing::{debug, info};
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum BilibiliError {
     #[error("API error: {0}")]
     Api(String),
@@ -17,6 +18,7 @@ pub struct BilibiliService {
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl BilibiliService {
     pub fn new() -> Self {
         let client = reqwest::Client::new();

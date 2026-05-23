@@ -4,15 +4,20 @@ use tracing::{debug, warn};
 use super::Orchestrator;
 
 impl Orchestrator {
-    pub async fn fetch_streams_for_screen(&self, screen: u32) -> Vec<StreamSource> {
+    pub async fn fetch_streams_for_screen(&self, _screen: u32) -> Vec<StreamSource> {
+        let streams = self.fetch_all_streams_internal().await;
+        self.apply_filters(streams)
+    }
+
+    pub(crate) async fn fetch_all_streams_internal(&self) -> Vec<StreamSource> {
         if self.holodex_service.is_enabled() {
             match self.holodex_service.get_live_streams().await {
                 Ok(streams) => {
-                    debug!(screen, count = streams.len(), "Fetched streams from Holodex API");
+                    debug!(count = streams.len(), "Fetched streams from Holodex API");
                     return streams;
                 }
                 Err(e) => {
-                    warn!(screen, error = %e, "Holodex API failed, falling back to favorites");
+                    warn!(error = %e, "Holodex API failed, falling back to favorites");
                 }
             }
         }
@@ -31,15 +36,16 @@ impl Orchestrator {
                 if twitch.authenticate().await.is_ok() {
                     match twitch.get_live_streams(&twitch_channels).await {
                         Ok(streams) => {
-                            debug!(screen, count = streams.len(), "Fetched streams from Twitch API");
-                            return streams;
+                            debug!(count = streams.len(), "Fetched streams from Twitch API");
+                            let sorted = self.sort_streams_by_favorites(streams, "twitch");
+                            return sorted;
                         }
                         Err(e) => {
-                            warn!(screen, error = %e, "Twitch API failed, falling back");
+                            warn!(error = %e, "Twitch API failed, falling back");
                         }
                     }
                 } else {
-                    warn!(screen, "Twitch authentication failed");
+                    warn!("Twitch authentication failed");
                 }
             }
         }
@@ -56,13 +62,14 @@ impl Orchestrator {
             let mut yt_service = self.youtube_service.lock().await;
             if yt_service.is_enabled() || true {
                 match yt_service.get_live_streams(&yt_channels).await {
-                    Ok(streams) => {
-                        debug!(screen, count = streams.len(), "Fetched streams from YouTube");
-                        return streams;
-                    }
-                    Err(e) => {
-                        warn!(screen, error = %e, "YouTube service failed, falling back");
-                    }
+                        Ok(streams) => {
+                            debug!(count = streams.len(), "Fetched streams from YouTube");
+                            let sorted = self.sort_streams_by_favorites(streams, "youtube");
+                            return sorted;
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "YouTube service failed, falling back");
+                        }
                 }
             }
         }
@@ -78,11 +85,12 @@ impl Orchestrator {
         if !kick_channels.is_empty() {
             match self.kick_service.get_live_streams(&kick_channels).await {
                 Ok(streams) => {
-                    debug!(screen, count = streams.len(), "Fetched streams from Kick");
-                    return streams;
+                    debug!(count = streams.len(), "Fetched streams from Kick");
+                    let sorted = self.sort_streams_by_favorites(streams, "kick");
+                    return sorted;
                 }
                 Err(e) => {
-                    warn!(screen, error = %e, "Kick service failed, falling back");
+                    warn!(error = %e, "Kick service failed, falling back");
                 }
             }
         }
@@ -98,11 +106,12 @@ impl Orchestrator {
         if !niconico_channels.is_empty() {
             match self.niconico_service.get_live_streams(&niconico_channels).await {
                 Ok(streams) => {
-                    debug!(screen, count = streams.len(), "Fetched streams from Niconico");
-                    return streams;
+                    debug!(count = streams.len(), "Fetched streams from Niconico");
+                    let sorted = self.sort_streams_by_favorites(streams, "niconico");
+                    return sorted;
                 }
                 Err(e) => {
-                    warn!(screen, error = %e, "Niconico service failed, falling back");
+                    warn!(error = %e, "Niconico service failed, falling back");
                 }
             }
         }
@@ -118,22 +127,23 @@ impl Orchestrator {
         if !bilibili_rooms.is_empty() {
             match self.bilibili_service.get_live_streams(&bilibili_rooms).await {
                 Ok(streams) => {
-                    debug!(screen, count = streams.len(), "Fetched streams from Bilibili");
-                    return streams;
+                    debug!(count = streams.len(), "Fetched streams from Bilibili");
+                    let sorted = self.sort_streams_by_favorites(streams, "bilibili");
+                    return sorted;
                 }
                 Err(e) => {
-                    warn!(screen, error = %e, "Bilibili service failed, falling back");
+                    warn!(error = %e, "Bilibili service failed, falling back");
                 }
             }
         }
 
         if self.fallback_service.is_empty() {
-            warn!(screen, "No favorite channels configured and no API services available");
+            warn!("No favorite channels configured and no API services available");
             return Vec::new();
         }
 
         let streams = self.fallback_service.all_streams();
-        debug!(screen, count = streams.len(), "Fetched streams from fallback service");
+        debug!(count = streams.len(), "Fetched streams from fallback service");
         streams
     }
 }

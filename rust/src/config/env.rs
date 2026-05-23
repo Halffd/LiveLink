@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::env;
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
 pub struct Env {
     pub node_env: String,
     pub port: u16,

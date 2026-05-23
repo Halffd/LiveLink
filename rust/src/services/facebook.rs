@@ -4,6 +4,7 @@ use thiserror::Error;
 use tracing::debug;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum FacebookError {
   #[error("API error: {0}")]
   Api(String),

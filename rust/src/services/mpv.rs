@@ -3,9 +3,10 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::os::unix::process::CommandExt;
 use thiserror::Error;
-use tracing::{debug, error, info};
+use tracing::{error, info, trace};
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum MpvError {
     #[error("Failed to fork: {0}")]
     Fork(String),
@@ -75,12 +76,9 @@ impl MpvInstance {
         args.push("--idle".to_string());
         args.extend(extra_args.iter().cloned());
 
-        debug!(
+        trace!(
             mpv_path = %mpv_path,
-            args = ?args,
-            url = %url,
-            ipc_server = %ipc_server,
-            "MPV command"
+            "Starting mpv subprocess"
         );
 
         match unsafe { libc::fork() } {

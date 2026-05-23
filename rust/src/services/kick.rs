@@ -5,6 +5,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum KickError {
     #[error("API error: {0}")]
     Api(String),
@@ -18,6 +19,7 @@ pub struct KickService {
     client: KickApiClient,
 }
 
+#[allow(dead_code)]
 impl KickService {
     pub fn new() -> Self {
         let client = KickApiClient::new().expect("Failed to create Kick API client");

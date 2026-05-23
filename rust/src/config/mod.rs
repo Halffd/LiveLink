@@ -11,8 +11,9 @@ pub use env::Env;
 pub use favorites::{FavoriteChannel, FavoriteChannels, PlatformFavorites};
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
 pub struct Config {
-    pub streams: Vec<ScreenConfig>,
+    pub streams: Vec<StreamEntry>,
     pub organizations: Vec<String>,
     pub favorite_channels: FavoriteChannels,
     pub holodex: HolodexConfig,
@@ -29,6 +30,7 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(unused)]
 pub struct ScreenConfig {
     pub id: u32,
     pub screen: u32,
@@ -39,11 +41,17 @@ pub struct ScreenConfig {
     pub y: i32,
     pub volume: u8,
     pub quality: String,
+    #[serde(alias = "windowMaximized", default)]
     pub window_maximized: bool,
+    #[serde(default)]
     pub primary: bool,
+    #[serde(default)]
     pub sources: Vec<SourceConfig>,
-    pub sorting: SortingConfig,
+    #[serde(default)]
+    pub sorting: Option<SortingConfig>,
+    #[serde(default)]
     pub refresh: u32,
+    #[serde(default, alias = "autoStart")]
     pub auto_start: bool,
     #[serde(default)]
     pub skip_watched_streams: Option<bool>,
@@ -62,31 +70,41 @@ pub struct SourceConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SortingConfig {
+pub struct SortRule {
     pub field: String,
     pub order: String,
     #[serde(default)]
-    pub ignore: Option<Vec<String>>,
+    pub ignore: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SortingConfig {
+    #[serde(default, alias = "fields")]
+    pub rules: Option<Vec<SortRule>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HolodexConfig {
-  pub api_key: String,
+    #[serde(alias = "apiKey")]
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TwitchConfig {
-  pub client_id: String,
-  pub client_secret: String,
-  #[serde(default)]
-  pub streamers_file: String,
+    #[serde(alias = "clientId")]
+    pub client_id: String,
+    #[serde(alias = "clientSecret")]
+    pub client_secret: String,
+    #[serde(default, alias = "streamersFile")]
+    pub streamers_file: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct YoutubeConfig {
-  pub api_key: String,
-  #[serde(default)]
-  pub favorite_channels: Vec<FavoriteChannel>,
+    #[serde(alias = "apiKey", default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub favorite_channels: Vec<FavoriteChannel>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -117,56 +135,399 @@ pub struct FacebookConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PlayerConfig {
-    #[serde(default = "default_player_type")]
+    #[serde(default = "default_player_type", alias = "playerType")]
     pub player_type: String,
+    #[serde(alias = "defaultQuality", default = "default_quality")]
     pub default_quality: String,
+    #[serde(alias = "defaultVolume", default = "default_volume")]
     pub default_volume: u8,
+    #[serde(alias = "windowMaximized", default)]
     pub window_maximized: bool,
+    #[serde(alias = "maxStreams", default = "default_max_streams")]
     pub max_streams: usize,
+    #[serde(alias = "autoStart", default = "default_auto_start")]
     pub auto_start: bool,
+    #[serde(alias = "disableHeartbeat", default)]
     pub disable_heartbeat: bool,
+    #[serde(alias = "forcePlayer", default)]
     pub force_player: bool,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
 
-fn default_player_type() -> String {
-    "mpv".to_string()
-}
+fn default_player_type() -> String { "mpv".to_string() }
+fn default_quality() -> String { "best".to_string() }
+fn default_volume() -> u8 { 50 }
+fn default_max_streams() -> usize { 4 }
+fn default_auto_start() -> bool { true }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoggingConfig {
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default = "default_log_level")]
     pub level: String,
+    #[serde(alias = "maxSizeMB", default = "default_max_size_mb")]
     pub max_size_mb: u32,
+    #[serde(alias = "maxFiles", default = "default_max_files")]
     pub max_files: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+fn default_log_level() -> String { "info".to_string() }
+fn default_max_size_mb() -> u32 { 50 }
+fn default_max_files() -> u32 { 5 }
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct MpvConfig {
+    #[serde(default = "default_mpv_path")]
+    pub path: String,
+    #[serde(default = "default_mpv_priority")]
     pub priority: String,
-    #[serde(rename = "gpu-context")]
+    #[serde(rename = "gpu-context", default = "default_gpu_context")]
     pub gpu_context: String,
+    #[serde(default)]
+    pub volume: u8,
+    #[serde(default)]
+    pub border: bool,
+    #[serde(default)]
+    pub fullscreen: bool,
+    #[serde(default)]
+    pub ontop: bool,
+    #[serde(default)]
+    pub pause: bool,
+    #[serde(default)]
+    pub mute: bool,
+    #[serde(default)]
+    pub speed: f64,
+    #[serde(default)]
+    pub loop_: Option<String>,
+    #[serde(rename = "audio-file", default)]
+    pub audio_file: Option<String>,
+    #[serde(default)]
+    pub sub_file: Option<String>,
+    #[serde(default)]
+    pub sub_lang: Option<String>,
+    #[serde(default)]
+    pub vid: Option<String>,
+    #[serde(default)]
+    pub aid: Option<String>,
+    #[serde(default)]
+    pub sid: Option<String>,
+    #[serde(default)]
+    pub cache: Option<i64>,
+    #[serde(default)]
+    pub cache_min: Option<i64>,
+    #[serde(default)]
+    pub cache_seek_min: Option<i64>,
+    #[serde(default)]
+    pub keep_open: bool,
+    #[serde(default)]
+    pub input_default_bindings: bool,
+    #[serde(default)]
+    pub input_terminal: bool,
+    #[serde(rename = "osd-level", default)]
+    pub osd_level: Option<u32>,
+    #[serde(default)]
+    pub force_window: bool,
+    #[serde(default)]
+    pub cursor: bool,
+    #[serde(default)]
+    pub no_cursor: bool,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct StreamlinkConfig {
-    pub path: String,
-    pub options: HashMap<String, serde_json::Value>,
-    pub http_header: HashMap<String, String>,
+fn default_mpv_path() -> String { "mpv".to_string() }
+fn default_streamlink_path() -> String { "streamlink".to_string() }
+fn default_mpv_priority() -> String { "normal".to_string() }
+fn default_gpu_context() -> String { "auto".to_string() }
+
+impl MpvConfig {
+    pub fn to_args(&self) -> Vec<String> {
+        use std::collections::HashSet;
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut args = vec![];
+
+        macro_rules! add_arg {
+            ($arg:expr) => {
+                if seen.insert($arg.clone()) {
+                    args.push($arg);
+                }
+            };
+        }
+
+        macro_rules! add_bool_arg {
+            ($key:expr, $value:expr) => {
+                if $value {
+                    add_arg!(format!("--{}", $key));
+                } else {
+                    add_arg!(format!("--{}=no", $key));
+                }
+            };
+        }
+
+        add_bool_arg!("border", self.border);
+        add_bool_arg!("fullscreen", self.fullscreen);
+        add_bool_arg!("ontop", self.ontop);
+        add_bool_arg!("pause", self.pause);
+        add_bool_arg!("mute", self.mute);
+
+        if self.speed != 1.0 {
+            add_arg!(format!("--speed={}", self.speed));
+        }
+
+        if let Some(ref loop_val) = self.loop_ {
+            add_arg!(format!("--loop={}", loop_val));
+        }
+
+        if let Some(ref audio_file) = self.audio_file {
+            add_arg!(format!("--audio-file={}", audio_file));
+        }
+
+        if let Some(ref sub_file) = self.sub_file {
+            add_arg!(format!("--sub-file={}", sub_file));
+        }
+
+        if let Some(ref sub_lang) = self.sub_lang {
+            add_arg!(format!("--sub-lang={}", sub_lang));
+        }
+
+        if let Some(ref vid) = self.vid {
+            add_arg!(format!("--vid={}", vid));
+        }
+
+        if let Some(ref aid) = self.aid {
+            add_arg!(format!("--aid={}", aid));
+        }
+
+        if let Some(ref sid) = self.sid {
+            add_arg!(format!("--sid={}", sid));
+        }
+
+        if let Some(cache) = self.cache {
+            add_arg!(format!("--cache={}", cache));
+        }
+
+        if let Some(cache_min) = self.cache_min {
+            add_arg!(format!("--cache-min={}", cache_min));
+        }
+
+        if let Some(cache_seek_min) = self.cache_seek_min {
+            add_arg!(format!("--cache-seek-min={}", cache_seek_min));
+        }
+
+        if self.keep_open {
+            add_arg!("--keep-open".to_string());
+        }
+
+        add_bool_arg!("input-default-bindings", self.input_default_bindings);
+        add_bool_arg!("input-terminal", self.input_terminal);
+
+        if let Some(osd_level) = self.osd_level {
+            add_arg!(format!("--osd-level={}", osd_level));
+        }
+
+        if self.force_window {
+            add_arg!("--force-window".to_string());
+        }
+
+        if self.cursor {
+            add_arg!("--cursor".to_string());
+        }
+
+        if self.no_cursor {
+            add_arg!("--no-cursor".to_string());
+        }
+
+        for (key, value) in &self.extra {
+            let arg = match value {
+                serde_json::Value::Bool(b) => {
+                    if *b { format!("--{}", key) } else { format!("--{}=no", key) }
+                }
+                serde_json::Value::Number(n) => format!("--{}={}", key, n),
+                serde_json::Value::String(s) => format!("--{}={}", key, s),
+                _ => continue,
+            };
+            add_arg!(arg);
+        }
+
+        args
+    }
+    
+    fn value_to_arg(&self, key: &str, value: &serde_json::Value) -> Option<String> {
+        match value {
+            serde_json::Value::Bool(b) => {
+                if *b {
+                    Some(format!("--{}", key))
+                } else {
+                    Some(format!("--{}=no", key))
+                }
+            }
+            serde_json::Value::Number(n) => {
+                Some(format!("--{}={}", key, n))
+            }
+            serde_json::Value::String(s) => {
+                Some(format!("--{}={}", key, s))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct VlcConfig {
+#[allow(unused)]
+pub struct StreamlinkConfig {
+    #[serde(default = "default_streamlink_path")]
     pub path: String,
+    #[serde(default)]
+    pub options: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    pub http_header: HashMap<String, String>,
+    #[serde(default)]
+    pub mpv: MpvConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
+pub struct VlcConfig {
+    #[serde(default = "default_vlc_path")]
+    pub path: String,
+    #[serde(default)]
     pub extra_args: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+fn default_vlc_path() -> String { "cvlc".to_string() }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FilterRule {
+    #[serde(rename = "type", default)]
+    pub rule_type: Option<String>,
+    pub pattern: String,
+    #[serde(default)]
+    pub regex: bool,
+    #[serde(default)]
+    pub ignore_case: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChannelFilter {
+    pub name: String,
+    #[serde(default)]
+    pub english_name: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub exclude_titles: Vec<String>,
+    #[serde(default)]
+    pub exclude_titles_regex: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct FiltersConfig {
-    pub filters: Vec<String>,
+    #[serde(default = "default_filters_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_filter_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub channel_names: Vec<String>,
+    #[serde(default)]
+    pub channel_names_regex: Vec<String>,
+    #[serde(default)]
+    pub title_patterns: Vec<String>,
+    #[serde(default)]
+    pub title_patterns_regex: Vec<String>,
+    #[serde(default)]
+    pub channels: Vec<ChannelFilter>,
+    #[serde(default)]
+    pub rules: Vec<FilterRule>,
+    #[serde(default)]
+    pub exclude_platforms: Vec<String>,
+    #[serde(default = "default_filter_members_only")]
+    pub filter_members_only: bool,
+}
+
+fn default_filters_enabled() -> bool { false }
+fn default_filter_mode() -> String { "exclude".to_string() }
+fn default_filter_members_only() -> bool { true }
+
+impl FiltersConfig {
+    pub fn matches_channel(&self, channel_name: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let name_lower = channel_name.to_lowercase();
+
+        let is_exclude_mode = self.mode == "exclude" || self.mode == "blacklist";
+
+        for pattern in &self.channel_names {
+            if name_lower.contains(&pattern.to_lowercase()) {
+                return is_exclude_mode;
+            }
+        }
+
+        for pattern in &self.channel_names_regex {
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                if re.is_match(channel_name) {
+                    return is_exclude_mode;
+                }
+            }
+        }
+
+        for channel in &self.channels {
+            if channel.name.to_lowercase() == name_lower {
+                return is_exclude_mode;
+            }
+            if let Some(ref en_name) = channel.english_name {
+                if en_name.to_lowercase() == name_lower {
+                    return is_exclude_mode;
+                }
+            }
+            for alias in &channel.aliases {
+                if alias.to_lowercase() == name_lower {
+                    return is_exclude_mode;
+                }
+            }
+        }
+
+        !is_exclude_mode
+    }
+
+    pub fn matches_title(&self, title: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+
+        let title_lower = title.to_lowercase();
+
+        let is_exclude_mode = self.mode == "exclude" || self.mode == "blacklist";
+
+        let matched_pattern = self.title_patterns.iter()
+            .any(|p| title_lower.contains(&p.to_lowercase()));
+
+        let matched_regex = self.title_patterns_regex.iter()
+            .any(|p| regex::Regex::new(p).map(|re| re.is_match(title)).unwrap_or(false));
+
+        let any_matched = matched_pattern || matched_regex;
+
+        if any_matched {
+            is_exclude_mode
+        } else {
+            !is_exclude_mode
+        }
+    }
+
+    pub fn should_filter(&self, channel_name: &str, title: &str) -> bool {
+        let channel_matches = self.channel_names.iter().any(|p| {
+            channel_name.to_lowercase().contains(&p.to_lowercase())
+        });
+
+        let title_matches = self.title_patterns.iter().any(|p| {
+            title.to_lowercase().contains(&p.to_lowercase())
+        });
+
+        channel_matches || title_matches
+    }
 }
 
 pub struct ConfigLoader {
@@ -244,7 +605,7 @@ let streamlink: StreamlinkConfig = self
 
     let filters: FiltersConfig = self
             .try_load_json_file("filters.json")
-            .unwrap_or_else(|| FiltersConfig { filters: vec![] });
+            .unwrap_or_else(|| FiltersConfig::default());
 
         let main_config: Option<MainConfig> = self.try_load_json_file("config.json");
 
@@ -368,11 +729,13 @@ fn default_favorites(&self) -> FavoriteChannels {
                     window_maximized: false,
                     primary: true,
                     sources: vec![],
-                    sorting: SortingConfig {
-                        field: "viewerCount".to_string(),
-                        order: "desc".to_string(),
-                        ignore: None,
-                    },
+                    sorting: Some(SortingConfig {
+                        rules: Some(vec![SortRule {
+                            field: "viewerCount".to_string(),
+                            order: "desc".to_string(),
+                            ignore: None,
+                        }]),
+                    }),
                     refresh: 300,
                     auto_start: true,
                     skip_watched_streams: None,
@@ -390,11 +753,13 @@ fn default_favorites(&self) -> FavoriteChannels {
                     window_maximized: false,
                     primary: false,
                     sources: vec![],
-                    sorting: SortingConfig {
-                        field: "viewerCount".to_string(),
-                        order: "desc".to_string(),
-                        ignore: None,
-                    },
+                    sorting: Some(SortingConfig {
+                        rules: Some(vec![SortRule {
+                            field: "viewerCount".to_string(),
+                            order: "desc".to_string(),
+                            ignore: None,
+                        }]),
+                    }),
                     refresh: 300,
                     auto_start: true,
                     skip_watched_streams: None,
@@ -405,17 +770,20 @@ fn default_favorites(&self) -> FavoriteChannels {
 
     fn default_mpv_config(&self) -> MpvConfig {
         MpvConfig {
+            path: "mpv".to_string(),
             priority: "normal".to_string(),
             gpu_context: "auto".to_string(),
             extra: HashMap::new(),
+            ..Default::default()
         }
     }
 
     fn default_streamlink_config(&self) -> StreamlinkConfig {
         StreamlinkConfig {
-            path: String::new(),
+            path: "streamlink".to_string(),
             options: HashMap::new(),
             http_header: HashMap::new(),
+            mpv: MpvConfig::default(),
         }
     }
 
@@ -447,10 +815,35 @@ impl Default for ConfigLoader {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct StreamEntry {
+    pub id: u32,
+    pub screen: u32,
+    #[serde(default = "default_true_bool")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub sources: Vec<SourceConfig>,
+    #[serde(default)]
+    pub sorting: Option<SortingConfig>,
+    #[serde(default)]
+    pub refresh: Option<u32>,
+    #[serde(default, alias = "autoStart")]
+    pub auto_start: Option<bool>,
+    #[serde(default, alias = "skipWatchedStreams")]
+    pub skip_watched_streams: Option<bool>,
+}
+
+fn default_true_bool() -> bool { true }
+
 #[derive(Debug, Deserialize)]
 struct StreamsFile {
-    streams: Vec<ScreenConfig>,
-    organizations: Vec<String>,
+    #[serde(default, alias = "skipWatchedStreams")]
+    pub skip_watched_streams: Option<bool>,
+    #[serde(default, alias = "sorting")]
+    pub sorting: Option<SortingConfig>,
+    pub streams: Vec<StreamEntry>,
+    #[serde(default)]
+    pub organizations: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

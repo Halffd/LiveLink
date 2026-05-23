@@ -13,6 +13,8 @@ pub struct StreamSource {
     pub start_time: Option<i64>,
     pub priority: Option<i32>,
     pub is_live: bool,
+    #[serde(default)]
+    pub members_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,7 @@ impl Default for Queue {
     }
 }
 
+#[allow(dead_code)]
 impl Queue {
     pub fn new() -> Self {
         Self {
@@ -180,6 +183,7 @@ pub struct QueueService {
     queues: HashMap<u32, Queue>,
 }
 
+#[allow(dead_code)]
 impl QueueService {
     pub fn new() -> Self {
         Self {

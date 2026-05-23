@@ -1,9 +1,10 @@
 use crate::queue::queue::StreamSource;
 use crate::services::holodex::QueryOptions;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum NiconicoError {
     #[error("API error: {0}")]
     Api(String),
@@ -17,6 +18,7 @@ pub struct NiconicoService {
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl NiconicoService {
     pub fn new() -> Self {
         let client = reqwest::Client::new();
@@ -33,7 +35,7 @@ impl NiconicoService {
         for channel_id in channel_ids {
             match self.get_channel_status(channel_id).await {
                 Ok(Some(live_info)) => {
-                    debug!(channel = %channel_id, viewers = live_info.1, "Found live stream on Niconico");
+                    trace!(channel = %channel_id, viewers = live_info.1, "Found live stream on Niconico");
                     sources.push(StreamSource {
                         url: format!("https://live.nicovideo.jp/watch/{}", live_info.0),
                         title: Some(live_info.2),
@@ -48,7 +50,7 @@ impl NiconicoService {
                     });
                 }
                 Ok(None) => {
-                    debug!(channel = %channel_id, "Channel not live on Niconico");
+                    trace!(channel = %channel_id, "Channel not live on Niconico");
                 }
                 Err(e) => {
                     warn!(channel = %channel_id, error = %e, "Failed to check Niconico channel");

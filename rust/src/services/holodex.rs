@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryOptions {
@@ -33,6 +33,7 @@ impl Default for QueryOptions {
   }
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum HolodexError {
     #[error("API error: {0}")]
     Api(String),
@@ -99,7 +100,7 @@ impl HolodexService {
             .map(|video| {
                 let url = format!("https://www.youtube.com/watch?v={}", video.id);
 
-                debug!(channel_id = %video.channel.id(), title = %video.title, "Found live stream");
+                trace!(channel_id = %video.channel.id(), title = %video.title, "Found live stream");
 
                 let live_info = video.live_info;
                 let viewer_count = live_info.live_viewers.map(|v| v as u64);
@@ -190,7 +191,7 @@ info!(count = sources.len(), "Fetched live streams from Holodex");
                 let url = format!("https://www.youtube.com/watch?v={}", video.id);
                 let is_live = video.status == VideoStatus::Live;
 
-                debug!(channel_id = %video.channel.id(), title = %video.title, "Found video");
+                trace!(channel_id = %video.channel.id(), title = %video.title, "Found video");
 
                 let live_info = video.live_info;
                 let viewer_count = live_info.live_viewers.map(|v| v as u64);

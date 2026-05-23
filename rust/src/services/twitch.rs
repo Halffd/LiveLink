@@ -4,6 +4,7 @@ use thiserror::Error;
 use tracing::{debug, info, warn};
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum TwitchError {
     #[error("API error: {0}")]
     Api(String),
@@ -69,6 +70,7 @@ impl TwitchService {
         }
 
         #[derive(serde::Deserialize)]
+        #[allow(unused)]
         struct TokenResponse {
             access_token: String,
             expires_in: i64,
@@ -230,6 +232,7 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
 
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
+    #[allow(unused)]
     struct TwitchSearchChannel {
       broadcaster_login: String,
       display_name: String,

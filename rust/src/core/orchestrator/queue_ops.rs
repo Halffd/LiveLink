@@ -3,6 +3,7 @@ use tracing::info;
 
 use super::Orchestrator;
 
+#[allow(dead_code)]
 impl Orchestrator {
     pub async fn set_queue(&self, screen: u32, sources: Vec<StreamSource>) {
         let mut queue = self.queue.lock().await;
