@@ -75,10 +75,14 @@ pub enum Commands {
 
 #[derive(Parser)]
 pub struct StartCommand {
-    #[arg(short, long, default_value_t = 1)]
-    pub screen: u32,
-    #[arg(short = 'n', long, default_value_t = 1)]
+    #[arg(short, long, help = "Single screen number")]
+    pub screen: Option<u32>,
+    #[arg(long, value_delimiter = ',', help = "Multiple screens: --screens 0,1 or --screens 0 --screens 1")]
+    pub screens: Option<Vec<u32>>,
+    #[arg(short = 'n', long, default_value_t = 1, help = "Number of instances per screen")]
     pub count: usize,
+    #[arg(long, help = "Multiple instances per screen: --instances 0,1 or --instances 0 --instances 1")]
+    pub instances: Option<Vec<u32>>,
     #[arg(long, help = "Starting instance number (for multiple players per screen)")]
     pub instance_start: Option<u32>,
 }
@@ -212,11 +216,24 @@ pub enum QueueSortField {
 pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), String> {
     match &cli.command {
         Commands::Start(cmd) => {
-            let instance_start = cmd.instance_start.unwrap_or(0);
-            for i in 0..cmd.count {
-                let instance_id = instance_start + i as u32;
-                orchestrator.start_stream_on_instance(cmd.screen, instance_id).await?;
-                println!("Started stream on screen {} instance {}", cmd.screen, instance_id);
+            let screens: Vec<u32> = if let Some(ref screens) = cmd.screens {
+                screens.clone()
+            } else {
+                vec![cmd.screen.unwrap_or(1)]
+            };
+
+            let instance_ids: Vec<u32> = if let Some(ref instances) = cmd.instances {
+                instances.clone()
+            } else {
+                let instance_start = cmd.instance_start.unwrap_or(0);
+                (instance_start..instance_start + cmd.count as u32).collect()
+            };
+
+            for screen in &screens {
+                for &instance_id in &instance_ids {
+                    orchestrator.start_stream_on_instance(*screen, instance_id).await?;
+                    println!("Started stream on screen {} instance {}", screen, instance_id);
+                }
             }
         }
         Commands::Stop(cmd) => {
