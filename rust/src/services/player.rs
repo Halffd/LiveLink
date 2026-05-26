@@ -201,6 +201,36 @@ impl PlayerService {
             screen_config.volume,
         ).map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
+        let instances = self.instances.clone();
+        let mpv_controllers = self.mpv_controllers.clone();
+        let event_sender = self.event_sender.clone();
+        controller.set_exit_callback(move || {
+            let (screen_for_event, playback_time) = {
+                let inst = instances.get(&key);
+                match inst {
+                    Some(i) => (i.screen, i.playback_time),
+                    None => (screen, 0.0),
+                }
+            };
+
+            instances.remove(&key);
+            mpv_controllers.remove(&key);
+
+            let exit = ProcessExit {
+                screen: screen_for_event,
+                pid: 0,
+                exit_code: None,
+                playback_time,
+                error: None,
+            };
+            let sender = event_sender.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sender.send(exit).await {
+                    error!(screen_for_event, "Failed to send exit event from wait thread: {}", e);
+                }
+            });
+        });
+
         controller.play(url)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
