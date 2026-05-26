@@ -272,7 +272,7 @@ impl MpvConfig {
         add_bool_arg!("pause", self.pause);
         add_bool_arg!("mute", self.mute);
 
-        if self.speed != 1.0 {
+        if self.speed > 0.0 && self.speed != 1.0 {
             add_arg!(format!("--speed={}", self.speed));
         }
 
