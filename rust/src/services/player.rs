@@ -209,11 +209,13 @@ impl PlayerService {
                 let inst = instances.get(&key);
                 match inst {
                     Some(i) => (i.screen, i.playback_time),
-                    None => (screen, 0.0),
+                    None => return,
                 }
             };
 
-            instances.remove(&key);
+            if instances.remove(&key).is_none() {
+                return;
+            }
             mpv_controllers.remove(&key);
 
             let exit = ProcessExit {
@@ -224,7 +226,7 @@ impl PlayerService {
                 error: None,
             };
             let sender = event_sender.clone();
-            tokio::spawn(async move {
+            tokio::runtime::Handle::current().spawn(async move {
                 if let Err(e) = sender.send(exit).await {
                     error!(screen_for_event, "Failed to send exit event from wait thread: {}", e);
                 }
