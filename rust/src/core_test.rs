@@ -331,7 +331,7 @@ mod failure_tests {
         assert!(is_watched);
     }
 
-async fn create_orchestrator_with_screens(config: OrchestratorConfig, screen_count: u32) -> Orchestrator {
+async fn create_orchestrator_with_screens(config: OrchestratorConfig, screen_count: u32) -> Arc<Orchestrator> {
     let (_, exit_rx) = tokio::sync::mpsc::channel(100);
     let (_, network_rx) = tokio::sync::mpsc::channel(100);
     let orch = Orchestrator::new(config, exit_rx, network_rx);

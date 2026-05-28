@@ -17,7 +17,6 @@ use tracing::{debug, info};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
-use std::sync::Arc;
 use std::path::PathBuf;
 
 fn setup_logging() {
@@ -157,7 +156,7 @@ let _env = Env::load();
         filters: config.filters,
     };
 
-    let orchestrator = Arc::new(Orchestrator::new(orchestrator_config, exit_rx, network_receiver));
+    let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
 
     tokio::spawn(async move {
         network_monitor.start().await;

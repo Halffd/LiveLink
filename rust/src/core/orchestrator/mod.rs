@@ -47,7 +47,7 @@ impl Orchestrator {
         config: OrchestratorConfig,
         exit_receiver: mpsc::Receiver<ProcessExit>,
         network_receiver: mpsc::Receiver<NetworkEvent>,
-    ) -> Self {
+    ) -> Arc<Self> {
         let max_streams = config.max_streams;
         let (exit_sender, receiver) = mpsc::channel(100);
         drop(exit_receiver);
@@ -110,19 +110,19 @@ let kick_service = KickService::new();
     max_streams,
   };
 
-        let orchestrator_clone = Arc::new(orchestrator.clone_inner());
-        let orchestrator_for_exit = orchestrator_clone.clone();
+  let orchestrator = Arc::new(orchestrator);
 
-        tokio::spawn(async move {
-            Self::exit_listener(receiver, orchestrator_for_exit).await;
-        });
+  let orchestrator_for_exit = orchestrator.clone();
+  tokio::spawn(async move {
+    Self::exit_listener(receiver, orchestrator_for_exit).await;
+  });
 
-let orchestrator_for_network = Arc::new(orchestrator.clone_inner());
+  let orchestrator_for_network = orchestrator.clone();
   tokio::spawn(async move {
     Self::network_listener(network_receiver, orchestrator_for_network).await;
   });
 
-  let orchestrator_for_poll = Arc::new(orchestrator.clone_inner());
+  let orchestrator_for_poll = orchestrator.clone();
   tokio::spawn(async move {
     loop {
       tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -135,26 +135,7 @@ let orchestrator_for_network = Arc::new(orchestrator.clone_inner());
   orchestrator
 }
 
-fn clone_inner(&self) -> Self {
-    Self {
-      config: self.config.clone(),
-      state: DashMap::new(),
-      locks: DashMap::new(),
-      player: self.player.clone(),
-      queue: self.queue.clone(),
-      fallback_service: self.fallback_service.clone(),
-      holodex_service: self.holodex_service.clone(),
-      twitch_service: self.twitch_service.clone(),
-      youtube_service: self.youtube_service.clone(),
-      kick_service: self.kick_service.clone(),
-      niconico_service: self.niconico_service.clone(),
-      bilibili_service: self.bilibili_service.clone(),
-      facebook_service: self.facebook_service.clone(),
-      max_streams: self.max_streams,
-    }
-  }
-
-    async fn exit_listener(
+async fn exit_listener(
         mut receiver: mpsc::Receiver<ProcessExit>,
         orchestrator: Arc<Orchestrator>,
     ) {
