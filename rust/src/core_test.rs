@@ -4,6 +4,7 @@ mod failure_tests {
     use crate::core::state::{OrchestratorConfig, ScreenState, StreamInfo, StreamState, Platform};
     use crate::queue::queue::StreamSource;
     use crate::services::network::NetworkEvent;
+    use crate::services::player::ProcessExit;
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
@@ -353,4 +354,362 @@ async fn create_orchestrator_with_screens(config: OrchestratorConfig, screen_cou
     }
 
     impl std::error::Error for TestError {}
+}
+
+#[cfg(test)]
+mod exit_integration_tests {
+    use crate::core::orchestrator::Orchestrator;
+    use crate::core::state::{OrchestratorConfig, StreamInfo, StreamState, Platform};
+    use crate::queue::queue::StreamSource;
+    use crate::services::player::ProcessExit;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    fn create_test_config(max_streams: usize) -> OrchestratorConfig {
+        OrchestratorConfig {
+            max_streams,
+            startup_cooldown_ms: 10,
+            crash_threshold_seconds: 3,
+            skip_threshold_seconds: 2,
+            ..Default::default()
+        }
+    }
+
+    fn make_stream_source(url: &str, screen: u32) -> StreamSource {
+        StreamSource {
+            url: url.to_string(),
+            title: Some(format!("Stream {}", screen)),
+            platform: Some("twitch".to_string()),
+            channel_id: Some(format!("ch{}", screen)),
+            viewer_count: Some(100),
+            priority: Some(1),
+            is_live: true,
+            ..Default::default()
+        }
+    }
+
+    fn make_stream_info(url: &str, screen: u32) -> StreamInfo {
+        StreamInfo {
+            url: url.to_string(),
+            title: Some(format!("Stream {}", screen)),
+            platform: Platform::Twitch,
+            screen,
+            quality: "best".to_string(),
+            volume: 50,
+            start_time: Some(std::time::Instant::now()),
+        }
+    }
+
+    fn make_stream_info_recent(url: &str, screen: u32) -> StreamInfo {
+        StreamInfo {
+            url: url.to_string(),
+            title: Some(format!("Stream {}", screen)),
+            platform: Platform::Twitch,
+            screen,
+            quality: "best".to_string(),
+            volume: 50,
+            start_time: Some(std::time::Instant::now() - Duration::from_secs(2)),
+        }
+    }
+
+    fn make_stream_info_old(url: &str, screen: u32) -> StreamInfo {
+        StreamInfo {
+            url: url.to_string(),
+            title: Some(format!("Stream {}", screen)),
+            platform: Platform::Twitch,
+            screen,
+            quality: "best".to_string(),
+            volume: 50,
+            start_time: Some(std::time::Instant::now() - Duration::from_secs(10)),
+        }
+    }
+
+    async fn create_orchestrator_with_screens(config: OrchestratorConfig, screen_count: u32) -> Arc<Orchestrator> {
+        let (_, exit_rx) = tokio::sync::mpsc::channel(100);
+        let (_, network_rx) = tokio::sync::mpsc::channel(100);
+        let orch = Orchestrator::new(config, exit_rx, network_rx);
+
+        for screen in 0..screen_count {
+            orch.register_screen(screen).await;
+        }
+
+        orch
+    }
+
+    #[tokio::test]
+    async fn test_exit_event_channel_delivery() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ProcessExit>(10);
+
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            tx.send(ProcessExit {
+                screen: 0,
+                pid: 123,
+                exit_code: Some(1),
+                playback_time: 5.0,
+                error: None,
+            }).await.unwrap();
+        });
+
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert!(event.is_ok());
+        let exit = event.unwrap().unwrap();
+        assert_eq!(exit.screen, 0);
+        assert_eq!(exit.pid, 123);
+        assert_eq!(exit.exit_code, Some(1));
+        assert_eq!(exit.playback_time, 5.0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_process_exit_soft_skip() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info("http://skip.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 0.0,
+            error: None,
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Idle,
+            "Expected Idle after soft skip (finish_stop called), got {:?}", state.state);
+        assert!(state.stream.is_none(), "Stream should be cleared after soft skip");
+    }
+
+    #[tokio::test]
+    async fn test_handle_process_exit_crash_with_429() {
+        let config = OrchestratorConfig {
+            max_streams: 1,
+            startup_cooldown_ms: 10,
+            crash_threshold_seconds: 3,
+            skip_threshold_seconds: 2,
+            ..Default::default()
+        };
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info_recent("http://crash.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 2.5,
+            error: Some("429 Too Many Requests".to_string()),
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Error,
+            "Expected Error state after crash, got {:?}", state.state);
+        let err = state.last_error.unwrap();
+        assert!(err.contains("Crash"), "Should be crash, got: {}", err);
+        assert!(err.contains("429"), "Error should preserve 429 info: {}", err);
+    }
+
+    #[tokio::test]
+    async fn test_handle_process_exit_normal_end() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info_old("http://normal.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(0),
+            playback_time: 120.0,
+            error: None,
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Idle,
+            "Expected Idle after normal end (finish_stop called), got {:?}", state.state);
+        assert!(state.stream.is_none(), "Stream should be cleared after normal end");
+    }
+
+    #[tokio::test]
+    async fn test_exit_listener_via_handle_process_exit() {
+        let (_, exit_rx) = tokio::sync::mpsc::channel(100);
+        let (_, network_rx) = tokio::sync::mpsc::channel(100);
+        let config = create_test_config(1);
+
+        let orch = Orchestrator::new(config, exit_rx, network_rx);
+        orch.register_screen(0).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info_recent("http://listener.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 2.5,
+            error: Some("429".to_string()),
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Error,
+            "Exit via handle_process_exit should transition to Error for crash, got {:?}", state.state);
+    }
+
+    #[tokio::test]
+    async fn test_multiple_exits_same_screen_no_panic() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info("http://first.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 0.0,
+            error: None,
+        };
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let second_exit = ProcessExit {
+            screen: 0,
+            pid: 999,
+            exit_code: Some(0),
+            playback_time: 10.0,
+            error: None,
+        };
+        Arc::clone(&orch).handle_process_exit(second_exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Idle,
+            "Duplicate exit on already-idle screen should not panic, got {:?}", state.state);
+    }
+
+    #[tokio::test]
+    async fn test_soft_skip_marks_stream_watched() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        orch.set_queue(0, vec![]).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info("http://memberonly.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 0.0,
+            error: None,
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let is_watched = {
+            let queue = orch.queue.lock().await;
+            queue.is_stream_watched(0, &StreamSource {
+                url: "http://memberonly.com".to_string(),
+                ..Default::default()
+            })
+        };
+        assert!(is_watched, "Soft-skipped stream should be marked as watched");
+    }
+
+    #[tokio::test]
+    async fn test_normal_end_marks_stream_watched() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        orch.set_queue(0, vec![]).await;
+
+        {
+            let mut state = orch.get_screen_state(0).unwrap().clone();
+            state.start_stream(make_stream_info_old("http://finished.com", 0));
+            state.mark_playing();
+            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            *screen_state = state;
+        }
+
+        let exit = ProcessExit {
+            screen: 0,
+            pid: 0,
+            exit_code: Some(0),
+            playback_time: 60.0,
+            error: None,
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let is_watched = {
+            let queue = orch.queue.lock().await;
+            queue.is_stream_watched(0, &StreamSource {
+                url: "http://finished.com".to_string(),
+                ..Default::default()
+            })
+        };
+        assert!(is_watched, "Normally ended stream should be marked as watched");
+    }
+
+    #[tokio::test]
+    async fn test_exit_for_nonexistent_screen_ignored() {
+        let config = create_test_config(1);
+        let orch = create_orchestrator_with_screens(config, 1).await;
+
+        let exit = ProcessExit {
+            screen: 99,
+            pid: 0,
+            exit_code: Some(1),
+            playback_time: 0.0,
+            error: None,
+        };
+
+        Arc::clone(&orch).handle_process_exit(exit).await;
+
+        let state = orch.get_screen_state(0).unwrap();
+        assert_eq!(state.state, StreamState::Idle,
+            "Exit for nonexistent screen should not affect other screens");
+    }
 }
