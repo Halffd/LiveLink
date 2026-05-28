@@ -25,14 +25,6 @@ impl Orchestrator {
             .count()
     }
 
-    pub fn poll_player_exits(&self) {
-        let player = self.player.clone();
-        tokio::spawn(async move {
-            let player_guard = player.lock().await;
-            player_guard.poll_exits();
-        });
-    }
-
     pub(crate) fn apply_filters(&self, streams: Vec<StreamSource>) -> Vec<StreamSource> {
         if !self.config.filters.enabled {
             return streams;

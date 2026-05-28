@@ -154,16 +154,18 @@ impl PlayerService {
         Self::new(event_sender, PlayerConfig::default())
     }
 
-    pub async fn start_mpv_process(
-        &self,
-        screen: u32,
-        instance_id: u32,
-        url: &str,
-    ) -> Result<u32, PlayerError> {
-        let key = (screen, instance_id);
-        if self.instances.contains_key(&key) {
-            return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
-        }
+pub async fn start_mpv_process(
+    &self,
+    screen: u32,
+    instance_id: u32,
+    url: &str,
+) -> Result<u32, PlayerError> {
+    let key = (screen, instance_id);
+    if self.instances.contains_key(&key) {
+        return Err(PlayerError::AlreadyRunningInstance(screen, instance_id));
+    }
+
+    let handle = tokio::runtime::Handle::current();
 
         let screen_config = self.config.screens
             .iter()
@@ -201,37 +203,37 @@ impl PlayerService {
             screen_config.volume,
         ).map_err(|e| PlayerError::Mpv(e.to_string()))?;
 
-        let instances = self.instances.clone();
-        let mpv_controllers = self.mpv_controllers.clone();
-        let event_sender = self.event_sender.clone();
-        controller.set_exit_callback(move || {
-            let (screen_for_event, playback_time) = {
-                let inst = instances.get(&key);
-                match inst {
-                    Some(i) => (i.screen, i.playback_time),
-                    None => return,
-                }
-            };
-
-            if instances.remove(&key).is_none() {
-                return;
+    let instances = self.instances.clone();
+    let mpv_controllers = self.mpv_controllers.clone();
+    let event_sender = self.event_sender.clone();
+    controller.set_exit_callback(move || {
+        let (screen_for_event, playback_time) = {
+            let inst = instances.get(&key);
+            match inst {
+                Some(i) => (i.screen, i.playback_time),
+                None => return,
             }
-            mpv_controllers.remove(&key);
+        };
 
-            let exit = ProcessExit {
-                screen: screen_for_event,
-                pid: 0,
-                exit_code: None,
-                playback_time,
-                error: None,
-            };
-            let sender = event_sender.clone();
-            tokio::runtime::Handle::current().spawn(async move {
-                if let Err(e) = sender.send(exit).await {
-                    error!(screen_for_event, "Failed to send exit event from wait thread: {}", e);
-                }
-            });
+        if instances.remove(&key).is_none() {
+            return;
+        }
+        mpv_controllers.remove(&key);
+
+        let exit = ProcessExit {
+            screen: screen_for_event,
+            pid: 0,
+            exit_code: None,
+            playback_time,
+            error: None,
+        };
+        let sender = event_sender.clone();
+        handle.spawn(async move {
+            if let Err(e) = sender.send(exit).await {
+                error!(screen_for_event, "Failed to send exit event from wait thread: {}", e);
+            }
         });
+    });
 
         controller.play(url)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
