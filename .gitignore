@@ -5,6 +5,10 @@ src-tauri/target
 rust/Cargo.lock
 rust/target
 rust/logs
+target
+config
+*.lock
+generated-wm-configs
 # Output
 .output
 .vercel
@@ -33,6 +37,9 @@ vite.config.ts.timestamp-*
 src/lib/paraglide
 
 # User configuration
+ts-old/config/user/*
+ts-old/config/default/*
+ts-old/lib/paraglide
 src/config/user/*
 !src/config/user/.gitkeep
 
