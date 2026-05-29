@@ -1,24 +1,15 @@
-test-results
-node_modules
-coverage
+# Rust
+/target
+Cargo.lock
+logs/
+
+# Tauri
 src-tauri/target
-rust/Cargo.lock
-rust/target
-rust/logs
-target
-config
-*.lock
-generated-wm-configs
-# Output
-.output
-.vercel
-.netlify
-.wrangler
-/.svelte-kit
-/build
-/dist
-package-lock.json
-bun.lock
+src-tauri/gen
+
+# Config (user-specific)
+config/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -28,33 +19,13 @@ Thumbs.db
 .env.*
 !.env.example
 !.env.test
-
-# Vite
-vite.config.js.timestamp-*
-vite.config.ts.timestamp-*
-
-# Paraglide
-src/lib/paraglide
-
-# User configuration
-ts-old/config/user/*
-ts-old/config/default/*
-ts-old/lib/paraglide
-src/config/user/*
-!src/config/user/.gitkeep
-
-# Environment variables
-.env
 .history
 
 # Database
 data/
 *.db
-src/config/default/favorites.json
-src/config/default/filters.json
-!src/config/default/.gitkeep
-logs/
-scripts/mpv
+
+# Media
 *.jpg
 *.png
 *.gif
@@ -74,10 +45,13 @@ scripts/mpv
 *.mpeg
 *.log
 
+# IDE
 .idea
 .vscode
-
-# Generated WM configs (auto-generated from player.json)
-generated-wm-configs/livelink-*src-tauri/target
-src-tauri/gen
 .opencode
+
+# Generated WM configs
+generated-wm-configs/
+
+# Scripts
+scripts/mpv
