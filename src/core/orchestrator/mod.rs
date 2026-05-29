@@ -122,17 +122,7 @@ let kick_service = KickService::new();
     Self::network_listener(network_receiver, orchestrator_for_network).await;
   });
 
-  let orchestrator_for_poll = orchestrator.clone();
-  tokio::spawn(async move {
-    loop {
-      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-      let player = orchestrator_for_poll.player.clone();
-      let player_guard = player.lock().await;
-      player_guard.poll_exits();
-    }
-  });
-
-  orchestrator
+    orchestrator
 }
 
 async fn exit_listener(
