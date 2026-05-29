@@ -215,6 +215,11 @@ pub async fn start_mpv_process(
             }
         };
 
+        let actual_playback_time = mpv_controllers
+            .get(&key)
+            .map(|c| c.get_playback_time())
+            .unwrap_or(playback_time);
+
         if instances.remove(&key).is_none() {
             return;
         }
@@ -224,7 +229,7 @@ pub async fn start_mpv_process(
             screen: screen_for_event,
             pid: 0,
             exit_code: None,
-            playback_time,
+            playback_time: actual_playback_time,
             error: None,
         };
         let sender = event_sender.clone();
@@ -507,30 +512,34 @@ pub async fn start_mpv_process(
                 false
             };
 
-            if should_remove {
-                if let Some((_, inst)) = instances.remove(&key) {
-                    let playback_time = inst.playback_time;
-                    let screen_for_event = inst.screen;
-                    if inst.is_mpv {
-                        if let Some((_, c)) = mpv_controllers.remove(&key) {
-                            c.destroy();
+        if should_remove {
+            if let Some((_, inst)) = instances.remove(&key) {
+                let mut playback_time = inst.playback_time;
+                let screen_for_event = inst.screen;
+                if inst.is_mpv {
+                    if let Some((_, c)) = mpv_controllers.remove(&key) {
+                        let mpv_time = c.get_playback_time();
+                        if mpv_time > 0.0 {
+                            playback_time = mpv_time;
                         }
+                        c.destroy();
                     }
-                    let sender = self.event_sender.clone();
-                    tokio::spawn(async move {
-                        let exit = ProcessExit {
-                            screen: screen_for_event,
-                            pid: 0,
-                            exit_code: None,
-                            playback_time,
-                            error: None,
-                        };
-                        if let Err(e) = sender.send(exit).await {
-                            error!(screen_for_event, "Failed to send exit event: {}", e);
-                        }
-                    });
                 }
+                let sender = self.event_sender.clone();
+                tokio::spawn(async move {
+                    let exit = ProcessExit {
+                        screen: screen_for_event,
+                        pid: 0,
+                        exit_code: None,
+                        playback_time,
+                        error: None,
+                    };
+                    if let Err(e) = sender.send(exit).await {
+                        error!(screen_for_event, "Failed to send exit event: {}", e);
+                    }
+                });
             }
+        }
         }
     }
 
