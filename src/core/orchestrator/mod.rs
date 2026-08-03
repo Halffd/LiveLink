@@ -302,12 +302,26 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         }
     }
 
-    pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
+pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
         let streams = self.fetch_streams_for_screen(screen).await;
         let mut queue = self.queue.lock().await;
         queue.set_queue(screen, streams);
         info!(screen, "Queue refreshed");
         Ok(())
+    }
+
+    pub async fn start_auto_screens(&self) {
+        for screen_config in &self.config.screens {
+            if screen_config.auto_start && self.is_screen_enabled(screen_config.screen) {
+                let streams = self.fetch_streams_for_screen(screen_config.screen).await;
+                if !streams.is_empty() {
+                    self.set_queue(screen_config.screen, streams).await;
+                    if let Err(e) = self.start_stream(screen_config.screen).await {
+                        warn!(screen = screen_config.screen, error = %e, "Failed to auto-start screen");
+                    }
+                }
+            }
+        }
     }
 
     pub async fn refresh_all_queues(&self) -> Result<(), String> {

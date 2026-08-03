@@ -1,3 +1,4 @@
+use crate::config::{SortRule, SortingConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
@@ -91,7 +92,10 @@ impl Queue {
     }
 
     pub fn filter_unwatched(&self) -> Vec<&StreamSource> {
-        self.sources.iter().filter(|s| !self.is_watched(s)).collect()
+        self.sources
+            .iter()
+            .filter(|s| !self.is_watched(s))
+            .collect()
     }
 
     pub fn filter_by_platform(&self, platform: &str) -> Vec<&StreamSource> {
@@ -153,15 +157,86 @@ impl Queue {
     }
 
     pub fn sort_by_is_live(&mut self) {
-        self.sources.sort_by(|a, b| {
-            b.is_live.cmp(&a.is_live)
-        });
+        self.sources.sort_by(|a, b| b.is_live.cmp(&a.is_live));
+    }
+
+    pub fn apply_sorting(&mut self, sorting: &SortingConfig) {
+        if let Some(rules) = &sorting.rules {
+            for rule in rules.iter().rev() {
+                self.apply_sort_rule(rule);
+            }
+        }
+    }
+
+    fn apply_sort_rule(&mut self, rule: &SortRule) {
+        let field = rule.field.as_str();
+        let ascending = rule.order.to_lowercase() == "asc";
+
+        match field {
+            "viewerCount" | "viewers" => {
+                self.sources.sort_by(|a, b| {
+                    let a_val = a.viewer_count.unwrap_or(0);
+                    let b_val = b.viewer_count.unwrap_or(0);
+                    if ascending {
+                        a_val.cmp(&b_val)
+                    } else {
+                        b_val.cmp(&a_val)
+                    }
+                });
+            }
+            "priority" => {
+                self.sources.sort_by(|a, b| {
+                    let a_val = a.priority.unwrap_or(i32::MAX);
+                    let b_val = b.priority.unwrap_or(i32::MAX);
+                    if ascending {
+                        a_val.cmp(&b_val)
+                    } else {
+                        b_val.cmp(&a_val)
+                    }
+                });
+            }
+            "name" | "title" => {
+                self.sources.sort_by(|a, b| {
+                    let a_val = a.title.as_deref().unwrap_or("").to_lowercase();
+                    let b_val = b.title.as_deref().unwrap_or("").to_lowercase();
+                    if ascending {
+                        a_val.cmp(&b_val)
+                    } else {
+                        b_val.cmp(&a_val)
+                    }
+                });
+            }
+            "isLive" | "live" => {
+                self.sources.sort_by(|a, b| {
+                    if ascending {
+                        a.is_live.cmp(&b.is_live)
+                    } else {
+                        b.is_live.cmp(&a.is_live)
+                    }
+                });
+            }
+            "platform" => {
+                self.sources.sort_by(|a, b| {
+                    let a_val = a.platform.as_deref().unwrap_or("").to_lowercase();
+                    let b_val = b.platform.as_deref().unwrap_or("").to_lowercase();
+                    if ascending {
+                        a_val.cmp(&b_val)
+                    } else {
+                        b_val.cmp(&a_val)
+                    }
+                });
+            }
+            _ => {
+                debug!(field, "Unknown sort field, skipping");
+            }
+        }
     }
 
     pub fn cleanup_expired_watched(&mut self, max_age_seconds: i64) -> usize {
         let now = chrono::Utc::now().timestamp();
         let before = self.watched_keys.len();
-        self.watched_keys.retain(|_, timestamp| now - *timestamp < max_age_seconds);
+        self.watched_keys
+            .retain(|_, timestamp| now - *timestamp < max_age_seconds);
         before - self.watched_keys.len()
     }
 
@@ -180,7 +255,7 @@ impl Queue {
 
 #[derive(Debug, Clone)]
 pub struct QueueService {
-    queues: HashMap<u32, Queue>,
+    pub queues: HashMap<u32, Queue>,
 }
 
 #[allow(dead_code)]
@@ -227,7 +302,10 @@ impl QueueService {
     }
 
     pub fn is_empty(&self, screen: u32) -> bool {
-        self.queues.get(&screen).map(|q| q.is_empty()).unwrap_or(true)
+        self.queues
+            .get(&screen)
+            .map(|q| q.is_empty())
+            .unwrap_or(true)
     }
 
     pub fn clear_queue(&mut self, screen: u32) {

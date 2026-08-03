@@ -4,9 +4,39 @@ use tracing::{debug, warn};
 use super::Orchestrator;
 
 impl Orchestrator {
-    pub async fn fetch_streams_for_screen(&self, _screen: u32) -> Vec<StreamSource> {
-        let streams = self.fetch_all_streams_internal().await;
-        self.apply_filters(streams)
+    pub async fn fetch_streams_for_screen(&self, screen: u32) -> Vec<StreamSource> {
+        let all_streams = self.fetch_all_streams_internal().await;
+        let mut filtered = self.apply_filters(all_streams);
+        
+        // Filter by screen's sources configuration
+        if let Some(screen_config) = self.config.screens.iter().find(|s| s.screen == screen) {
+            if !screen_config.sources.is_empty() {
+                let enabled_sources: std::collections::HashSet<_> = screen_config.sources
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .map(|s| s.type_.clone())
+                    .collect();
+                
+                if !enabled_sources.is_empty() {
+                    filtered = filtered.into_iter()
+                        .filter(|s| {
+                            let platform = s.platform.as_deref().unwrap_or("unknown");
+                            enabled_sources.contains(platform)
+                        })
+                        .collect();
+                }
+            }
+            
+            // Skip watched streams if configured
+            if screen_config.skip_watched_streams.unwrap_or(false) {
+                let queue = self.queue.lock().await;
+                filtered = filtered.into_iter()
+                    .filter(|s| !queue.is_stream_watched(screen, s))
+                    .collect();
+            }
+        }
+        
+        filtered
     }
 
     pub(crate) async fn fetch_all_streams_internal(&self) -> Vec<StreamSource> {

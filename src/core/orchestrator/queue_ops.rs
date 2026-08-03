@@ -1,4 +1,4 @@
-use crate::queue::queue::StreamSource;
+use crate::queue::queue::{Queue, StreamSource};
 use tracing::info;
 
 use super::Orchestrator;
@@ -6,8 +6,19 @@ use super::Orchestrator;
 #[allow(dead_code)]
 impl Orchestrator {
     pub async fn set_queue(&self, screen: u32, sources: Vec<StreamSource>) {
-        let mut queue = self.queue.lock().await;
-        queue.set_queue(screen, sources);
+        let mut queue_service = self.queue.lock().await;
+        let mut q = Queue::with_sources(sources);
+        
+        // Apply screen's sorting configuration if available
+        if let Some(screen_config) = self.config.screens.iter().find(|s| s.screen == screen) {
+            if let Some(sorting) = &screen_config.sorting {
+                q.apply_sorting(sorting);
+            }
+        } else {
+            q.sort_by_priority();
+        }
+        
+        queue_service.queues.insert(screen, q);
     }
 
     pub async fn clear_watched(&self, screen: u32) {

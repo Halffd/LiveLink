@@ -177,6 +177,9 @@ orchestrator.register_screen(0).await;
     orchestrator.set_queue(1, sources_1).await;
   }
 
+  // Auto-start screens that have auto_start enabled
+  orchestrator.start_auto_screens().await;
+
 info!("LiveLink initialized");
   info!("Active streams: {}", orchestrator.count_active_streams());
 
