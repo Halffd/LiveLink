@@ -26,8 +26,7 @@ impl Env {
                 .parse()
                 .unwrap_or(3001),
             log_level: env::var("LOG_LEVEL").unwrap_or_else(|_| "info".into()),
-            database_path: env::var("DATABASE_PATH")
-                .unwrap_or_else(|_| "data/streams.db".into()),
+            database_path: env::var("DATABASE_PATH").unwrap_or_else(|_| "data/streams.db".into()),
             holodex_api_key: env::var("HOLODEX_API_KEY").unwrap_or_default(),
             twitch_client_id: env::var("TWITCH_CLIENT_ID").unwrap_or_default(),
             twitch_client_secret: env::var("TWITCH_CLIENT_SECRET").unwrap_or_default(),

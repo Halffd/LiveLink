@@ -86,7 +86,9 @@ impl From<PlatformFavoritesRaw> for PlatformFavorites {
         }
 
         all_channels.sort_by(|a, b| b.score.cmp(&a.score));
-        Self { default: all_channels }
+        Self {
+            default: all_channels,
+        }
     }
 }
 
@@ -112,8 +114,8 @@ impl<'de> Deserialize<'de> for PlatformFavorites {
 
 impl FavoriteChannels {
     pub fn load_from_file(path: &PathBuf) -> Result<Self, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let content = fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
 
         if let Ok(standard) = serde_json::from_str::<Self>(&content) {
             return Ok(standard);
@@ -123,8 +125,8 @@ impl FavoriteChannels {
             return Ok(from_url_array(urls));
         }
 
-        let legacy: LegacyFavorites =
-            serde_json::from_str(&content).map_err(|e| format!("Invalid favorites.json format: {}", e))?;
+        let legacy: LegacyFavorites = serde_json::from_str(&content)
+            .map_err(|e| format!("Invalid favorites.json format: {}", e))?;
 
         let channels: Vec<FavoriteChannel> = legacy
             .urls
@@ -153,12 +155,8 @@ impl FavoriteChannels {
             niconico: PlatformFavorites {
                 default: channels.clone(),
             },
-            bilibili: PlatformFavorites {
-                default: channels,
-            },
-            facebook: PlatformFavorites {
-                default: vec![],
-            },
+            bilibili: PlatformFavorites { default: channels },
+            facebook: PlatformFavorites { default: vec![] },
         })
     }
 }
@@ -190,12 +188,8 @@ fn from_url_array(urls: Vec<String>) -> FavoriteChannels {
         niconico: PlatformFavorites {
             default: channels.clone(),
         },
-        bilibili: PlatformFavorites {
-            default: channels,
-        },
-        facebook: PlatformFavorites {
-            default: vec![],
-        },
+        bilibili: PlatformFavorites { default: channels },
+        facebook: PlatformFavorites { default: vec![] },
     }
 }
 
@@ -283,7 +277,8 @@ mod tests {
 
     #[test]
     fn test_load_array_of_strings() {
-        let json = r#"["https://twitch.tv/xqc", "https://youtube.com/@ludwig", "https://kick.com/snk"]"#;
+        let json =
+            r#"["https://twitch.tv/xqc", "https://youtube.com/@ludwig", "https://kick.com/snk"]"#;
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(json.as_bytes()).unwrap();
 

@@ -109,28 +109,30 @@ pub struct YoutubeConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KickConfig {
-  #[serde(default = "default_true")]
-  pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NiconicoConfig {
-  #[serde(default = "default_true")]
-  pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BilibiliConfig {
-  #[serde(default = "default_true")]
-  pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FacebookConfig {
-  #[serde(default = "default_true")]
-  pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -151,15 +153,38 @@ pub struct PlayerConfig {
     pub disable_heartbeat: bool,
     #[serde(alias = "forcePlayer", default)]
     pub force_player: bool,
+    #[serde(
+        alias = "autoRefreshInterval",
+        default = "default_auto_refresh_interval"
+    )]
+    pub auto_refresh_interval_seconds: u64,
+    #[serde(alias = "watchedClearHours", default = "default_watched_clear_hours")]
+    pub watched_clear_hours: u64,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
 
-fn default_player_type() -> String { "mpv".to_string() }
-fn default_quality() -> String { "best".to_string() }
-fn default_volume() -> u8 { 50 }
-fn default_max_streams() -> usize { 4 }
-fn default_auto_start() -> bool { true }
+fn default_player_type() -> String {
+    "mpv".to_string()
+}
+fn default_quality() -> String {
+    "best".to_string()
+}
+fn default_volume() -> u8 {
+    50
+}
+fn default_max_streams() -> usize {
+    4
+}
+fn default_auto_start() -> bool {
+    true
+}
+fn default_auto_refresh_interval() -> u64 {
+    60
+}
+fn default_watched_clear_hours() -> u64 {
+    10
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoggingConfig {
@@ -173,9 +198,15 @@ pub struct LoggingConfig {
     pub max_files: u32,
 }
 
-fn default_log_level() -> String { "info".to_string() }
-fn default_max_size_mb() -> u32 { 50 }
-fn default_max_files() -> u32 { 5 }
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_max_size_mb() -> u32 {
+    50
+}
+fn default_max_files() -> u32 {
+    5
+}
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct MpvConfig {
@@ -237,10 +268,18 @@ pub struct MpvConfig {
     pub extra: HashMap<String, serde_json::Value>,
 }
 
-fn default_mpv_path() -> String { "mpv".to_string() }
-fn default_streamlink_path() -> String { "streamlink".to_string() }
-fn default_mpv_priority() -> String { "normal".to_string() }
-fn default_gpu_context() -> String { "auto".to_string() }
+fn default_mpv_path() -> String {
+    "mpv".to_string()
+}
+fn default_streamlink_path() -> String {
+    "streamlink".to_string()
+}
+fn default_mpv_priority() -> String {
+    "normal".to_string()
+}
+fn default_gpu_context() -> String {
+    "auto".to_string()
+}
 
 impl MpvConfig {
     pub fn to_args(&self) -> Vec<String> {
@@ -342,7 +381,11 @@ impl MpvConfig {
         for (key, value) in &self.extra {
             let arg = match value {
                 serde_json::Value::Bool(b) => {
-                    if *b { format!("--{}", key) } else { format!("--{}=no", key) }
+                    if *b {
+                        format!("--{}", key)
+                    } else {
+                        format!("--{}=no", key)
+                    }
                 }
                 serde_json::Value::Number(n) => format!("--{}={}", key, n),
                 serde_json::Value::String(s) => format!("--{}={}", key, s),
@@ -353,7 +396,7 @@ impl MpvConfig {
 
         args
     }
-    
+
     fn value_to_arg(&self, key: &str, value: &serde_json::Value) -> Option<String> {
         match value {
             serde_json::Value::Bool(b) => {
@@ -363,12 +406,8 @@ impl MpvConfig {
                     Some(format!("--{}=no", key))
                 }
             }
-            serde_json::Value::Number(n) => {
-                Some(format!("--{}={}", key, n))
-            }
-            serde_json::Value::String(s) => {
-                Some(format!("--{}={}", key, s))
-            }
+            serde_json::Value::Number(n) => Some(format!("--{}={}", key, n)),
+            serde_json::Value::String(s) => Some(format!("--{}={}", key, s)),
             _ => None,
         }
     }
@@ -396,7 +435,9 @@ pub struct VlcConfig {
     pub extra_args: Vec<String>,
 }
 
-fn default_vlc_path() -> String { "cvlc".to_string() }
+fn default_vlc_path() -> String {
+    "cvlc".to_string()
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FilterRule {
@@ -446,9 +487,15 @@ pub struct FiltersConfig {
     pub filter_members_only: bool,
 }
 
-fn default_filters_enabled() -> bool { false }
-fn default_filter_mode() -> String { "exclude".to_string() }
-fn default_filter_members_only() -> bool { true }
+fn default_filters_enabled() -> bool {
+    false
+}
+fn default_filter_mode() -> String {
+    "exclude".to_string()
+}
+fn default_filter_members_only() -> bool {
+    true
+}
 
 impl FiltersConfig {
     pub fn matches_channel(&self, channel_name: &str) -> bool {
@@ -502,11 +549,16 @@ impl FiltersConfig {
 
         let is_exclude_mode = self.mode == "exclude" || self.mode == "blacklist";
 
-        let matched_pattern = self.title_patterns.iter()
+        let matched_pattern = self
+            .title_patterns
+            .iter()
             .any(|p| title_lower.contains(&p.to_lowercase()));
 
-        let matched_regex = self.title_patterns_regex.iter()
-            .any(|p| regex::Regex::new(p).map(|re| re.is_match(title)).unwrap_or(false));
+        let matched_regex = self.title_patterns_regex.iter().any(|p| {
+            regex::Regex::new(p)
+                .map(|re| re.is_match(title))
+                .unwrap_or(false)
+        });
 
         let any_matched = matched_pattern || matched_regex;
 
@@ -518,13 +570,15 @@ impl FiltersConfig {
     }
 
     pub fn should_filter(&self, channel_name: &str, title: &str) -> bool {
-        let channel_matches = self.channel_names.iter().any(|p| {
-            channel_name.to_lowercase().contains(&p.to_lowercase())
-        });
+        let channel_matches = self
+            .channel_names
+            .iter()
+            .any(|p| channel_name.to_lowercase().contains(&p.to_lowercase()));
 
-        let title_matches = self.title_patterns.iter().any(|p| {
-            title.to_lowercase().contains(&p.to_lowercase())
-        });
+        let title_matches = self
+            .title_patterns
+            .iter()
+            .any(|p| title.to_lowercase().contains(&p.to_lowercase()));
 
         channel_matches || title_matches
     }
@@ -553,9 +607,10 @@ impl ConfigLoader {
     fn load_json_file<T: for<'de> Deserialize<'de>>(&self, filename: &str) -> Result<T, String> {
         let path = self.config_dir.join(filename);
         info!("Loading config file: {}", path.display());
-        let content =
-            fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
+        let content = fs::read_to_string(&path)
+            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
 
     fn try_load_json_file<T: for<'de> Deserialize<'de>>(&self, filename: &str) -> Option<T> {
@@ -584,7 +639,10 @@ impl ConfigLoader {
         };
 
         let streams_data: Option<StreamsFile> = self.try_load_json_file("streams.json");
-        let streams = streams_data.as_ref().map(|s| s.streams.clone()).unwrap_or_default();
+        let streams = streams_data
+            .as_ref()
+            .map(|s| s.streams.clone())
+            .unwrap_or_default();
         let organizations = streams_data.map(|s| s.organizations).unwrap_or_default();
 
         let player: PlayerConfig = self
@@ -595,15 +653,15 @@ impl ConfigLoader {
             .try_load_json_file("mpv.json")
             .unwrap_or_else(|| self.default_mpv_config());
 
-let streamlink: StreamlinkConfig = self
-        .try_load_json_file("streamlink.json")
-        .unwrap_or_else(|| self.default_streamlink_config());
+        let streamlink: StreamlinkConfig = self
+            .try_load_json_file("streamlink.json")
+            .unwrap_or_else(|| self.default_streamlink_config());
 
-    let vlc: VlcConfig = self
-        .try_load_json_file("vlc.json")
-        .unwrap_or_else(|| self.default_vlc_config());
+        let vlc: VlcConfig = self
+            .try_load_json_file("vlc.json")
+            .unwrap_or_else(|| self.default_vlc_config());
 
-    let filters: FiltersConfig = self
+        let filters: FiltersConfig = self
             .try_load_json_file("filters.json")
             .unwrap_or_else(|| FiltersConfig::default());
 
@@ -642,62 +700,62 @@ let streamlink: StreamlinkConfig = self
                 },
                 streamers_file: "streamers.json".to_string(),
             },
-youtube: {
-        let yt_config_path = self.config_dir.join("yt.json");
-        let yt_favorites: Vec<FavoriteChannel> = if yt_config_path.exists() {
-            match FavoriteChannels::load_from_file(&yt_config_path) {
-                Ok(fc) => fc.youtube.default.clone(),
-                Err(e) => {
-                    warn!("Failed to load yt.json: {}", e);
+            youtube: {
+                let yt_config_path = self.config_dir.join("yt.json");
+                let yt_favorites: Vec<FavoriteChannel> = if yt_config_path.exists() {
+                    match FavoriteChannels::load_from_file(&yt_config_path) {
+                        Ok(fc) => fc.youtube.default.clone(),
+                        Err(e) => {
+                            warn!("Failed to load yt.json: {}", e);
+                            vec![]
+                        }
+                    }
+                } else {
                     vec![]
+                };
+                YoutubeConfig {
+                    api_key: if let Some(ref key) = env.youtube_api_key {
+                        key.clone()
+                    } else {
+                        main_config
+                            .as_ref()
+                            .and_then(|c| c.youtube.as_ref().map(|y| y.api_key.clone()))
+                            .unwrap_or_default()
+                    },
+                    favorite_channels: yt_favorites,
                 }
-            }
-        } else {
-            vec![]
-        };
-        YoutubeConfig {
-            api_key: if let Some(ref key) = env.youtube_api_key {
-                key.clone()
-            } else {
-                main_config
-                    .as_ref()
-                    .and_then(|c| c.youtube.as_ref().map(|y| y.api_key.clone()))
-                    .unwrap_or_default()
             },
-            favorite_channels: yt_favorites,
+            kick: main_config
+                .as_ref()
+                .and_then(|c| c.kick.clone())
+                .unwrap_or(KickConfig { enabled: true }),
+            niconico: main_config
+                .as_ref()
+                .and_then(|c| c.niconico.clone())
+                .unwrap_or(NiconicoConfig { enabled: true }),
+            bilibili: main_config
+                .as_ref()
+                .and_then(|c| c.bilibili.clone())
+                .unwrap_or(BilibiliConfig { enabled: true }),
+            player,
+            mpv,
+            streamlink,
+            vlc,
+            filters,
         }
-    },
-kick: main_config
-        .as_ref()
-        .and_then(|c| c.kick.clone())
-        .unwrap_or(KickConfig { enabled: true }),
-    niconico: main_config
-        .as_ref()
-        .and_then(|c| c.niconico.clone())
-        .unwrap_or(NiconicoConfig { enabled: true }),
-    bilibili: main_config
-        .as_ref()
-        .and_then(|c| c.bilibili.clone())
-        .unwrap_or(BilibiliConfig { enabled: true }),
-    player,
-        mpv,
-        streamlink,
-        vlc,
-        filters,
     }
-}
 
-fn default_favorites(&self) -> FavoriteChannels {
-    FavoriteChannels {
-      holodex: PlatformFavorites { default: vec![] },
-      twitch: PlatformFavorites { default: vec![] },
-      youtube: PlatformFavorites { default: vec![] },
-      kick: PlatformFavorites { default: vec![] },
-      niconico: PlatformFavorites { default: vec![] },
-      bilibili: PlatformFavorites { default: vec![] },
-      facebook: PlatformFavorites { default: vec![] },
+    fn default_favorites(&self) -> FavoriteChannels {
+        FavoriteChannels {
+            holodex: PlatformFavorites { default: vec![] },
+            twitch: PlatformFavorites { default: vec![] },
+            youtube: PlatformFavorites { default: vec![] },
+            kick: PlatformFavorites { default: vec![] },
+            niconico: PlatformFavorites { default: vec![] },
+            bilibili: PlatformFavorites { default: vec![] },
+            facebook: PlatformFavorites { default: vec![] },
+        }
     }
-  }
 
     fn default_player_config(&self) -> PlayerConfig {
         PlayerConfig {
@@ -709,6 +767,8 @@ fn default_favorites(&self) -> FavoriteChannels {
             auto_start: true,
             disable_heartbeat: false,
             force_player: false,
+            auto_refresh_interval_seconds: 60,
+            watched_clear_hours: 10,
             logging: LoggingConfig {
                 enabled: true,
                 level: "info".to_string(),
@@ -789,24 +849,24 @@ fn default_favorites(&self) -> FavoriteChannels {
 
     fn default_vlc_config(&self) -> VlcConfig {
         VlcConfig {
-path: "vlc".to_string(),
-    extra_args: vec![],
-  }
-  }
+            path: "vlc".to_string(),
+            extra_args: vec![],
+        }
+    }
 
-  pub fn save_json_file<T: Serialize>(&self, filename: &str, data: &T) -> Result<(), String> {
-    let path = self.config_dir.join(filename);
-    let content = serde_json::to_string_pretty(data)
-      .map_err(|e| format!("Failed to serialize {}: {}", filename, e))?;
-    fs::write(&path, content)
-      .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
-    info!("Saved config file: {}", path.display());
-    Ok(())
-  }
+    pub fn save_json_file<T: Serialize>(&self, filename: &str, data: &T) -> Result<(), String> {
+        let path = self.config_dir.join(filename);
+        let content = serde_json::to_string_pretty(data)
+            .map_err(|e| format!("Failed to serialize {}: {}", filename, e))?;
+        fs::write(&path, content)
+            .map_err(|e| format!("Failed to write {}: {}", path.display(), e))?;
+        info!("Saved config file: {}", path.display());
+        Ok(())
+    }
 
-  pub fn save_main_config(&self, config: &MainConfig) -> Result<(), String> {
-    self.save_json_file("config.json", config)
-  }
+    pub fn save_main_config(&self, config: &MainConfig) -> Result<(), String> {
+        self.save_json_file("config.json", config)
+    }
 }
 
 impl Default for ConfigLoader {
@@ -833,7 +893,9 @@ pub(crate) struct StreamEntry {
     pub skip_watched_streams: Option<bool>,
 }
 
-fn default_true_bool() -> bool { true }
+fn default_true_bool() -> bool {
+    true
+}
 
 #[derive(Debug, Deserialize)]
 struct StreamsFile {
@@ -848,12 +910,12 @@ struct StreamsFile {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MainConfig {
-  pub holodex: Option<HolodexConfig>,
-  pub twitch: Option<TwitchConfig>,
-  pub youtube: Option<YoutubeConfig>,
-  pub kick: Option<KickConfig>,
-  pub niconico: Option<NiconicoConfig>,
-  pub bilibili: Option<BilibiliConfig>,
-  pub facebook: Option<FacebookConfig>,
-  pub player: Option<PlayerConfig>,
+    pub holodex: Option<HolodexConfig>,
+    pub twitch: Option<TwitchConfig>,
+    pub youtube: Option<YoutubeConfig>,
+    pub kick: Option<KickConfig>,
+    pub niconico: Option<NiconicoConfig>,
+    pub bilibili: Option<BilibiliConfig>,
+    pub facebook: Option<FacebookConfig>,
+    pub player: Option<PlayerConfig>,
 }

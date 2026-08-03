@@ -154,6 +154,8 @@ let _env = Env::load();
         log_dir,
         screens: config.player.screens,
         filters: config.filters,
+        auto_refresh_interval_seconds: config.player.auto_refresh_interval_seconds,
+        watched_clear_hours: config.player.watched_clear_hours,
     };
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
@@ -225,14 +227,47 @@ info!("LiveLink initialized");
     }
   }
 
+
   let orchestrator_for_api = orchestrator.clone();
         let app = api::routes::create_router(orchestrator_for_api);
 
         let addr = format!("0.0.0.0:{}", port);
         info!("Starting API server on {}", addr);
 
-let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-  axum::serve(listener, app).await.unwrap();
+        let shutdown_signal = async {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{signal, SignalKind};
+                let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
+                tokio::select! {
+                    _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully..."),
+                    _ = sigint.recv() => info!("Received SIGINT, shutting down gracefully..."),
+                    _ = tokio::signal::ctrl_c() => info!("Received Ctrl-C, shutting down gracefully..."),
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                tokio::signal::ctrl_c().await.ok();
+                info!("Received Ctrl-C, shutting down gracefully...");
+            }
+        };
 
-    info!("LiveLink shutting down");
+        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+
+        // Start the server with graceful shutdown
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal)
+            .await
+            .unwrap();
+
+        // Stop all streams on shutdown
+        info!("Stopping all streams...");
+        for s in 0..10 {
+            if orchestrator.get_state_sync(s) == Some(core::state::StreamState::Playing) {
+                let _ = orchestrator.stop_stream(s).await;
+            }
+        }
+
+        info!("LiveLink shutting down");
 }

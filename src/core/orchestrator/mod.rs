@@ -23,7 +23,7 @@ use crate::services::youtube::YouTubeService;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 pub struct Orchestrator {
     pub config: OrchestratorConfig,
@@ -122,6 +122,48 @@ let kick_service = KickService::new();
     Self::network_listener(network_receiver, orchestrator_for_network).await;
   });
 
+  // Auto-refresh background task
+  let orchestrator_for_refresh = orchestrator.clone();
+  let refresh_interval = orchestrator.config.auto_refresh_interval_seconds;
+  if refresh_interval > 0 {
+    tokio::spawn(async move {
+      let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_interval));
+      loop {
+        interval.tick().await;
+        info!("Auto-refreshing streams...");
+        if let Err(e) = orchestrator_for_refresh.refresh_all_queues().await {
+          warn!(error = %e, "Auto-refresh failed");
+        }
+        // Also refresh idle screens
+        for screen in orchestrator_for_refresh.state.iter().map(|r| *r.key()) {
+          let screen_state = orchestrator_for_refresh.get_state_sync(screen);
+          if screen_state == Some(StreamState::Idle) && orchestrator_for_refresh.is_screen_enabled(screen) {
+            if let Err(e) = orchestrator_for_refresh.start_stream(screen).await {
+              debug!(screen, error = %e, "Auto-start failed for idle screen");
+            }
+          }
+        }
+      }
+    });
+  }
+
+  // Watched cleanup background task
+  let orchestrator_for_watched = orchestrator.clone();
+  let watched_clear_hours = orchestrator.config.watched_clear_hours;
+  if watched_clear_hours > 0 {
+    tokio::spawn(async move {
+      let mut interval = tokio::time::interval(std::time::Duration::from_secs(watched_clear_hours * 3600));
+      loop {
+        interval.tick().await;
+        info!("Cleaning up expired watched streams...");
+        let removed = orchestrator_for_watched.cleanup_expired_watched(watched_clear_hours as i64).await;
+        if removed > 0 {
+          info!(count = removed, "Cleaned up expired watched entries");
+        }
+      }
+    });
+  }
+
     orchestrator
 }
 
@@ -208,6 +250,8 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         auto_start: false,
         disable_heartbeat: false,
         force_player: false,
+        auto_refresh_interval_seconds: self.config.auto_refresh_interval_seconds,
+        watched_clear_hours: self.config.watched_clear_hours,
         logging: crate::config::LoggingConfig {
           enabled: true,
           level: "info".to_string(),
