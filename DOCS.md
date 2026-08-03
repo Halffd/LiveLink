@@ -1,242 +1,387 @@
-# LiveLink Architecture
+# LiveLink Architecture (Rust)
 
 ## Core Components
-- Server (Node.js/Koa)
-  - /src/server/
-    - api.ts - Main server entry point
-    - routes/ - API routes
-    - services/ - Core services
-    - db/ - Database interactions
+- **Orchestrator** (`src/core/orchestrator/`) - Central coordinator managing screens, queues, players, and stream lifecycle
+- **QueueService** (`src/queue/`) - Per-screen stream queues with watched tracking, sorting, and filtering
+- **PlayerService** (`src/services/player.rs`) - MPV/Streamlink/VLC process management via fork + IPC
+- **NetworkMonitor** (`src/services/network.rs`) - Network state detection with automatic recovery
+- **Fetch Operations** (`src/core/orchestrator/fetch_ops.rs`) - Multi-platform stream fetching (Holodex, Twitch, YouTube, Kick, Niconico, Bilibili, Facebook)
+- **API Server** (`src/api/`) - Axum-based HTTP API server
 
 ## Key Services
-1. PlayerService
-   - Manages video player instances
-   - Handles IPC communication with MPV
-   - Manages stream lifecycle
+1. **Orchestrator**
+   - Manages screen states (Idle, Starting, Playing, Error)
+   - Coordinates queue operations and player lifecycle
+   - Handles process exit events with soft-skip/crash/normal-end logic
+   - Auto-refresh background task for periodic stream fetching
+   - Watched cleanup timer for expiring old watched entries
 
-2. StreamManager
-   - Orchestrates multiple streams
-   - Manages screen configurations
-   - Handles queue management
+2. **QueueService**
+   - Per-screen queues with StreamSource entries
+   - Watched tracking with timestamps and TTL cleanup
+   - Sorting by viewerCount, priority, name, isLive, platform (asc/desc)
+   - Filtering by platform, channel, viewer count, watched status
 
-3. QueueService
-   - Manages stream queues per screen
-   - Tracks watched streams
-   - Handles queue updates
+3. **PlayerService**
+   - Fork-based MPV spawning with kill_on_drop
+   - IPC communication via Unix sockets
+   - Wait thread (100ms polling) for guaranteed exit detection
+   - Supports MPV, Streamlink, VLC players
+
+4. **Fetch Operations**
+   - Holodex API (VTuber organizations, channels)
+   - Twitch Helix API (favorites + top streams)
+   - YouTube (RSS fallback + API)
+   - Kick, Niconico, Bilibili, Facebook services
+   - Fallback service for offline/degraded operation
 
 ## Communication Flow
-1. API Request → Koa Router → StreamManager → PlayerService
-2. PlayerService ↔ MPV Player (via IPC)
-3. StreamManager ↔ QueueService (via EventEmitter)
+1. API Request → Axum Router → Orchestrator methods
+2. Orchestrator → QueueService (queue operations)
+3. Orchestrator → PlayerService (start/stop streams)
+4. PlayerService → MPV subprocess (fork + IPC)
+5. MPV wait thread → Exit callback → mpsc channel → exit_listener → handle_process_exit
+6. NetworkMonitor → NetworkEvent channel → network_listener → recovery_on_network_restore
 
-# Naming Conventions
-
-## Files
-- Services: `camelCase.ts` (e.g., playerService.ts)
-- Types: `camelCase.ts` (e.g., streamTypes.ts)
-- Components: `PascalCase.svelte`
-
-## Variables/Functions
-- Services: camelCase
-- Event handlers: handleEventName
-- Callbacks: onEventName
-- Private methods: _methodName
-- Constants: UPPER_SNAKE_CASE
-
-## Types/Interfaces
-- Base types: PascalCase (e.g., StreamOptions)
-- Service interfaces: IPascalCase (e.g., IPlayerService)
-- Event types: EventPascalCase (e.g., StreamEvent)
-
-# Dependencies
-
-## Core Dependencies
-- koa - Web framework
-- winston - Logging
-- node-fetch - HTTP client
-- @twurple - Twitch API client
-- holodex.js - Holodex API client
-
-## Import Order
-1. Node.js built-ins
-2. External packages
-3. Project types
-4. Project services
-5. Project utilities
-
-## Example
-```typescript
-import { EventEmitter } from 'events';  // Node.js built-in
-import Koa from 'koa';                  // External package
-import type { StreamOptions } from '../types/stream';  // Project types
-import { logger } from './services/logger';  // Project services
-import { formatTime } from './utils';        // Project utilities
-```
-```
-
-4. **Design Patterns**
-```markdown
-# Design Patterns
-
-## Service Pattern
-- Services are singletons
-- Services extend EventEmitter for pub/sub
-- Services handle one specific domain
-
-## Event-Driven Architecture
-- Use EventEmitter for cross-service communication
-- Define strict event types
-- Document event payloads
-
-## Error Handling
-- Use typed errors
-- Log errors with context
-- Propagate errors to appropriate handlers
-
-## Example Service Pattern
-```typescript
-export class ServiceName extends EventEmitter {
-  private static instance: ServiceName;
-
-  private constructor() {
-    super();
-    // initialization
-  }
-
-  public static getInstance(): ServiceName {
-    if (!ServiceName.instance) {
-      ServiceName.instance = new ServiceName();
-    }
-    return ServiceName.instance;
-  }
-}
-```
-```
-
-5. **API Structure**
-```markdown
-# API Structure
-
-## RESTful Endpoints
-Base URL: /api
-
-### Streams
-- GET /streams/active - List active streams
-- POST /streams/start - Start a stream
-- DELETE /streams/:screen - Stop stream on screen
-- GET /streams/queue/:screen - Get queue for screen
-
-### Screens
-- POST /screens/:screen/enable - Enable screen
-- POST /screens/:screen/disable - Disable screen
-- GET /screens/:screen - Get screen info
-
-### Player
-- POST /player/command/:screen - Send command to player
-- POST /player/volume/:target - Set volume
-- POST /player/seek/:target - Seek in stream
-
-## Response Format
-```typescript
-interface ApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  message?: string;
-}
-```
-```
-
-6. **Configuration**
-```markdown
-# Configuration
+# Configuration (Rust)
 
 ## Environment Variables
-- HOLODEX_API_KEY - Holodex API key
-- TWITCH_CLIENT_ID - Twitch client ID
-- TWITCH_CLIENT_SECRET - Twitch client secret
-- PORT - Server port (default: 3001)
+- `HOLODEX_API_KEY` - Holodex API key
+- `TWITCH_CLIENT_ID` - Twitch client ID
+- `TWITCH_CLIENT_SECRET` - Twitch client secret
+- `YOUTUBE_API_KEY` - YouTube API key (optional, RSS fallback used if missing)
+- `PORT` - API server port (default: 3001)
+- `LIVELINK_LOG_DIR` - Log directory (default: logs/)
+- `RUST_LOG` - Log level filter (e.g., `info,livelink=debug`)
 
-## Config Files
-- config/
-  - player.json - Player settings
-  - streams.json - Stream configurations
-  - favorites.json - Favorite channels
-  - mpv.json - MPV player settings
-  - streamlink.json - Streamlink settings
+## Config Files (config/)
+| File | Description |
+|------|-------------|
+| `player.json` | Player settings, screens, auto-refresh, watched cleanup |
+| `mpv.json` | MPV player options (global, applied via mpv_extra_args) |
+| `streamlink.json` | Streamlink settings and MPV overrides |
+| `vlc.json` | VLC player settings |
+| `filters.json` | Stream filtering rules (blacklist/whitelist, members-only) |
+| `favorites.json` | Favorite channels per platform (holodex, twitch, youtube, kick, niconico, bilibili, facebook) |
+| `streams.json` | Stream source configurations |
 
-## Example Config
+## player.json - Player & Screen Configuration
 ```json
 {
-  "player": {
-    "preferStreamlink": false,
-    "defaultQuality": "best",
-    "defaultVolume": 0,
-    "maxStreams": 2,
-    "screens": []
+  "defaultQuality": "best",
+  "defaultVolume": 0,
+  "windowMaximized": true,
+  "maxStreams": 2,
+  "autoStart": true,
+  "auto_refresh_interval_seconds": 60,
+  "watched_clear_hours": 10,
+  "force_player": false,
+  "disableHeartbeat": true,
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "maxSizeMB": 50,
+    "maxFiles": 5
+  },
+  "screens": [
+    {
+      "id": 1,
+      "screen": 1,
+      "enabled": true,
+      "width": 1920,
+      "height": 1080,
+      "x": 1366,
+      "y": 0,
+      "volume": 0,
+      "quality": "best",
+      "windowMaximized": true,
+      "primary": true,
+      "sources": [
+        { "type": "youtube", "enabled": true, "priority": 1, "limit": 50 },
+        { "type": "twitch", "enabled": true, "priority": 2, "limit": 30 }
+      ],
+      "sorting": {
+        "rules": [
+          { "field": "viewerCount", "order": "desc" },
+          { "field": "isLive", "order": "desc" }
+        ]
+      },
+      "refresh": 300,
+      "auto_start": true,
+      "skip_watched_streams": false
+    }
+  ]
+}
+```
+
+### Screen Configuration Options
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `id` | u32 | - | Internal ID |
+| `screen` | u32 | - | Screen number (matches CLI `--screens`) |
+| `enabled` | bool | true | Whether screen is active |
+| `width` | u32 | 1920 | Window width (X11 geometry) |
+| `height` | u32 | 1080 | Window height |
+| `x` | i32 | 0 | X position |
+| `y` | i32 | 0 | Y position |
+| `volume` | u8 | 50 | Initial volume (0-100) |
+| `quality` | string | "best" | Stream quality |
+| `windowMaximized` | bool | false | Start maximized |
+| `primary` | bool | false | Primary screen |
+| `sources` | SourceConfig[] | [] | Enabled stream sources with priority |
+| `sorting` | SortingConfig | null | Sort rules for queue |
+| `refresh` | u32 | 300 | Legacy refresh interval (seconds) |
+| `auto_start` | bool | true | Auto-start on startup |
+| `skip_watched_streams` | bool | false | Skip already-watched streams |
+
+### SourceConfig
+```json
+{
+  "type": "youtube",
+  "enabled": true,
+  "priority": 1,
+  "limit": 50,
+  "name": "YouTube",
+  "tags": ["vtuber"]
+}
+```
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Platform: "youtube", "twitch", "kick", "holodex", "niconico", "bilibili", "facebook" |
+| `enabled` | bool | Whether this source is active |
+| `priority` | u32 | Lower = higher priority when merging sources |
+| `limit` | usize | Max streams to fetch from this source |
+| `name` | string | Display name |
+| `tags` | string[] | Tags for filtering |
+
+### SortingConfig
+```json
+{
+  "rules": [
+    { "field": "viewerCount", "order": "desc" },
+    { "field": "priority", "order": "asc" },
+    { "field": "name", "order": "asc" },
+    { "field": "isLive", "order": "desc" },
+    { "field": "platform", "order": "asc" }
+  ]
+}
+```
+| Field | Values | Description |
+|-------|--------|-------------|
+| `field` | viewerCount/viewers, priority, name/title, isLive/live, platform | Sort key |
+| `order` | asc, desc | Sort direction |
+| `ignore` | string | Unused (reserved) |
+
+**Applied in reverse order** (last rule = primary sort) via `Queue.apply_sorting()`.
+
+## mpv.json - MPV Configuration
+Global MPV options applied via `MpvConfig.to_args()` → `mpv_extra_args` in OrchestratorConfig.
+
+```json
+{
+  "path": "mpv",
+  "priority": "normal",
+  "gpu-context": "auto",
+  "volume": 0,
+  "border": false,
+  "fullscreen": false,
+  "ontop": true,
+  "pause": false,
+  "mute": false,
+  "loop": null,
+  "vid": "auto",
+  "aid": "auto",
+  "sid": "auto",
+  "keep-open": true,
+  "input-default-bindings": true,
+  "input-terminal": true,
+  "osd-level": 1,
+  "force-window": false,
+  "cursor": false,
+  "extra": {
+    "force-seekable": true,
+    "video-latency-hacks": true,
+    "vd-lavc-threads": 4,
+    "ad-lavc-threads": 4,
+    "audio-buffer": 0.2,
+    "demuxer-max-bytes": "150MiB",
+    "demuxer-max-back-bytes": "50MiB",
+    "demuxer-lavf-oob": true,
+    "hls-bitrate": "auto"
   }
 }
 ```
+
+### Key MPV Options
+| Option | Values | Description |
+|--------|--------|-------------|
+| `path` | string | MPV binary path |
+| `priority` | idle, below_normal, normal, above_normal, high, realtime | Process priority |
+| `gpu-context` | auto, wayland, x11, cocoa, etc. | GPU backend (auto-detected by display server) |
+| `volume` | 0-100 | Initial volume |
+| `border` | bool | Window border |
+| `fullscreen` | bool | Start fullscreen |
+| `ontop` | bool | Keep window on top |
+| `pause` | bool | Start paused |
+| `mute` | bool | Start muted |
+| `loop` | null, "inf", "no", "force" | Loop behavior |
+| `speed` | f64 | Playback speed (1.0 = normal) |
+| `keep-open` | bool | Keep window open after playback ends |
+| `extra` | object | Additional mpv options (passthrough) |
+
+**Note:** `gpu-context` is auto-detected (wayland/x11). Per-screen geometry (width, height, x, y) from `player.json` screens config is applied separately and overrides any geometry in mpv.json.
+
+## filters.json - Stream Filtering
+```json
+{
+  "enabled": true,
+  "mode": "blacklist",
+  "filter_members_only": true,
+  "channel_names": ["channel1", "channel2"],
+  "channel_names_regex": [],
+  "title_patterns": ["membership", "members only"],
+  "title_patterns_regex": [],
+  "channels": [],
+  "rules": [],
+  "exclude_platforms": []
+}
+```
+| Option | Description |
+|--------|-------------|
+| `enabled` | Enable/disable filtering |
+| `mode` | "blacklist" (exclude matches) or "whitelist" (only allow matches) |
+| `filter_members_only` | Exclude members-only streams |
+| `channel_names` | Exact channel name matches to filter |
+| `channel_names_regex` | Regex patterns for channel names |
+| `title_patterns` | Substring matches for stream titles |
+| `title_patterns_regex` | Regex patterns for stream titles |
+| `exclude_platforms` | Platforms to exclude entirely |
+
+## favorites.json - Favorite Channels
+Per-platform favorite channels with scores for priority sorting.
+
+```json
+{
+  "holodex": { "default": [], "channels": [], "ids": [] },
+  "twitch": { "default": [], "channels": [], "ids": [] },
+  "youtube": { "default": [], "channels": [], "ids": [] },
+  "kick": { "default": [], "channels": [], "ids": [] },
+  "niconico": { "default": [], "channels": [], "ids": [] },
+  "bilibili": { "default": [], "channels": [], "ids": [] },
+  "facebook": { "default": [], "channels": [], "ids": [] }
+}
 ```
 
-7. **Tiling Window Manager & Wayland Support**
-```markdown
-# Tiling Window Manager & Wayland Support
-
-LiveLink automatically detects your display server (X11/Wayland) and window manager type to optimize MPV player behavior.
-
-## Automatic Detection
-
-The PlayerService detects:
-- **Display Server**: X11 or Wayland
-- **Window Manager Type**: Tiling (i3, sway, hyprland, etc.) or Floating
-- **GPU Context**: Automatically sets `--gpu-api` and `--gpu-context` based on display server
-
-## Behavior on Different WMs
-
-### Tiling Window Managers (i3, sway, hyprland, bspwm, etc.)
-
-On tiling WMs, LiveLink:
-- Uses `--class=livelink-screen-{N}` instead of geometry positioning
-- Sets `--title=LiveLink-Screen-{N}` for window identification
-- Applies window size hints (may be respected by some WMs)
-- **Does not use** `--geometry=+x+y` positioning (ignored by tiling WMs)
-
-#### i3/i3-gaps Configuration
-
-Add to your `~/.config/i3/config`:
-
-```bash
-# Float LiveLink windows
-for_window [class="livelink-screen-*"] floating enable
-
-# Set specific geometry for each screen
-for_window [class="livelink-screen-1"] resize set 1280 720, move position 0 0
-for_window [class="livelink-screen-2"] resize set 1280 720, move position 1280 0
+Each channel entry:
+```json
+{ "id": "UC...", "name": "Channel Name", "score": 1000 }
 ```
 
-#### Sway Configuration
+**Score**: Higher = higher priority. Default assigns 1000-index.
 
-Add to your `~/.config/sway/config`:
+# API Endpoints (Rust)
 
+Base URL: `http://localhost:3001` (configurable via PORT)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| GET | `/status` | Screen states, active count |
+| GET | `/streams` | All cached streams grouped by platform |
+| GET | `/favorites` | Favorite channels by platform |
+| GET | `/watched` | Watched streams across screens |
+| GET | `/organizations` | Organizations from favorites |
+| GET | `/filters` | Filter configuration |
+| GET | `/screens` | Screen configurations and states |
+| GET | `/queues` | Queue info (count, watched count) per screen |
+| POST | `/query` | Search streams (Holodex, Twitch, etc.) |
+| POST | `/stream/start` | Start stream on screen |
+| POST | `/stream/stop` | Stop stream on screen |
+| POST | `/stream/stop-all` | Stop all streams |
+| POST | `/queue/add` | Add URL to screen queue |
+| POST | `/queue/clear` | Clear screen queue |
+| POST | `/watched/clear` | Clear watched history |
+| POST | `/refresh` | Force refresh all queues |
+| POST | `/save` | Save config to disk |
+| POST | `/screen/enable` | Enable screen + start stream |
+| POST | `/screen/disable` | Disable screen + stop stream |
+| POST | `/screen/toggle` | Toggle screen state |
+
+### Example Requests
 ```bash
-# Float LiveLink windows
-for_window [app_id="livelink-screen-*"] floating enable
+# Start stream on screen 1
+curl -X POST http://localhost:3001/stream/start -H "Content-Type: application/json" -d '{"screen": 1}'
 
-# Set specific geometry for each screen
-for_window [app_id="livelink-screen-1"] resize set 1280 720, move position 0 0
-for_window [app_id="livelink-screen-2"] resize set 1280 720, move position 1280 0
+# Add URL to queue
+curl -X POST http://localhost:3001/queue/add -H "Content-Type: application/json" -d '{"screen": 1, "url": "https://twitch.tv/xqc", "title": "XQC"}'
+
+# Query streams
+curl -X POST http://localhost:3001/query -H "Content-Type: application/json" -d '{"search": "gaming", "platform": "twitch", "limit": 10}'
 ```
 
-#### Hyprland Configuration (v0.45+)
-
-Add to your `~/.config/hypr/hyprland.conf`:
+# CLI Usage
 
 ```bash
-# LiveLink Auto-Generated Configuration
-# Float and position LiveLink windows
+# Start with screens and instances
+livelink start --screens 1,2 --instances 0,1 --port 3001 --config-dir config
 
-# Screen 1
+# Queue management
+livelink queue-add 1 "https://twitch.tv/xqc"
+livelink queue-show 1
+livelink queue-clear 1
+
+# Screen control
+livelink screen-enable 1
+livelink screen-disable 1
+livelink screen-toggle 1
+
+# Stream control
+livelink stream-start --screen 1 --url "https://youtube.com/watch?v=..."
+livelink stream-stop 1
+livelink stream-restart 1
+
+# Watched history
+livelink queue-watched 1
+livelink queue-mark-watched "https://..."
+livelink queue-clear-watched
+
+# Config
+livelink config --get
+livelink config --key max_streams
+livelink config --set max_streams=4
+livelink config --save
+
+# Query
+livelink query --search "minecraft" --platform twitch --limit 20
+```
+
+# Process Exit Handling
+
+Three-tier exit classification in `handle_process_exit`:
+
+| Condition | Action |
+|-----------|--------|
+| `playback_time < skip_threshold` (default 2s) | **Soft skip** - mark watched, finish_stop, start next |
+| `playback_time < crash_threshold` (default 3s) | **Crash** - mark_error, stay in Error state |
+| `playback_time >= crash_threshold` | **Normal end** - finish_stop, mark watched, start next |
+
+Uses actual MPV playback time via IPC (`get_playback_time()`), not wall-clock.
+
+# Auto-Refresh & Cleanup
+
+- **Auto-refresh**: Every `auto_refresh_interval_seconds` (default 60s), fetches new streams and restarts idle enabled screens
+- **Watched cleanup**: Every `watched_clear_hours` (default 10h), removes watched entries older than TTL
+
+# Network Recovery
+
+On network restore (NetworkState::Online), `recover_on_network_restore()` refreshes all queues and restarts idle enabled screens.
+
+# Tiling Window Manager Support
+
+Per-screen geometry from `player.json` screens config is applied via MPV `--geometry=WxH+x+y`. On Wayland/X11, use window manager rules for positioning:
+
+```bash
+# Hyprland example (auto-generate with: node scripts/generate-wm-config.js hyprland)
 windowrule {
   name = livelink-screen-1
   match:class = livelink-screen-1
@@ -244,371 +389,12 @@ windowrule {
   size = 1920 1080
   move = 1366 0
 }
-
-# Screen 2
-windowrule {
-  name = livelink-screen-2
-  match:class = livelink-screen-2
-  float = on
-  size = 1366 768
-  move = 0 312
-}
-
-# Or use anonymous rule syntax for all screens:
-# windowrule = float on, match:class livelink-screen-.*
-# windowrule = size 1280 720, match:class livelink-screen-.*
-# windowrule = move 0 0, match:class livelink-screen-1
-# windowrule = move 1280 0, match:class livelink-screen-2
 ```
 
-**Note:** For Hyprland versions < 0.45, use the legacy `windowrulev2` syntax:
+MPV window class: `livelink-screen-{screen}`
 
-```bash
-windowrulev2 = float, class:livelink-screen-1
-windowrulev2 = size 1920 1080, class:livelink-screen-1
-windowrulev2 = move 1366 0, class:livelink-screen-1
-```
+# Logging
 
-**Tips:**
-- Use `hyprctl clients` to see window class/title information
-- Rules are evaluated top to bottom
-- Named rules take precedence over anonymous rules
-- Use `match:class` for RegEx matching
-
-#### BSPWM Configuration
-
-Add to your `~/.config/bspwm/bspwmrc`:
-
-```bash
-# Float LiveLink windows
-bspc rule -a livelink-screen-* state=floating
-
-# Set specific geometry for each screen
-bspc rule -a livelink-screen-1 state=floating rectangle=1280x720+0+0
-bspc rule -a livelink-screen-2 state=floating rectangle=1280x720+1280+0
-```
-
-#### Xmonad Configuration
-
-Add to your `~/.xmonad/xmonad.hs`:
-
-```haskell
--- Float LiveLink windows
-manageHook = composeAll
-    [ className =? "livelink-screen-1" --> doFloat (W.RationalRect l t w h)
-    , className =? "livelink-screen-2" --> doFloat (W.RationalRect l t w h)
-    ]
-  where
-    l = 0        -- left (0 = 0% from left)
-    t = 0        -- top (0 = 0% from top)
-    w = 1280     -- width in pixels
-    h = 720      -- height in pixels
-```
-
-#### AwesomeWM Configuration
-
-Add to your `~/.config/awesome/rc.lua`:
-
-```lua
--- Float LiveLink windows and set geometry
-awful.rules.rules = {
-  {
-    rule = { class = "livelink-screen-.*" },
-    properties = { floating = true },
-    callback = function(c)
-      if c.class == "livelink-screen-1" then
-        c:geometry({ x = 0, y = 0, width = 1280, height = 720 })
-      elseif c.class == "livelink-screen-2" then
-        c:geometry({ x = 1280, y = 0, width = 1280, height = 720 })
-      end
-    end
-  }
-}
-```
-
-#### Qtile Configuration
-
-Add to your `~/.config/qtile/config.py`:
-
-```python
-from libqtile import hook
-from libqtile.backend.x11 import window
-
-@hook.subscribe.client_new
-def float_livelink(client):
-    if "livelink-screen-" in client.name or "livelink-screen-" in client.get_wm_class():
-        client.floating = True
-        if "livelink-screen-1" in client.name:
-            client.cmd_set_position(0, 0)
-            client.cmd_set_size(1280, 720)
-        elif "livelink-screen-2" in client.name:
-            client.cmd_set_position(1280, 0)
-            client.cmd_set_size(1280, 720)
-```
-
-#### DWM Configuration
-
-Add to your `config.h` and recompile:
-
-```c
-static const Rule rules[] = {
-    // class                      instance  title  tag mask  isfloating  monitor
-    { "livelink-screen-1",        NULL,     NULL,  0,        True,       -1 },
-    { "livelink-screen-2",        NULL,     NULL,  0,        True,       -1 },
-};
-
-// Then use xdotool or similar to position windows after they appear
-```
-
-#### Openbox Configuration
-
-Add to your `~/.config/openbox/rc.xml`:
-
-```xml
-<applications>
-  <application class="livelink-screen-1">
-    <position force="yes">
-      <x>0</x>
-      <y>0</y>
-    </position>
-    <size>
-      <width>1280</width>
-      <height>720</height>
-    </size>
-  </application>
-  <application class="livelink-screen-2">
-    <position force="yes">
-      <x>1280</x>
-      <y>0</y>
-    </position>
-    <size>
-      <width>1280</width>
-      <height>720</height>
-    </size>
-  </application>
-</applications>
-```
-
-#### KWin (KDE) Script
-
-Create a KWin script at `~/.local/share/kwin/scripts/livelink-float/metadata.desktop`:
-
-```ini
-[Desktop Entry]
-Name=LiveLink Float
-Comment=Float LiveLink windows
-Type=Service
-X-KDE-ServiceTypes=KWin/Script
-X-KDE-PluginInfo-Author=YourName
-X-KDE-PluginInfo-Name=livelink-float
-X-KDE-PluginInfo-Version=1.0
-X-KDE-PluginInfo-EnabledByDefault=true
-```
-
-And `~/.local/share/kwin/scripts/livelink-float/code/main.js`:
-
-```javascript
-function init() {
-    workspace.clientAdded.connect(function(client) {
-        if (client.resourceClass.includes("livelink-screen-")) {
-            client.keepAbove = true;
-            // Note: KWin doesn't support geometry setting via script
-            // Use window rules instead
-        }
-    });
-}
-```
-
-Or use KDE Window Rules (System Settings → Window Management → Window Rules):
-- Add rule for class `livelink-screen-*`
-- Set "Size & Position" → "Force" → specify geometry
-
-### Auto-Generate WM Configuration
-
-Instead of manually writing WM rules, use the included config generator:
-
-```bash
-# Using npm scripts (recommended)
-npm run wm:config hyprland           # Generate for specific WM
-npm run wm:config:all                # Generate for all WMs
-npm run wm:config i3 -- --dry-run    # Preview without saving
-
-# Or run the script directly
-node scripts/generate-wm-config.js hyprland
-node scripts/generate-wm-config.js --all
-```
-
-The script reads your `config/player.json` and generates appropriate WM rules.
-Generated configs are saved to `generated-wm-configs/` directory.
-
-**Supported Window Managers:**
-- i3 / i3-gaps
-- Sway
-- Hyprland (v0.45+ with `windowrule`, older versions use `windowrulev2`)
-- BSPWM
-- Xmonad
-- AwesomeWM
-- Qtile
-- Openbox
-- KWin (KDE)
-- Wayfire
-
-See `generated-wm-configs/README.md` for detailed usage instructions.
-
-### Wayland (Non-Tiling Compositors)
-- Uses `--gpu-api=wayland --gpu-context=wayland`
-- Applies full geometry positioning
-- Uses `--class=livelink-screen-{N}` for identification
-
-### X11 (Traditional/Compositing WMs)
-
-On X11 with compositing WMs (GNOME, KDE, XFCE, etc.):
-- Uses `--gpu-api=x11 --gpu-context=x11`
-- Applies full geometry positioning with `--geometry=WxH+x+y`
-
-## Configuration File Structure
-
-LiveLink reads configuration from JSON files in the `config/` directory:
-
-### `config/mpv.json` - MPV Player Configuration
-
-This file contains global MPV player settings. All MPV options can be specified here.
-
-```json
-{
-  "vo": "gpu",
-  "hwdec": "auto-copy-safe",
-  "priority": "high",
-  "cache": true,
-  "cache-secs": 60,
-  "demuxer-max-bytes": "800M",
-  "ytdl-format": "bestvideo[height<=?1080]+bestaudio/best"
-}
-```
-
-**Important:** `gpu-context` is set automatically based on your display server:
-- On **Wayland**: Always uses `--gpu-context=wayland`
-- On **X11**: Always uses `--gpu-context=x11`
-- If `vo=gpu` is set with X11 context on Wayland, it's automatically changed to `vo=gpu-next`
-- Note: `gpu-api` option is not used for better MPV version compatibility
-
-### `config/streamlink.json` - Streamlink Configuration
-
-This file contains Streamlink settings and can also override MPV settings when using streamlink.
-
-```json
-{
-  "path": "streamlink",
-  "options": {
-    "twitch-disable-hosting": true,
-    "twitch-disable-ads": true,
-    "stream-timeout": 60,
-    "hls-live-edge": 3
-  },
-  "http_header": {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept-Language": "en-US,en;q=0.9"
-  },
-  "mpv": {
-    "vo": "gpu",
-    "hwdec": "auto"
-  },
-  "args": ["--low-latency"]
-}
-```
-
-**Structure:**
-- `path`: Path to streamlink executable
-- `options`: Streamlink configuration options (key-value pairs)
-- `http_header`: HTTP headers to send with requests
-- `mpv`: MPV-specific settings when launched by streamlink (merged with mpv.json)
-- `args`: Additional command-line arguments for streamlink
-
-### Config Priority
-
-When both `mpv.json` and `streamlink.json` have MPV settings:
-1. `mpv.json` settings take precedence (global config)
-2. `streamlink.json mpv` settings are applied only if not in mpv.json
-3. Display server overrides (`gpu-api`, `gpu-context`) always take final precedence
-
-## Manual Configuration
-
-If automatic detection doesn't work, you can override settings in `config/mpv.json`:
-
-```json
-{
-  "gpu-api": "wayland",
-  "gpu-context": "wayland",
-  "vo": "gpu",
-  "hwdec": "auto-copy-safe"
-}
-```
-
-Or for X11:
-
-```json
-{
-  "gpu-api": "x11",
-  "gpu-context": "x11",
-  "vo": "gpu",
-  "hwdec": "auto-copy-safe"
-}
-```
-
-## Troubleshooting
-
-### Windows not appearing in correct position
-
-1. **Tiling WM**: Configure your WM rules as shown above
-2. **Wayland**: Some compositors may ignore positioning - check compositor settings
-3. **X11**: Ensure your WM supports geometry hints
-
-### MPV crashes on Wayland
-
-1. Ensure you have `mpv` built with Wayland support
-2. Check that `WAYLAND_DISPLAY` environment variable is set
-3. Try setting `SDL_VIDEODRIVER=wayland` in your environment
-4. If using `vo=gpu` with X11 context in mpv.json, it will be automatically changed to `vo=gpu-next`
-
-### Windows not floating on tiling WM
-
-1. Verify WM class with `xprop` (X11) or `wayland-info` (Wayland)
-2. Check your WM configuration syntax
-3. Reload WM configuration after changes
-
-### Screen tearing on Wayland
-
-1. Enable VSync in your compositor settings
-2. For Hyprland: `general:gaps_in = 0` can help
-3. Consider using `vo=gpu` with `gpu-context=wayland`
-
-### MPV settings from config not being applied
-
-1. Check that mpv.json is in the `config/` directory
-2. Verify JSON syntax is valid (use a JSON validator)
-3. Note that `gpu-api` and `gpu-context` are always overridden for compatibility
-4. Check logs for "MPV args" to see what arguments are actually being used
-
-### Streamlink settings not being applied
-
-1. Ensure streamlink.json is in the `config/` directory
-2. Check that options are in the correct format (boolean vs string)
-3. HTTP headers should be in the `http_header` object
-4. Additional CLI args go in the `args` array
-
-### Config Priority Issues
-
-If settings from mpv.json and streamlink.json conflict:
-- mpv.json takes precedence for global MPV settings
-- streamlink.json mpv settings only apply when not in mpv.json
-- Display server detection always overrides gpu-api/gpu-context
-
-## Environment Variables
-
-LiveLink sets these automatically based on detection:
-
-- `DISPLAY` - X11 display (X11 only)
-- `XAUTHORITY` - X11 authentication (X11 only)
-- `WAYLAND_DISPLAY` - Wayland display (Wayland only)
-- `DBUS_SESSION_BUS_ADDRESS` - D-Bus session (both)
-- `SDL_VIDEODRIVER` - `x11` or `wayland` based on detection
+- File: `logs/livelink.log` (daily rotation, 50MB max, 5 files)
+- Level: Configurable via `RUST_LOG` or `logging.level` in player.json
+- Debug flag: `--debug` enables trace-level MPV command logging

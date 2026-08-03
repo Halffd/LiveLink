@@ -1,0 +1,73 @@
+{
+  "defaultQuality": "best",
+  "defaultVolume": 0,
+  "windowMaximized": true,
+  "maxStreams": 2,
+  "autoStart": true,
+  "auto_refresh_interval_seconds": 60,
+  "watched_clear_hours": 10,
+  "force_player": false,
+  "disableHeartbeat": true,
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "maxSizeMB": 50,
+    "maxFiles": 5
+  },
+  "screens": [
+    {
+      "id": 1,
+      "screen": 1,
+      "enabled": true,
+      "width": 1920,
+      "height": 1080,
+      "x": 1366,
+      "y": 0,
+      "volume": 0,
+      "quality": "best",
+      "windowMaximized": true,
+      "playerType": "both",
+      "primary": true,
+      "sources": [
+        { "type": "youtube", "enabled": true, "priority": 1, "limit": 50 },
+        { "type": "twitch", "enabled": true, "priority": 2, "limit": 30 }
+      ],
+      "sorting": {
+        "rules": [
+          { "field": "viewerCount", "order": "desc" },
+          { "field": "isLive", "order": "desc" }
+        ]
+      },
+      "refresh": 300,
+      "auto_start": true,
+      "skip_watched_streams": false
+    },
+    {
+      "id": 2,
+      "screen": 2,
+      "enabled": true,
+      "width": 1366,
+      "height": 768,
+      "x": 0,
+      "y": 312,
+      "volume": 0,
+      "quality": "best",
+      "windowMaximized": true,
+      "playerType": "both",
+      "primary": false,
+      "sources": [
+        { "type": "twitch", "enabled": true, "priority": 1, "limit": 30 },
+        { "type": "youtube", "enabled": true, "priority": 2, "limit": 50 }
+      ],
+      "sorting": {
+        "rules": [
+          { "field": "viewerCount", "order": "desc" },
+          { "field": "isLive", "order": "desc" }
+        ]
+      },
+      "refresh": 300,
+      "auto_start": true,
+      "skip_watched_streams": false
+    }
+  ]
+} 
