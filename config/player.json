@@ -30,7 +30,7 @@
       "playerType": "both",
       "primary": true,
       "sources": [
-        { "type": "holodex", "enabled": true, "priority": 1, "limit": 50 }
+        { "type": "holodex", "enabled": true, "priority": 1, "limit": 250 }
       ],
       "sorting": {
         "rules": [
@@ -56,8 +56,7 @@
       "playerType": "both",
       "primary": false,
       "sources": [
-        { "type": "twitch", "enabled": true, "priority": 1, "limit": 30 },
-        { "type": "youtube", "enabled": true, "priority": 2, "limit": 50 }
+        { "type": "twitch", "enabled": true, "priority": 1, "limit": 330 }
       ],
       "sorting": {
         "rules": [
@@ -70,4 +69,4 @@
       "skip_watched_streams": false
     }
   ]
-} 
+}
