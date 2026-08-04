@@ -111,7 +111,7 @@ impl HolodexService {
                 StreamSource {
                     url,
                     title: Some(video.title),
-                    platform: Some("youtube".to_string()),
+                    platform: Some("holodex".to_string()),
                     channel_id: Some(video.channel.id().to_string()),
                     channel: None,
                     viewer_count,
@@ -202,7 +202,7 @@ info!(count = sources.len(), "Fetched live streams from Holodex");
                 StreamSource {
                     url,
                     title: Some(video.title),
-                    platform: Some("youtube".to_string()),
+                    platform: Some("holodex".to_string()),
                     channel_id: Some(video.channel.id().to_string()),
                     channel: None,
                     viewer_count,

@@ -8,6 +8,7 @@
   "watched_clear_hours": 10,
   "force_player": false,
   "disableHeartbeat": true,
+  "use_locks": true,
   "logging": {
     "enabled": true,
     "level": "info",
@@ -29,8 +30,7 @@
       "playerType": "both",
       "primary": true,
       "sources": [
-        { "type": "youtube", "enabled": true, "priority": 1, "limit": 50 },
-        { "type": "twitch", "enabled": true, "priority": 2, "limit": 30 }
+        { "type": "holodex", "enabled": true, "priority": 1, "limit": 50 }
       ],
       "sorting": {
         "rules": [

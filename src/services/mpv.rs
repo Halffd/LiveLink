@@ -1,7 +1,7 @@
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::os::unix::process::CommandExt;
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
 
@@ -54,7 +54,14 @@ impl MpvInstance {
         })
     }
 
-    pub fn configure(&mut self, width: u32, height: u32, x: i32, y: i32, volume: u8) -> Result<(), MpvError> {
+    pub fn configure(
+        &mut self,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        volume: u8,
+    ) -> Result<(), MpvError> {
         self.width = width;
         self.height = height;
         self.x = x;
@@ -63,7 +70,12 @@ impl MpvInstance {
         Ok(())
     }
 
-    pub fn play(&mut self, url: &str, mpv_path: &str, extra_args: &[String]) -> Result<(), MpvError> {
+    pub fn play(
+        &mut self,
+        url: &str,
+        mpv_path: &str,
+        extra_args: &[String],
+    ) -> Result<(), MpvError> {
         if self.child_pid.is_some() {
             self.stop()?;
         }
@@ -71,7 +83,10 @@ impl MpvInstance {
         let ipc_server = format!("{}", self.ipc_path.display());
         let mut args = vec![url.to_string()];
         args.push(format!("--input-ipc-server={}", ipc_server));
-        args.push(format!("--geometry={}x{}+{}+{}", self.width, self.height, self.x, self.y));
+        args.push(format!(
+            "--geometry={}x{}+{}+{}",
+            self.width, self.height, self.x, self.y
+        ));
         args.push(format!("--volume={}", self.volume));
         args.push("--idle".to_string());
         args.extend(extra_args.iter().cloned());
@@ -84,7 +99,9 @@ impl MpvInstance {
         match unsafe { libc::fork() } {
             -1 => return Err(MpvError::Fork("fork() failed".to_string())),
             0 => {
-                unsafe { libc::setsid(); };
+                unsafe {
+                    libc::setsid();
+                };
                 let _ = Command::new(mpv_path)
                     .args(&args)
                     .stdin(Stdio::null())
@@ -120,8 +137,30 @@ impl MpvInstance {
 
     pub fn stop(&mut self) -> Result<(), MpvError> {
         if let Some(pid) = self.child_pid {
+            // Try graceful quit via IPC first
             let _ = self.send_ipc_command("quit");
-            unsafe { libc::kill(pid, libc::SIGTERM) };
+
+            // Give it a moment to exit gracefully
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Check if process is still alive
+            let status =
+                unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) };
+            if status == 0 {
+                // Still alive, send SIGTERM
+                unsafe { libc::kill(pid, libc::SIGTERM) };
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+
+                // Check again
+                let status = unsafe {
+                    libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG)
+                };
+                if status == 0 {
+                    // Still alive, force kill with SIGKILL
+                    unsafe { libc::kill(pid, libc::SIGKILL) };
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            }
             let _ = std::fs::remove_file(&self.ipc_path);
         }
         self.child_pid = None;
@@ -162,7 +201,8 @@ impl MpvInstance {
 
     pub fn poll_event(&mut self, _timeout_ms: u64) -> Result<Option<MpvEvent>, MpvError> {
         if let Some(pid) = self.child_pid {
-            let status = unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) };
+            let status =
+                unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) };
             if status == pid as i32 {
                 self.child_pid = None;
                 let _ = std::fs::remove_file(&self.ipc_path);
@@ -181,20 +221,27 @@ impl MpvInstance {
         let ipc_socket = self.ipc_path.to_str().unwrap();
         let full_cmd = format!("echo '{}' | socat - UNIX-CONNECT:{}", command, ipc_socket);
 
-        match Command::new("sh")
-            .args(&["-c", &full_cmd])
-            .output()
-        {
+        match Command::new("sh").args(&["-c", &full_cmd]).output() {
             Ok(_) => Ok(()),
             Err(e) => Err(MpvError::Ipc(e.to_string())),
         }
     }
 
-    pub fn width(&self) -> u32 { self.width }
-    pub fn height(&self) -> u32 { self.height }
-    pub fn x(&self) -> i32 { self.x }
-    pub fn y(&self) -> i32 { self.y }
-    pub fn volume(&self) -> u8 { self.volume }
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+    pub fn x(&self) -> i32 {
+        self.x
+    }
+    pub fn y(&self) -> i32 {
+        self.y
+    }
+    pub fn volume(&self) -> u8 {
+        self.volume
+    }
 
     pub fn destroy(&mut self) {
         let _ = self.stop();
@@ -259,33 +306,31 @@ impl MpvController {
 
         let inner = self.inner.clone();
         let exit_callback = self.exit_callback.clone();
-        std::thread::spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                let should_exit = {
-                    let mut inst = match inner.lock() {
-                        Ok(i) => i,
-                        Err(_) => break,
-                    };
-                    match inst.poll_event(100) {
-                        Ok(Some(MpvEvent::EndFile)) => {
-                            info!("MPV process exited (wait thread)");
-                            true
-                        }
-                        Ok(Some(_)) => false,
-                        Ok(None) => false,
-                        Err(_) => {
-                            warn!("Error polling mpv in wait thread");
-                            true
-                        }
-                    }
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            let should_exit = {
+                let mut inst = match inner.lock() {
+                    Ok(i) => i,
+                    Err(_) => break,
                 };
-                if should_exit {
-                    if let Some(callback) = exit_callback.lock().unwrap().take() {
-                        callback();
+                match inst.poll_event(100) {
+                    Ok(Some(MpvEvent::EndFile)) => {
+                        info!("MPV process exited (wait thread)");
+                        true
                     }
-                    break;
+                    Ok(Some(_)) => false,
+                    Ok(None) => false,
+                    Err(_) => {
+                        warn!("Error polling mpv in wait thread");
+                        true
+                    }
                 }
+            };
+            if should_exit {
+                if let Some(callback) = exit_callback.lock().unwrap().take() {
+                    callback();
+                }
+                break;
             }
         });
 
@@ -316,8 +361,18 @@ impl MpvController {
         self.inner.lock().unwrap().get_playback_time()
     }
 
-    pub fn configure(&self, width: u32, height: u32, x: i32, y: i32, volume: u8) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().configure(width, height, x, y, volume)
+    pub fn configure(
+        &self,
+        width: u32,
+        height: u32,
+        x: i32,
+        y: i32,
+        volume: u8,
+    ) -> Result<(), MpvError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .configure(width, height, x, y, volume)
     }
 
     pub fn poll_event(&self, timeout_ms: u64) -> Result<Option<MpvEvent>, MpvError> {
@@ -363,25 +418,23 @@ impl MpvController {
 
     pub fn run_event_loop(&self) -> std::thread::JoinHandle<()> {
         let inner = Arc::clone(&self.inner);
-        std::thread::spawn(move || {
-            loop {
-                let event = {
-                    let mut inst = match inner.lock() {
-                        Ok(i) => i,
-                        Err(_) => break,
-                    };
-                    match inst.poll_event(100) {
-                        Ok(Some(e)) => e,
-                        Ok(None) => continue,
-                        Err(e) => {
-                            error!("Event poll error: {}", e);
-                            break;
-                        }
-                    }
+        std::thread::spawn(move || loop {
+            let event = {
+                let mut inst = match inner.lock() {
+                    Ok(i) => i,
+                    Err(_) => break,
                 };
-                if matches!(event, MpvEvent::EndFile) {
-                    break;
+                match inst.poll_event(100) {
+                    Ok(Some(e)) => e,
+                    Ok(None) => continue,
+                    Err(e) => {
+                        error!("Event poll error: {}", e);
+                        break;
+                    }
                 }
+            };
+            if matches!(event, MpvEvent::EndFile) {
+                break;
             }
         })
     }

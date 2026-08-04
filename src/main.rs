@@ -159,6 +159,7 @@ let _env = Env::load();
         filters: config.filters,
         auto_refresh_interval_seconds: config.player.auto_refresh_interval_seconds,
         watched_clear_hours: config.player.watched_clear_hours,
+        use_locks: config.player.use_locks,
     };
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
@@ -290,40 +291,37 @@ let _env = Env::load();
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting API server on {}", addr);
 
-    let shutdown_signal = async {
+    let shutdown_signal = async move {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
             let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
             let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
             tokio::select! {
-                _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully..."),
-                _ = sigint.recv() => info!("Received SIGINT, shutting down gracefully..."),
-                _ = tokio::signal::ctrl_c() => info!("Received Ctrl-C, shutting down gracefully..."),
+                _ = sigterm.recv() => info!("Received SIGTERM, shutting down..."),
+                _ = sigint.recv() => info!("Received SIGINT, shutting down..."),
+                _ = tokio::signal::ctrl_c() => info!("Received Ctrl-C, shutting down..."),
             }
         }
         #[cfg(not(unix))]
         {
             tokio::signal::ctrl_c().await.ok();
-            info!("Received Ctrl-C, shutting down gracefully...");
+            info!("Received Ctrl-C, shutting down...");
+        }
+        // Immediately stop all players on shutdown signal
+        info!("Stopping all players immediately...");
+        for s in 0..10 {
+            let _ = orchestrator.stop_stream(s).await;
         }
     };
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    // Start the server with graceful shutdown
+// Start the server with graceful shutdown
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal)
         .await
         .unwrap();
 
-        // Stop all streams on shutdown
-        info!("Stopping all streams...");
-        for s in 0..10 {
-            if orchestrator.get_state_sync(s) == Some(core::state::StreamState::Playing) {
-                let _ = orchestrator.stop_stream(s).await;
-            }
-        }
-
-        info!("LiveLink shutting down");
+    info!("LiveLink shutting down");
 }

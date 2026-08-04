@@ -255,6 +255,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         force_player: false,
         auto_refresh_interval_seconds: self.config.auto_refresh_interval_seconds,
         watched_clear_hours: self.config.watched_clear_hours,
+        use_locks: true,
         logging: crate::config::LoggingConfig {
           enabled: true,
           level: "info".to_string(),

@@ -160,6 +160,8 @@ pub struct PlayerConfig {
     pub auto_refresh_interval_seconds: u64,
     #[serde(alias = "watchedClearHours", default = "default_watched_clear_hours")]
     pub watched_clear_hours: u64,
+    #[serde(alias = "useLocks", default = "default_use_locks")]
+    pub use_locks: bool,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
@@ -184,6 +186,9 @@ fn default_auto_refresh_interval() -> u64 {
 }
 fn default_watched_clear_hours() -> u64 {
     10
+}
+fn default_use_locks() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -769,6 +774,7 @@ impl ConfigLoader {
             force_player: false,
             auto_refresh_interval_seconds: 60,
             watched_clear_hours: 10,
+            use_locks: true,
             logging: LoggingConfig {
                 enabled: true,
                 level: "info".to_string(),

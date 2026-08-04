@@ -218,4 +218,5 @@ pub struct OrchestratorConfig {
     pub filters: FiltersConfig,
     pub auto_refresh_interval_seconds: u64,
     pub watched_clear_hours: u64,
+    pub use_locks: bool,
 }
