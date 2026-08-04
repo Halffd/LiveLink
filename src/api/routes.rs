@@ -1,7 +1,7 @@
 use axum::{
   extract::State,
   http::StatusCode,
-  response::Json,
+  response::{IntoResponse, Json},
   routing::{get, post},
   Router,
 };
@@ -257,7 +257,7 @@ async fn get_screens(
   let mut screens = Vec::new();
   for screen_config in &state.orchestrator.config.screens {
     let screen_state = state.orchestrator.get_state(screen_config.screen).await.unwrap_or(StreamState::Idle);
-    let enabled = state.orchestrator.is_screen_enabled(screen_config.screen);
+    let enabled = state.orchestrator.is_screen_enabled(screen_config.screen).await;
     screens.push(serde_json::json!({
       "screen": screen_config.screen,
       "enabled": enabled,
@@ -342,11 +342,11 @@ async fn refresh(
 
 async fn save_config(
   State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
   if let Err(e) = state.orchestrator.save_config("config") {
-    return Json(serde_json::json!({ "success": false, "error": e }));
+    return Err(StatusCode::INTERNAL_SERVER_ERROR);
   }
-  Json(serde_json::json!({ "success": true }))
+  Ok(Json(serde_json::json!({ "success": true })))
 }
 
 #[derive(Deserialize)]
@@ -376,7 +376,7 @@ async fn screen_toggle(
   State(state): State<AppState>,
   Json(req): Json<ScreenToggleRequest>,
 ) -> Json<serde_json::Value> {
-  let enabled = state.orchestrator.is_screen_enabled(req.screen);
+  let enabled = state.orchestrator.is_screen_enabled(req.screen).await;
   if enabled {
     state.orchestrator.disable_screen(req.screen).await;
     let _ = state.orchestrator.stop_stream(req.screen).await;

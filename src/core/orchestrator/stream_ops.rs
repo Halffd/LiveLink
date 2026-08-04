@@ -44,24 +44,21 @@ impl Orchestrator {
     pub async fn start_stream(&self, screen: u32) -> Result<(), String> {
         let lock = self.get_or_create_lock(screen).await;
         let _guard = lock.lock().await;
+        let mut guard = self.state.lock().await;
+        let active_count = Orchestrator::count_active_streams_internal_with_guard(&guard);
+        if active_count >= self.max_streams {
+            return Err(format!(
+                "Max streams ({}) reached, {} active",
+                self.max_streams, active_count
+            ));
+        }
 
-        let mut screen_state = self
-            .state
-            .get_mut(&screen)
-            .ok_or_else(|| format!("Screen {} not found", screen))?;
+        let mut screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if screen_state.state != StreamState::Idle {
             return Err(format!(
                 "Screen {} not idle (state: {})",
                 screen, screen_state.state
-            ));
-        }
-
-        let active_count = self.count_active_streams_internal();
-        if active_count >= self.max_streams {
-            return Err(format!(
-                "Max streams ({}) reached, {} active",
-                self.max_streams, active_count
             ));
         }
 
@@ -94,7 +91,6 @@ impl Orchestrator {
 
         screen_state.start_stream(stream_info);
 
-        debug!(screen, state = ?self.state.get(&screen).map(|s| s.state), "Stream state after start_stream");
         drop(screen_state);
 
         let player = self.player.clone();
@@ -121,10 +117,8 @@ impl Orchestrator {
     }
 
     pub async fn stop_stream_locked(&self, screen: u32) -> Result<(), String> {
-        let mut screen_state = self
-            .state
-            .get_mut(&screen)
-            .ok_or_else(|| format!("Screen {} not found", screen))?;
+        let mut guard = self.state.lock().await;
+        let mut screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if !screen_state.state.can_stop() {
             return Err(format!(
@@ -147,8 +141,10 @@ impl Orchestrator {
             }
         });
 
-        let mut screen_state = self.state.get_mut(&screen).unwrap();
-        screen_state.finish_stop();
+        let mut guard = self.state.lock().await;
+        if let Some(screen_state) = guard.get_mut(&screen) {
+            screen_state.finish_stop();
+        }
 
         if let Some(url) = url {
             let mut queue = self.queue.lock().await;
@@ -168,10 +164,12 @@ impl Orchestrator {
 
         let _guard = lock.lock().await;
 
-        let mut screen_state = match self.state.get_mut(&screen) {
+        let mut guard = self.state.lock().await;
+        let mut screen_state = match guard.get_mut(&screen) {
             Some(s) => s,
             None => {
-                debug!(screen, state_keys = ?self.state.iter().map(|r| *r.key()).collect::<Vec<_>>(), "Process exit but no screen state");
+                let keys: Vec<_> = guard.keys().collect();
+                debug!(screen, state_keys = ?keys, "Process exit but no screen state");
                 warn!(screen, "Process exit but no screen state");
                 return;
             }
@@ -202,8 +200,6 @@ impl Orchestrator {
         if is_soft_skip {
             let url_for_queue = url.clone();
             screen_state.finish_stop();
-
-            drop(screen_state);
 
             if !url_for_queue.is_empty() {
                 let mut queue = self.queue.lock().await;

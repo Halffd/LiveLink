@@ -44,7 +44,10 @@ impl Orchestrator {
             match self.holodex_service.get_live_streams().await {
                 Ok(streams) => {
                     debug!(count = streams.len(), "Fetched streams from Holodex API");
-                    return streams;
+                    if !streams.is_empty() {
+                        return streams;
+                    }
+                    debug!("Holodex returned empty, trying fallback services");
                 }
                 Err(e) => {
                     warn!(error = %e, "Holodex API failed, falling back to favorites");

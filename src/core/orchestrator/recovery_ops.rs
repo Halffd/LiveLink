@@ -7,7 +7,7 @@ impl Orchestrator {
     pub(crate) async fn recover_on_network_restore(&self) {
         info!("Network restored - checking screens for recovery");
 
-        let screens: Vec<u32> = self.state.iter().map(|r| r.screen).collect();
+        let screens: Vec<u32> = self.state.lock().await.keys().copied().collect();
         for screen in screens {
             self.attempt_screen_recovery(screen).await;
         }
@@ -21,8 +21,8 @@ impl Orchestrator {
 
         let _guard = lock.lock().await;
 
-        let screen_state = match self.state.get(&screen) {
-            Some(s) => s,
+        let screen_state = match self.state.lock().await.get(&screen) {
+            Some(s) => s.clone(),
             None => return,
         };
 
@@ -41,15 +41,13 @@ impl Orchestrator {
             return;
         }
 
-        drop(screen_state);
-
         let active_count = self.count_active_streams_internal();
         if active_count >= self.max_streams {
             info!(screen, active_count, max = self.max_streams, "Cannot recover - max streams reached");
             return;
         }
 
-        let stream_info = self.state.get(&screen).and_then(|s| s.stream.clone());
+        let stream_info = self.state.lock().await.get(&screen).and_then(|s| s.stream.clone());
 
         if let Some(info) = stream_info {
             info!(screen, url = %info.url, "Recovering stream");
@@ -67,10 +65,12 @@ impl Orchestrator {
                 }
             });
 
-            let mut state = self.state.get_mut(&screen).unwrap();
-            state.state = StreamState::Starting;
-            if let Some(ref mut stream) = state.stream {
-                stream.start_time = Some(std::time::Instant::now());
+            let mut guard = self.state.lock().await;
+            if let Some(state) = guard.get_mut(&screen) {
+                state.state = StreamState::Starting;
+                if let Some(ref mut stream) = state.stream {
+                    stream.start_time = Some(std::time::Instant::now());
+                }
             }
         }
     }

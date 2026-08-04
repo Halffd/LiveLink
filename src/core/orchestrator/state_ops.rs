@@ -1,5 +1,6 @@
 use crate::core::state::StreamState;
 use crate::queue::queue::StreamSource;
+use futures::executor::block_on;
 use tracing::debug;
 
 use super::Orchestrator;
@@ -7,11 +8,11 @@ use super::Orchestrator;
 #[allow(dead_code)]
 impl Orchestrator {
     pub async fn get_state(&self, screen: u32) -> Option<StreamState> {
-        self.state.get(&screen).map(|s| s.state)
+        self.state.lock().await.get(&screen).map(|s| s.state)
     }
 
     pub fn get_state_sync(&self, screen: u32) -> Option<StreamState> {
-        self.state.get(&screen).map(|s| s.state)
+        block_on(self.state.lock()).get(&screen).map(|s| s.state)
     }
 
     pub fn count_active_streams(&self) -> usize {
@@ -19,8 +20,17 @@ impl Orchestrator {
     }
 
     pub(crate) fn count_active_streams_internal(&self) -> usize {
-        self.state
-            .iter()
+        // Note: Caller must NOT hold the state lock when calling this
+        let guard = block_on(self.state.lock());
+        guard
+            .values()
+            .filter(|s| s.state == StreamState::Playing || s.state == StreamState::Starting)
+            .count()
+    }
+
+    pub(crate) fn count_active_streams_internal_with_guard(guard: &std::collections::HashMap<u32, crate::core::state::ScreenState>) -> usize {
+        guard
+            .values()
             .filter(|s| s.state == StreamState::Playing || s.state == StreamState::Starting)
             .count()
     }

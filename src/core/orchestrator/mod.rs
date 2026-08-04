@@ -20,14 +20,16 @@ use crate::services::network::{NetworkEvent, NetworkState};
 use crate::services::player::{PlayerConfig, PlayerService, ProcessExit};
 use crate::services::twitch::TwitchService;
 use crate::services::youtube::YouTubeService;
+use crate::queue::queue::StreamSource;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub struct Orchestrator {
     pub config: OrchestratorConfig,
-    pub(crate) state: DashMap<u32, ScreenState>,
+    pub(crate) state: Arc<Mutex<HashMap<u32, ScreenState>>>,
     pub(crate) locks: DashMap<u32, Arc<Mutex<()>>>,
     player: Arc<Mutex<PlayerService>>,
     pub(crate) queue: Arc<Mutex<QueueService>>,
@@ -95,7 +97,7 @@ let kick_service = KickService::new();
 
   let orchestrator = Self {
     config: config.clone(),
-    state: DashMap::new(),
+    state: Arc::new(Mutex::new(HashMap::new())),
     locks: DashMap::new(),
     player: Arc::new(Mutex::new(player)),
     queue: Arc::new(Mutex::new(queue)),
@@ -117,52 +119,53 @@ let kick_service = KickService::new();
     Self::exit_listener(receiver, orchestrator_for_exit).await;
   });
 
-  let orchestrator_for_network = orchestrator.clone();
-  tokio::spawn(async move {
-    Self::network_listener(network_receiver, orchestrator_for_network).await;
-  });
+  // Network listener - DISABLED FOR DEBUGGING
+  // let orchestrator_for_network = orchestrator.clone();
+  // tokio::spawn(async move {
+  //   Self::network_listener(network_receiver, orchestrator_for_network).await;
+  // });
 
-  // Auto-refresh background task
-  let orchestrator_for_refresh = orchestrator.clone();
-  let refresh_interval = orchestrator.config.auto_refresh_interval_seconds;
-  if refresh_interval > 0 {
-    tokio::spawn(async move {
-      let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_interval));
-      loop {
-        interval.tick().await;
-        info!("Auto-refreshing streams...");
-        if let Err(e) = orchestrator_for_refresh.refresh_all_queues().await {
-          warn!(error = %e, "Auto-refresh failed");
-        }
-        // Also refresh idle screens
-        for screen in orchestrator_for_refresh.state.iter().map(|r| *r.key()) {
-          let screen_state = orchestrator_for_refresh.get_state_sync(screen);
-          if screen_state == Some(StreamState::Idle) && orchestrator_for_refresh.is_screen_enabled(screen) {
-            if let Err(e) = orchestrator_for_refresh.start_stream(screen).await {
-              debug!(screen, error = %e, "Auto-start failed for idle screen");
-            }
-          }
-        }
-      }
-    });
-  }
+  // Auto-refresh background task - DISABLED FOR DEBUGGING
+  // let orchestrator_for_refresh = orchestrator.clone();
+  // let refresh_interval = orchestrator.config.auto_refresh_interval_seconds;
+  // if refresh_interval > 0 {
+  //   tokio::spawn(async move {
+  //     let mut interval = tokio::time::interval(std::time::Duration::from_secs(refresh_interval));
+  //     loop {
+  //       interval.tick().await;
+  //       info!("Auto-refreshing streams...");
+  //       if let Err(e) = orchestrator_for_refresh.refresh_all_queues().await {
+  //         warn!(error = %e, "Auto-refresh failed");
+  //       }
+  //       // Also refresh idle screens
+  //       for screen in orchestrator_for_refresh.state.iter().map(|r| *r.key()) {
+  //         let screen_state = orchestrator_for_refresh.get_state_sync(screen);
+  //         if screen_state == Some(StreamState::Idle) && orchestrator_for_refresh.is_screen_enabled(screen) {
+  //           if let Err(e) = orchestrator_for_refresh.start_stream(screen).await {
+  //             debug!(screen, error = %e, "Auto-start failed for idle screen");
+  //           }
+  //         }
+  //       }
+  //     }
+  //   });
+  // }
 
-  // Watched cleanup background task
-  let orchestrator_for_watched = orchestrator.clone();
-  let watched_clear_hours = orchestrator.config.watched_clear_hours;
-  if watched_clear_hours > 0 {
-    tokio::spawn(async move {
-      let mut interval = tokio::time::interval(std::time::Duration::from_secs(watched_clear_hours * 3600));
-      loop {
-        interval.tick().await;
-        info!("Cleaning up expired watched streams...");
-        let removed = orchestrator_for_watched.cleanup_expired_watched(watched_clear_hours as i64).await;
-        if removed > 0 {
-          info!(count = removed, "Cleaned up expired watched entries");
-        }
-      }
-    });
-  }
+  // Watched cleanup background task - DISABLED FOR DEBUGGING
+  // let orchestrator_for_watched = orchestrator.clone();
+  // let watched_clear_hours = orchestrator.config.watched_clear_hours;
+  // if watched_clear_hours > 0 {
+  //   tokio::spawn(async move {
+  //     let mut interval = tokio::time::interval(std::time::Duration::from_secs(watched_clear_hours * 3600));
+  //     loop {
+  //       interval.tick().await;
+  //       info!("Cleaning up expired watched streams...");
+  //       let removed = orchestrator_for_watched.cleanup_expired_watched(watched_clear_hours as i64).await;
+  //       if removed > 0 {
+  //         info!(count = removed, "Cleaned up expired watched entries");
+  //       }
+  //     }
+  //   });
+  // }
 
     orchestrator
 }
@@ -200,8 +203,8 @@ async fn exit_listener(
 
         let mut state = ScreenState::new(screen);
         state.state = StreamState::Idle;
-        self.state.insert(screen, state);
-        debug!(screen, state_keys = ?self.state.iter().map(|r| *r.key()).collect::<Vec<_>>(), "Screen registered");
+        self.state.lock().await.insert(screen, state);
+        debug!(screen, state_keys = ?self.state.lock().await.keys().collect::<Vec<_>>(), "Screen registered");
         info!(screen, "Screen registered");
     }
 
@@ -209,7 +212,7 @@ async fn exit_listener(
         let lock = self.get_or_create_lock(screen).await;
         let _guard = lock.lock().await;
 
-        self.state.remove(&screen);
+        self.state.lock().await.remove(&screen);
         self.locks.remove(&screen);
         info!(screen, "Screen unregistered");
     }
@@ -267,7 +270,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
 
   #[cfg(test)]
     pub fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
-        self.state.get(&screen).map(|r| r.clone())
+        self.state.lock().await.get(&screen).cloned()
     }
 
     #[cfg(test)]
@@ -284,19 +287,22 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         self.queue.clone()
     }
 
-    pub fn is_screen_enabled(&self, screen: u32) -> bool {
-        self.state.get(&screen).map(|s| s.enabled).unwrap_or(true)
+    pub async fn is_screen_enabled(&self, screen: u32) -> bool {
+        let guard = self.state.lock().await;
+        guard.get(&screen).map(|s| s.enabled).unwrap_or(true)
     }
 
     pub async fn enable_screen(&self, screen: u32) {
-        if let Some(mut state) = self.state.get_mut(&screen) {
+        let mut guard = self.state.lock().await;
+        if let Some(state) = guard.get_mut(&screen) {
             state.enabled = true;
             info!(screen, "Screen enabled");
         }
     }
 
     pub async fn disable_screen(&self, screen: u32) {
-        if let Some(mut state) = self.state.get_mut(&screen) {
+        let mut guard = self.state.lock().await;
+        if let Some(state) = guard.get_mut(&screen) {
             state.enabled = false;
             info!(screen, "Screen disabled");
         }
@@ -312,7 +318,7 @@ pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
 
     pub async fn start_auto_screens(&self) {
         for screen_config in &self.config.screens {
-            if screen_config.auto_start && self.is_screen_enabled(screen_config.screen) {
+            if screen_config.auto_start && self.is_screen_enabled(screen_config.screen).await {
                 let streams = self.fetch_streams_for_screen(screen_config.screen).await;
                 if !streams.is_empty() {
                     self.set_queue(screen_config.screen, streams).await;

@@ -240,8 +240,13 @@ pub async fn start_mpv_process(
         });
     });
 
-        controller.play(url)
-            .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+        let controller_clone = controller.clone();
+        let url_owned = url.to_string();
+        let play_result = tokio::task::spawn_blocking(move || {
+            controller_clone.play(&url_owned)
+                .map_err(|e| PlayerError::Mpv(e.to_string()))
+        }).await
+        .map_err(|e| PlayerError::Mpv(e.to_string()))??;
 
         let pid = controller.pid().unwrap_or(0) as u32;
 

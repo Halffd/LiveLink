@@ -297,8 +297,8 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             orchestrator.disable_screen(*screen).await;
             println!("Session/screen {} disabled", screen);
         }
-        Commands::SessionToggle { screen } => {
-            let enabled = orchestrator.is_screen_enabled(*screen);
+Commands::SessionToggle { screen } => {
+            let enabled = orchestrator.is_screen_enabled(*screen).await;
             if enabled {
                 orchestrator.disable_screen(*screen).await;
                 println!("Session/screen {} disabled", screen);
@@ -311,7 +311,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             for s in 0..10 {
                 if orchestrator.get_state(s).await.is_some() {
                     let state = orchestrator.get_state(s).await;
-                    let enabled = orchestrator.is_screen_enabled(s);
+                    let enabled = orchestrator.is_screen_enabled(s).await;
                     println!("Screen {}: {:?} (enabled: {})", s, state, enabled);
                 }
             }
@@ -515,7 +515,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
         Commands::ScreenList => {
             for s in [0, 1] {
                 let state = orchestrator.get_state(s).await;
-                let enabled = orchestrator.is_screen_enabled(s);
+                let enabled = orchestrator.is_screen_enabled(s).await;
                 println!("Screen {}: {:?} (enabled: {})", s, state, enabled);
             }
         }
@@ -528,7 +528,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             println!("Screen {} disabled", screen);
         }
         Commands::ScreenToggle { screen } => {
-            let enabled = orchestrator.is_screen_enabled(*screen);
+            let enabled = orchestrator.is_screen_enabled(*screen).await;
             if enabled {
                 orchestrator.disable_screen(*screen).await;
                 println!("Screen {} disabled", screen);

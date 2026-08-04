@@ -13,7 +13,7 @@ use config::{ConfigLoader, Env};
 use core::orchestrator::Orchestrator;
 use core::state::OrchestratorConfig;
 use services::network::{NetworkEvent, NetworkMonitor};
-use tracing::{debug, info};
+use tracing::{debug, info, warn, error};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
@@ -113,6 +113,9 @@ let _env = Env::load();
     let loader = ConfigLoader::with_base_path(&config_dir);
     let config = loader.load();
 
+    // Clone screens for later auto-start
+    let screen_configs = config.player.screens.clone();
+
     debug!(
         config_dir = %config_dir,
         config_holodex_api_key = if config.holodex.api_key.is_empty() { "not set" } else { "***" },
@@ -164,105 +167,155 @@ let _env = Env::load();
         network_monitor.start().await;
     });
 
-orchestrator.register_screen(0).await;
-  orchestrator.register_screen(1).await;
+    let cli = if has_cli_args {
+        Some(cli::commands::parse_cli())
+    } else {
+        None
+    };
 
-  let sources_0 = orchestrator.fetch_streams_for_screen(0).await;
-  if !sources_0.is_empty() {
-    orchestrator.set_queue(0, sources_0).await;
-  }
-
-  let sources_1 = orchestrator.fetch_streams_for_screen(1).await;
-  if !sources_1.is_empty() {
-    orchestrator.set_queue(1, sources_1).await;
-  }
-
-  // Auto-start screens that have auto_start enabled
-  orchestrator.start_auto_screens().await;
-
-info!("LiveLink initialized");
-  info!("Active streams: {}", orchestrator.count_active_streams());
-
-  if has_cli_args {
-    let cli = cli::commands::parse_cli();
-
-    let run_server_after = matches!(
-      cli.command,
-      cli::commands::Commands::Start(_) | cli::commands::Commands::StreamStart(_)
-    );
-
-    let cli_is_read_only = matches!(
-      cli.command,
-      cli::commands::Commands::StreamList(_)
-        | cli::commands::Commands::QueueShow(_)
-        | cli::commands::Commands::List(_)
-        | cli::commands::Commands::SessionList
-        | cli::commands::Commands::ScreenList
-        | cli::commands::Commands::ServerStatus
-        | cli::commands::Commands::Diagnostics
-        | cli::commands::Commands::Ochs
-    );
-
-    if cli_is_read_only {
-      let addr = format!("http://localhost:{}/api/queues", port);
-      match reqwest::get(&addr).await {
-        Ok(resp) if resp.status() == 200 => {
-          match resp.text().await {
-            Ok(body) => {
-              println!("Connected to running server on port {}", port);
-              println!("{}", body);
-              return;
-            }
-            Err(_) => {}
-          }
+    let (run_server_after, should_auto_start, run_start_command) = match &cli {
+        Some(cli) => {
+            let is_start_cmd = matches!(cli.command, cli::commands::Commands::Start(_));
+            let is_stream_start = matches!(cli.command, cli::commands::Commands::StreamStart(_));
+            let run_server_after = is_start_cmd || is_stream_start;
+            let cli_is_read_only = matches!(
+                cli.command,
+                cli::commands::Commands::StreamList(_)
+                    | cli::commands::Commands::QueueShow(_)
+                    | cli::commands::Commands::List(_)
+                    | cli::commands::Commands::SessionList
+                    | cli::commands::Commands::ScreenList
+                    | cli::commands::Commands::ServerStatus
+                    | cli::commands::Commands::Diagnostics
+                    | cli::commands::Commands::Ochs
+            );
+            // For Start command: only run manual start logic if explicit --screens or --instances provided
+            let start_cmd_has_explicit = if let cli::commands::Commands::Start(cmd) = &cli.command {
+                cmd.screens.is_some() || cmd.instances.is_some()
+            } else {
+                false
+            };
+            // Auto-start from config: run when no CLI args, or when Start command without explicit args
+            let should_auto_start = !cli_is_read_only && (!is_start_cmd || !start_cmd_has_explicit);
+            (run_server_after, should_auto_start, is_start_cmd && start_cmd_has_explicit)
         }
-        _ => {}
-      }
-      eprintln!("No server running on port {}. Starting one...", port);
-    }
+        None => (true, true, false),
+    };
 
-    if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
-      eprintln!("CLI error: {}", e);
-    }
+    // Handle read-only CLI commands that connect to existing server
+    if let Some(ref cli) = cli {
+        let cli_is_read_only = matches!(
+            cli.command,
+            cli::commands::Commands::StreamList(_)
+                | cli::commands::Commands::QueueShow(_)
+                | cli::commands::Commands::List(_)
+                | cli::commands::Commands::SessionList
+                | cli::commands::Commands::ScreenList
+                | cli::commands::Commands::ServerStatus
+                | cli::commands::Commands::Diagnostics
+                | cli::commands::Commands::Ochs
+        );
 
-    if !run_server_after {
-      return;
-    }
-  }
-
-
-  let orchestrator_for_api = orchestrator.clone();
-        let app = api::routes::create_router(orchestrator_for_api);
-
-        let addr = format!("0.0.0.0:{}", port);
-        info!("Starting API server on {}", addr);
-
-        let shutdown_signal = async {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{signal, SignalKind};
-                let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
-                let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
-                tokio::select! {
-                    _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully..."),
-                    _ = sigint.recv() => info!("Received SIGINT, shutting down gracefully..."),
-                    _ = tokio::signal::ctrl_c() => info!("Received Ctrl-C, shutting down gracefully..."),
+        if cli_is_read_only {
+            let addr = format!("http://localhost:{}/api/queues", port);
+            match reqwest::get(&addr).await {
+                Ok(resp) if resp.status() == 200 => {
+                    match resp.text().await {
+                        Ok(body) => {
+                            println!("Connected to running server on port {}", port);
+                            println!("{}", body);
+                            return;
+                        }
+                        Err(_) => {}
+                    }
                 }
+                _ => {}
             }
-            #[cfg(not(unix))]
-            {
-                tokio::signal::ctrl_c().await.ok();
-                info!("Received Ctrl-C, shutting down gracefully...");
+            eprintln!("No server running on port {}. Starting one...", port);
+        }
+    }
+
+    // Register screens and start streams based on config (server mode or non-start CLI commands)
+    info!("should_auto_start={}, run_server_after={}", should_auto_start, run_server_after);
+    if should_auto_start {
+        info!("Running auto-start for {} screens", screen_configs.len());
+        for screen_config in &screen_configs {
+            if screen_config.enabled && screen_config.auto_start {
+                info!("Auto-starting screen {} (enabled={}, auto_start={})", screen_config.screen, screen_config.enabled, screen_config.auto_start);
+                orchestrator.register_screen(screen_config.screen).await;
+                let streams = orchestrator.fetch_streams_for_screen(screen_config.screen).await;
+                if !streams.is_empty() {
+                    orchestrator.set_queue(screen_config.screen, streams).await;
+                    if let Err(e) = orchestrator.start_stream(screen_config.screen).await {
+                        warn!(screen = screen_config.screen, error = %e, "Failed to auto-start screen");
+                    }
+                } else {
+                    warn!("No streams available for screen {}", screen_config.screen);
+                }
+            } else {
+                info!("Skipping screen {} (enabled={}, auto_start={})", screen_config.screen, screen_config.enabled, screen_config.auto_start);
             }
+        }
+    }
+    
+    info!("Auto-start loop completed");
+
+    // Execute CLI command (Start with explicit args, Stop, etc.)
+    if let Some(cli) = cli {
+        let is_start_without_explicit = if let cli::commands::Commands::Start(cmd) = &cli.command {
+            cmd.screens.is_none() && cmd.instances.is_none()
+        } else {
+            false
         };
+        
+        if !is_start_without_explicit {
+            info!("Executing CLI command");
+            if let Err(e) = cli::commands::run_cli(orchestrator.clone(), cli).await {
+                eprintln!("CLI error: {}", e);
+            }
+        } else {
+            info!("Skipping Start command without explicit args (handled by auto-start)");
+        }
+    }
 
-        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    info!("run_server_after={}, proceeding to API server", run_server_after);
+    if !run_server_after {
+        info!("run_server_after is false, returning early");
+        return;
+    }
 
-        // Start the server with graceful shutdown
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal)
-            .await
-            .unwrap();
+    let orchestrator_for_api = orchestrator.clone();
+    let app = api::routes::create_router(orchestrator_for_api);
+
+    let addr = format!("0.0.0.0:{}", port);
+    info!("Starting API server on {}", addr);
+
+    let shutdown_signal = async {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).expect("Failed to install SIGTERM handler");
+            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to install SIGINT handler");
+            tokio::select! {
+                _ = sigterm.recv() => info!("Received SIGTERM, shutting down gracefully..."),
+                _ = sigint.recv() => info!("Received SIGINT, shutting down gracefully..."),
+                _ = tokio::signal::ctrl_c() => info!("Received Ctrl-C, shutting down gracefully..."),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+            info!("Received Ctrl-C, shutting down gracefully...");
+        }
+    };
+
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+
+    // Start the server with graceful shutdown
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await
+        .unwrap();
 
         // Stop all streams on shutdown
         info!("Stopping all streams...");
