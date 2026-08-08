@@ -3,6 +3,30 @@ use crate::services::holodex::QueryOptions;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+#[derive(serde::Deserialize)]
+struct HelixResponse {
+    data: Vec<TwitchStream>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+struct TwitchStream {
+    id: String,
+    user_id: String,
+    user_login: String,
+    user_name: String,
+    game_id: String,
+    game_name: String,
+    #[serde(rename = "type")]
+    type_: String,
+    title: String,
+    viewer_count: u64,
+    started_at: String,
+    language: String,
+    thumbnail_url: String,
+}
+
 #[derive(Error, Debug)]
 #[allow(dead_code)]
 pub enum TwitchError {
@@ -293,11 +317,231 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
 
     info!(count = sources.len(), "Searched streams from Twitch");
     Ok(sources)
+  info!(count = sources.len(), "Searched streams from Twitch");
+    Ok(sources)
   }
-}
 
-impl Default for TwitchService {
-    fn default() -> Self {
-        Self::new(String::new(), String::new())
+  /// Get live streams from favorite channels
+  pub async fn get_live_streams_favorites(&self, channel_names: &[String], limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
+    if channel_names.is_empty() {
+      return Ok(Vec::new());
     }
+
+    let access_token = self
+      .access_token
+      .as_ref()
+      .ok_or_else(|| TwitchError::Auth("Not authenticated with Twitch".into()))?;
+
+    let mut all_sources = Vec::new();
+
+    // Process in chunks of 100 (Twitch API limit)
+    for chunk in channel_names.chunks(100) {
+      let login_param = chunk
+        .iter()
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join("&user_login=");
+
+      let url = format!("https://api.twitch.tv/helix/streams?user_login={}", login_param);
+
+      let response = self
+        .http_client
+        .get(&url)
+        .header("Client-ID", &self.client_id)
+        .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+        .send()
+        .await
+        .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+      if !response.status().is_success() {
+        return Err(TwitchError::Api(format!(
+          "Failed to get streams: {}",
+          response.status()
+        )));
+      }
+
+      let response: HelixResponse = response.json().await.map_err(|e| TwitchError::Api(e.to_string()))?;
+
+      for stream in response.data {
+        let url = format!("https://twitch.tv/{}", stream.user_login);
+        let start_time = chrono::DateTime::parse_from_rfc3339(&stream.started_at)
+          .ok()
+          .map(|dt| dt.timestamp());
+
+        all_sources.push(StreamSource {
+          url,
+          title: Some(stream.title),
+          platform: Some("twitch".to_string()),
+          channel_id: Some(stream.user_id),
+          channel: Some(stream.user_login),
+          viewer_count: Some(stream.viewer_count),
+          start_time,
+          priority: None,
+          is_live: true,
+          ..Default::default()
+        });
+
+        if all_sources.len() >= 100 {
+          break;
+        }
+      }
+    }
+
+    Ok(all_sources)
+  }
+
+  /// Get live streams from followed channels (requires user OAuth)
+  pub async fn get_live_streams_followed(&self, _user_access_token: &str, limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
+    // This requires user OAuth token with channel:read:subscriptions scope
+    // For now, return empty - would need user OAuth implementation
+    Ok(Vec::new())
+  }
+
+  /// Get live streams by tag
+  pub async fn get_live_streams_by_tag(&self, tag: &str, limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
+    let access_token = self
+      .access_token
+      .as_ref()
+      .ok_or_else(|| TwitchError::Auth("Not authenticated with Twitch".into()))?;
+
+    // Search for channels with this tag
+    let url = format!(
+      "https://api.twitch.tv/helix/search/channels?query={}&first={}&live_only=true",
+      urlencoding::encode(tag),
+      limit.min(100)
+    );
+
+    let response = self
+      .http_client
+      .get(&url)
+      .header("Client-ID", &self.client_id)
+      .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+      .send()
+      .await
+      .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+    if !response.status().is_success() {
+      return Err(TwitchError::Api(format!(
+        "Search failed: {}",
+        response.status()
+      )));
+    }
+
+    let text = response
+      .text()
+      .await
+      .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+    #[derive(serde::Deserialize)]
+    struct HelixResponse {
+      data: Vec<TwitchSearchChannel>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    #[allow(unused)]
+    struct TwitchSearchChannel {
+      broadcaster_login: String,
+      display_name: String,
+      game_id: Option<String>,
+      game_name: Option<String>,
+      is_live: Option<bool>,
+      tags: Option<Vec<String>>,
+      thumbnail_url: Option<String>,
+      title: Option<String>,
+      started_at: Option<String>,
+    }
+
+    let helix_response: HelixResponse = serde_json::from_str(&text)
+      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, &text[..text.len().min(500)])))?;
+
+    let search_lower = "".to_string();
+    let tag_filter = Some("vtuber".to_string());
+
+    let sources: Vec<StreamSource> = helix_response
+      .data
+      .into_iter()
+      .filter(|ch| ch.is_live.unwrap_or(false))
+      .filter(|ch| {
+        if let Some(ref tag) = ch.tags {
+          tag.iter().any(|t| t.to_lowercase().contains("vtuber"))
+        } else {
+          false
+        }
+      })
+      .map(|ch| {
+        let url = format!("https://twitch.tv/{}", ch.broadcaster_login);
+        let start_time = ch.started_at.as_ref().and_then(|s| {
+          chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+        });
+
+        StreamSource {
+          url,
+          title: ch.title,
+          platform: Some("twitch".to_string()),
+          channel_id: None,
+          channel: Some(ch.broadcaster_login),
+          viewer_count: None,
+          start_time,
+          priority: None,
+          is_live: ch.is_live.unwrap_or(false),
+          ..Default::default()
+        }
+      })
+      .collect();
+
+    info!(count = sources.len(), tag = %tag, "Fetched live streams by tag from Twitch");
+    Ok(sources)
+  }
+
+  /// Get top live streams
+  pub async fn get_top_streams(&self, limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
+    let access_token = self
+      .access_token
+      .as_ref()
+      .ok_or_else(|| TwitchError::Auth("Not authenticated with Twitch".into()))?;
+
+    let url = format!("https://api.twitch.tv/helix/streams?first={}", limit.min(100));
+
+    let response = self
+      .http_client
+      .get(&url)
+      .header("Client-ID", &self.client_id)
+      .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+      .send()
+      .await
+      .map_err(|e| TwitchError::Network(e.to_string()))?;
+
+    if !response.status().is_success() {
+      return Err(TwitchError::Api(format!(
+        "Failed to get top streams: {}",
+        response.status()
+      )));
+    }
+
+    let data = response.json::<HelixResponse>().await.map_err(|e| TwitchError::Api(e.to_string()))?;
+
+    let sources: Vec<StreamSource> = data.data.into_iter().map(|stream| {
+      let url = format!("https://twitch.tv/{}", stream.user_login);
+      let start_time = chrono::DateTime::parse_from_rfc3339(&stream.started_at)
+        .ok()
+        .map(|dt| dt.timestamp());
+
+      StreamSource {
+        url,
+        title: Some(stream.title),
+        platform: Some("twitch".to_string()),
+        channel_id: Some(stream.user_id),
+        channel: Some(stream.user_login),
+        viewer_count: Some(stream.viewer_count),
+        start_time,
+        priority: None,
+        is_live: true,
+        ..Default::default()
+      }
+    }).collect();
+
+    info!(count = sources.len(), "Fetched top streams from Twitch");
+    Ok(sources)
+  }
 }

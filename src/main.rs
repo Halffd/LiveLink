@@ -19,26 +19,26 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
 use std::path::PathBuf;
 
-fn setup_logging() {
-    let log_dir = std::env::var("LIVELINK_LOG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("logs"));
+fn setup_logging(debug: bool, log_level: Option<String>, log_file: String, log_dir: String) {
+    let log_dir = PathBuf::from(log_dir);
 
     std::fs::create_dir_all(&log_dir).ok();
 
     let file_appender = RollingFileAppender::new(
         Rotation::DAILY,
         &log_dir,
-        "livelink.log",
+        &log_file,
     );
 
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
-    let base_filter = if std::env::var("RUST_LOG").is_ok() {
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+    let log_level = if debug {
+        "debug"
     } else {
-        EnvFilter::new("warn,livelink=debug,services=debug,core=debug,queue=debug,config=debug,orchestrator=debug,api=debug,cli=debug,ui=debug")
+        log_level.as_deref().unwrap_or("info")
     };
+
+    let base_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
     let env_filter = base_filter
         .add_directive("reqwest::connect=warn".parse().unwrap())
@@ -79,36 +79,27 @@ fn setup_logging() {
 
 #[tokio::main]
 async fn main() {
-    setup_logging();
+    let has_cli_args = std::env::args().len() > 1;
+    let (mpv_config_dir, config_dir, port, debug, mpv_debug, player_debug, log_level, log_file, log_dir) = if has_cli_args {
+        let cli = cli::commands::parse_cli();
+        (
+          cli.mpv_config_dir.clone(),
+          cli.config_dir.clone(),
+          cli.port,
+          cli.debug,
+          cli.mpv_debug,
+          cli.player_debug,
+          cli.log_level,
+          cli.log_file.unwrap_or_else(|| "player.log".to_string()),
+          cli.log_dir.unwrap_or_else(|| "logs".to_string()),
+        )
+    } else {
+        ("mpv_config".to_string(), "config".to_string(), 3001u16, false, false, false, None, "player.log".to_string(), "logs".to_string())
+    };
+
+    setup_logging(debug, log_level.clone(), log_file.clone(), log_dir.clone());
 
     info!("LiveLink starting...");
-
-let has_cli_args = std::env::args().len() > 1;
-  let (mpv_config_dir, config_dir, port, debug, mpv_debug, player_debug, log_level, log_file, log_dir) = if has_cli_args {
-    let cli = cli::commands::parse_cli();
-    (
-      cli.mpv_config_dir.clone(),
-      cli.config_dir.clone(),
-      cli.port,
-      cli.debug,
-      cli.mpv_debug,
-      cli.player_debug,
-      cli.log_level.unwrap_or_else(|| "info".to_string()),
-      cli.log_file.unwrap_or_else(|| "player.log".to_string()),
-      cli.log_dir.unwrap_or_else(|| "logs".to_string()),
-    )
-  } else {
-    ("mpv_config".to_string(), "config".to_string(), 3001u16, false, false, false, "info".to_string(), "player.log".to_string(), "logs".to_string())
-  };
-
-let _env = Env::load();
-
-    debug!(
-        holodex_api_key = if _env.holodex_api_key.is_empty() { "not set" } else { "***" },
-        twitch_client_id = if _env.twitch_client_id.is_empty() { "not set" } else { "***" },
-        youtube_api_key = if _env.youtube_api_key.is_some() { "***" } else { "not set" },
-        "Environment variables loaded"
-    );
 
     let loader = ConfigLoader::with_base_path(&config_dir);
     let config = loader.load();
@@ -152,7 +143,7 @@ let _env = Env::load();
         debug,
         mpv_debug,
         player_debug,
-        log_level,
+log_level: log_level.unwrap_or_else(|| "info".to_string()),
         log_file,
         log_dir,
         screens: config.player.screens,

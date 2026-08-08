@@ -431,6 +431,76 @@ struct YouTubeSnippet {
     Ok(sources)
   }
 
+  /// Get live streams from favorite channels
+  pub async fn get_live_streams_favorites(&mut self, channel_ids: &[String], limit: u32) -> Result<Vec<StreamSource>, YouTubeError> {
+    if channel_ids.is_empty() {
+      return Ok(Vec::new());
+    }
+
+    if !self.is_enabled() || !self.has_quota_remaining() {
+      trace!("No YouTube API key or quota, using RSS fallback");
+      return self.check_multiple_via_rss(channel_ids).await;
+    }
+
+    // Use the existing get_live_streams with favorite channels
+    // but limit to the specified number
+    let mut all_streams = Vec::new();
+
+    for channel_id in channel_ids {
+      if all_streams.len() >= limit as usize {
+        break;
+      }
+
+      match self.check_via_api(channel_id).await {
+        Ok(streams) => {
+          all_streams.extend(streams);
+        }
+        Err(e) => {
+          warn!(channel_id = %channel_id, error = %e, "API call failed, trying RSS");
+          // Fall back to RSS for this specific channel
+          match self.check_via_rss(channel_id).await {
+            Ok(is_live) => {
+              if is_live {
+                all_streams.push(StreamSource {
+                  url: format!("https://www.youtube.com/channel/{}", channel_id),
+                  title: None,
+                  platform: Some("youtube".to_string()),
+                  channel_id: Some(channel_id.to_string()),
+                  channel: None,
+                  viewer_count: None,
+                  start_time: None,
+                  priority: None,
+                  is_live: true,
+                  ..Default::default()
+                });
+              }
+            }
+            Err(rss_err) => {
+              warn!(channel_id = %channel_id, error = %rss_err, "RSS check also failed");
+            }
+          }
+        }
+      }
+
+      if all_streams.len() >= limit as usize {
+        break;
+      }
+    }
+
+    if !all_streams.is_empty() {
+      let (remaining, max) = self.quota_status();
+      info!(count = all_streams.len(), quota_remaining = remaining, quota_max = max, "Fetched live streams from YouTube favorites");
+      return Ok(all_streams.into_iter().take(limit as usize).collect());
+    }
+
+    // Quota exhausted or API failed entirely -> use RSS for everything
+    debug!(
+      quota_remaining = %self.quota_remaining,
+      "API quota exhausted, falling back to RSS"
+    );
+    self.check_multiple_via_rss(channel_ids).await
+  }
+
   /// Get YouTube video categories
   pub async fn get_categories(&mut self) -> Result<Vec<YouTubeCategory>, YouTubeError> {
     if let Some(cached) = &self.categories {
