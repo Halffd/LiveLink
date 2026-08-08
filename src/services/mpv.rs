@@ -33,6 +33,7 @@ pub struct MpvInstance {
     y: i32,
     volume: u8,
     url: Option<String>,
+    config_dir: Option<String>,
 }
 
 impl MpvInstance {
@@ -51,6 +52,7 @@ impl MpvInstance {
             y: 0,
             volume: 50,
             url: None,
+            config_dir: None,
         })
     }
 
@@ -90,6 +92,10 @@ impl MpvInstance {
         args.push(format!("--volume={}", self.volume));
         args.push("--idle".to_string());
         args.extend(extra_args.iter().cloned());
+
+        if let Some(config_dir) = &self.config_dir {
+            args.push(format!("--config-dir={}", config_dir));
+        }
 
         trace!(
             mpv_path = %mpv_path,
@@ -267,6 +273,7 @@ pub struct MpvController {
     inner: Arc<Mutex<MpvInstance>>,
     mpv_path: String,
     extra_args: Vec<String>,
+    config_dir: Option<String>,
     exit_callback: Arc<std::sync::Mutex<Option<Box<dyn Send + Sync + Fn() + 'static>>>>,
 }
 
@@ -277,6 +284,7 @@ impl MpvController {
             inner: Arc::new(Mutex::new(instance)),
             mpv_path: mpv_path.to_string(),
             extra_args: Vec::new(),
+            config_dir: None,
             exit_callback: Arc::new(std::sync::Mutex::new(None)),
         })
     }
@@ -287,8 +295,13 @@ impl MpvController {
             inner: Arc::new(Mutex::new(instance)),
             mpv_path: mpv_path.to_string(),
             extra_args,
+            config_dir: None,
             exit_callback: Arc::new(std::sync::Mutex::new(None)),
         })
+    }
+
+    pub fn set_config_dir(&mut self, config_dir: String) {
+        self.config_dir = Some(config_dir);
     }
 
     pub fn set_exit_callback<F>(&self, callback: F)
@@ -301,6 +314,9 @@ impl MpvController {
     pub fn play(&self, url: &str) -> Result<(), MpvError> {
         {
             let mut inst = self.inner.lock().unwrap();
+            if let Some(config_dir) = &self.config_dir {
+                inst.config_dir = Some(config_dir.clone());
+            }
             inst.play(url, &self.mpv_path, &self.extra_args)
         }?;
 

@@ -17,13 +17,17 @@ impl Orchestrator {
                     .map(|s| s.type_.clone())
                     .collect();
                 
+                debug!(screen, enabled_sources = ?enabled_sources, "Screen source filter");
+                
                 if !enabled_sources.is_empty() {
+                    let before_count = filtered.len();
                     filtered = filtered.into_iter()
                         .filter(|s| {
                             let platform = s.platform.as_deref().unwrap_or("unknown");
                             enabled_sources.contains(platform)
                         })
                         .collect();
+                    debug!(screen, before = before_count, after = filtered.len(), "After source filter");
                 }
             }
             
@@ -64,6 +68,8 @@ impl Orchestrator {
                 .map(|ch| ch.id.clone())
                 .collect();
 
+            debug!(twitch_channels = ?twitch_channels, "Twitch channels to fetch");
+
             if !twitch_channels.is_empty() {
                 let mut twitch = self.twitch_service.lock().await;
                 if twitch.authenticate().await.is_ok() {
@@ -80,6 +86,8 @@ impl Orchestrator {
                 } else {
                     warn!("Twitch authentication failed");
                 }
+            } else {
+                debug!("Twitch service not enabled (no credentials)");
             }
         }
 

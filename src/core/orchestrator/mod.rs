@@ -83,6 +83,7 @@ impl Orchestrator {
             streamlink_http_header: std::collections::HashMap::new(),
             screens: config.screens.clone(),
             debug: config.debug,
+            mpv_config_dir: None,
         };
         let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();
@@ -256,6 +257,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         auto_refresh_interval_seconds: self.config.auto_refresh_interval_seconds,
         watched_clear_hours: self.config.watched_clear_hours,
         use_locks: true,
+        mpv_config_dir: None,
         logging: crate::config::LoggingConfig {
           enabled: true,
           level: "info".to_string(),

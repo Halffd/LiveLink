@@ -65,6 +65,7 @@ pub struct PlayerConfig {
     pub streamlink_http_header: std::collections::HashMap<String, String>,
     pub screens: Vec<crate::config::ScreenConfig>,
     pub debug: bool,
+    pub mpv_config_dir: Option<String>,
 }
 
 impl Default for PlayerConfig {
@@ -86,6 +87,7 @@ impl Default for PlayerConfig {
             streamlink_http_header: std::collections::HashMap::new(),
             screens: vec![],
             debug: false,
+            mpv_config_dir: None,
         }
     }
 }
@@ -192,8 +194,12 @@ pub async fn start_mpv_process(
             debug!(screen, url = %url, mpv_path = %self.config.mpv_path, cmd = %format!("{} {}", self.config.mpv_path, cmd_args.join(" ")), "MPV command");
         }
 
-        let controller = MpvController::with_extra_args(&self.config.mpv_path, extra_args)
+        let mut controller = MpvController::with_extra_args(&self.config.mpv_path, extra_args)
             .map_err(|e| PlayerError::Mpv(e.to_string()))?;
+
+        if let Some(config_dir) = &self.config.mpv_config_dir {
+            controller.set_config_dir(config_dir.clone());
+        }
 
         controller.configure(
             screen_config.width,

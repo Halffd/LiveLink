@@ -162,6 +162,8 @@ pub struct PlayerConfig {
     pub watched_clear_hours: u64,
     #[serde(alias = "useLocks", default = "default_use_locks")]
     pub use_locks: bool,
+    #[serde(alias = "mpvConfigDir", default)]
+    pub mpv_config_dir: Option<String>,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
@@ -241,6 +243,8 @@ pub struct MpvConfig {
     pub audio_file: Option<String>,
     #[serde(default)]
     pub sub_file: Option<String>,
+    #[serde(default)]
+    pub config_dir: Option<String>,
     #[serde(default)]
     pub sub_lang: Option<String>,
     #[serde(default)]
@@ -512,6 +516,7 @@ impl FiltersConfig {
 
         let is_exclude_mode = self.mode == "exclude" || self.mode == "blacklist";
 
+        // Check channel_names patterns
         for pattern in &self.channel_names {
             if name_lower.contains(&pattern.to_lowercase()) {
                 return is_exclude_mode;
@@ -521,6 +526,34 @@ impl FiltersConfig {
         for pattern in &self.channel_names_regex {
             if let Ok(re) = regex::Regex::new(&pattern) {
                 if re.is_match(channel_name) {
+                    return is_exclude_mode;
+                }
+            }
+        }
+
+        // Check rules for channel
+        for rule in &self.rules {
+            if rule.rule_type.as_deref() == Some("channel") || rule.rule_type.is_none() {
+                let pattern = if rule.ignore_case {
+                    rule.pattern.to_lowercase()
+                } else {
+                    rule.pattern.clone()
+                };
+                let channel_name = if rule.ignore_case {
+                    channel_name.to_lowercase()
+                } else {
+                    channel_name.to_string()
+                };
+
+                let matched = if rule.regex {
+                    regex::Regex::new(&pattern)
+                        .map(|re| re.is_match(&channel_name))
+                        .unwrap_or(false)
+                } else {
+                    channel_name.contains(&pattern)
+                };
+
+                if matched {
                     return is_exclude_mode;
                 }
             }
@@ -565,7 +598,43 @@ impl FiltersConfig {
                 .unwrap_or(false)
         });
 
-        let any_matched = matched_pattern || matched_regex;
+        // Check rules for title
+        for rule in &self.rules {
+            if rule.rule_type.as_deref() == Some("title") || rule.rule_type.is_none() {
+                let pattern = if rule.ignore_case {
+                    rule.pattern.to_lowercase()
+                } else {
+                    rule.pattern.clone()
+                };
+                let title_to_match = if rule.ignore_case {
+                    title.to_lowercase()
+                } else {
+                    title.to_string()
+                };
+
+                let matched = if rule.regex {
+                    regex::Regex::new(&pattern)
+                        .map(|re| re.is_match(&title_to_match))
+                        .unwrap_or(false)
+                } else {
+                    title_to_match.contains(&pattern)
+                };
+
+                if matched {
+                    return is_exclude_mode;
+                }
+            }
+        }
+
+        let any_matched = self
+            .title_patterns
+            .iter()
+            .any(|p| title_lower.contains(&p.to_lowercase()))
+            || self.title_patterns_regex.iter().any(|p| {
+                regex::Regex::new(p)
+                    .map(|re| re.is_match(title))
+                    .unwrap_or(false)
+            });
 
         if any_matched {
             is_exclude_mode
@@ -775,6 +844,7 @@ impl ConfigLoader {
             auto_refresh_interval_seconds: 60,
             watched_clear_hours: 10,
             use_locks: true,
+            mpv_config_dir: None,
             logging: LoggingConfig {
                 enabled: true,
                 level: "info".to_string(),
@@ -839,6 +909,7 @@ impl ConfigLoader {
             path: "mpv".to_string(),
             priority: "normal".to_string(),
             gpu_context: "auto".to_string(),
+            config_dir: None,
             extra: HashMap::new(),
             ..Default::default()
         }
