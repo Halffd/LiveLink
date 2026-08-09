@@ -317,8 +317,6 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
 
     info!(count = sources.len(), "Searched streams from Twitch");
     Ok(sources)
-  info!(count = sources.len(), "Searched streams from Twitch");
-    Ok(sources)
   }
 
   /// Get live streams from favorite channels

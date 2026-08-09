@@ -108,18 +108,21 @@ impl HolodexService {
                     .start_scheduled
                     .map(|s| s.timestamp() as i64);
 
-                StreamSource {
-                    url,
-                    title: Some(video.title),
-                    platform: Some("holodex".to_string()),
-                    channel_id: Some(video.channel.id().to_string()),
-                    channel: None,
-                    viewer_count,
-                    start_time,
-                    priority: None,
-                    is_live: true,
-                    ..Default::default()
-                }
+StreamSource {
+                url,
+                title: Some(video.title),
+                platform: Some("holodex".to_string()),
+                channel_id: Some(video.channel.id().to_string()),
+                channel: Some(match &video.channel {
+                    holodex::model::VideoChannel::Min(c) => c.name.clone(),
+                    holodex::model::VideoChannel::Id(_) => String::new(),
+                }),
+                viewer_count,
+                start_time,
+                priority: None,
+                is_live: true,
+                ..Default::default()
+            }
             })
 .collect();
 
@@ -169,7 +172,7 @@ impl HolodexService {
 
     let sources: Vec<StreamSource> = videos
         .into_iter()
-        .map(|video| {
+.map(|video| {
             let url = format!("https://www.youtube.com/watch?v={}", video.id);
             let live_info = video.live_info;
             let viewer_count = live_info.live_viewers.map(|v| v as u64);
@@ -180,7 +183,10 @@ impl HolodexService {
                 title: Some(video.title),
                 platform: Some("holodex".to_string()),
                 channel_id: Some(video.channel.id().to_string()),
-                channel: Some(video.channel.english_name.to_string()),
+                channel: Some(match &video.channel {
+                    holodex::model::VideoChannel::Min(c) => c.name.clone(),
+                    holodex::model::VideoChannel::Id(_) => String::new(),
+                }),
                 viewer_count,
                 start_time,
                 priority: None,
@@ -215,7 +221,7 @@ impl HolodexService {
       let filter = VideoFilterBuilder::default()
           .status(&[VideoStatus::Live])
           .video_type(VideoType::Stream)
-          .channel_id(channel_id.clone())
+          .channel_id(channel_id.clone().parse::<holodex::model::id::ChannelId>().unwrap())
           .limit(limit)
           .build();
 
@@ -226,7 +232,7 @@ impl HolodexService {
           .await
           .map_err(|e| HolodexError::Network(e.to_string()))?;
 
-      let sources: Vec<StreamSource> = videos
+let sources: Vec<StreamSource> = videos
           .into_iter()
           .map(|video| {
               let url = format!("https://www.youtube.com/watch?v={}", video.id);
@@ -234,18 +240,21 @@ impl HolodexService {
               let viewer_count = live_info.live_viewers.map(|v| v as u64);
               let start_time = live_info.start_scheduled.map(|s| s.timestamp() as i64);
 
-StreamSource {
-                url,
-                title: Some(video.title),
-                platform: Some("holodex".to_string()),
-                channel_id: Some(video.channel.id().to_string()),
-                channel: Some(video.channel.english_name.to_string()),
-                viewer_count,
-                start_time,
-                priority: None,
-                is_live: true,
-                ..Default::default()
-            }
+              StreamSource {
+                  url,
+                  title: Some(video.title),
+                  platform: Some("holodex".to_string()),
+                  channel_id: Some(video.channel.id().to_string()),
+                  channel: Some(match &video.channel {
+                      holodex::model::VideoChannel::Min(c) => c.name.clone(),
+                      holodex::model::VideoChannel::Id(_) => String::new(),
+                  }),
+                  viewer_count,
+                  start_time,
+                  priority: None,
+                  is_live: true,
+                  ..Default::default()
+              }
           })
           .collect();
 
@@ -350,18 +359,21 @@ StreamSource {
                     .start_scheduled
                     .map(|s| s.timestamp() as i64);
 
-                StreamSource {
-                    url,
-                    title: Some(video.title),
-                    platform: Some("holodex".to_string()),
-                    channel_id: Some(video.channel.id().to_string()),
-                    channel: None,
-                    viewer_count,
-                    start_time,
-                    priority: None,
-                    is_live,
-                    ..Default::default()
-                }
+StreamSource {
+                url,
+                title: Some(video.title),
+                platform: Some("holodex".to_string()),
+                channel_id: Some(video.channel.id().to_string()),
+                channel: Some(match &video.channel {
+                    holodex::model::VideoChannel::Min(c) => c.name.clone(),
+                    holodex::model::VideoChannel::Id(_) => String::new(),
+                }),
+                viewer_count,
+                start_time,
+                priority: None,
+                is_live: true,
+                ..Default::default()
+            }
             })
             .collect();
 

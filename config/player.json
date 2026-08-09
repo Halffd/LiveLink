@@ -1,0 +1,81 @@
+{
+  "defaultQuality": "best",
+  "defaultVolume": 0,
+  "windowMaximized": true,
+  "maxStreams": 2,
+  "autoStart": true,
+  "auto_refresh_interval_seconds": 60,
+  "watched_clear_hours": 10,
+  "force_player": false,
+  "disableHeartbeat": true,
+  "use_locks": true,
+  "logging": {
+    "enabled": true,
+    "level": "info",
+    "maxSizeMB": 50,
+    "maxFiles": 5
+  },
+  "screens": [
+    {
+      "id": 1,
+      "screen": 1,
+      "enabled": true,
+      "width": 1920,
+      "height": 1080,
+      "x": 1366,
+      "y": 0,
+      "volume": 0,
+      "quality": "best",
+      "windowMaximized": true,
+      "playerType": "both",
+      "primary": true,
+      "sources": [
+        { "type": "holodex_favorites", "enabled": true, "priority": 1, "limit": 100 },
+        { "type": "youtube_favorites", "enabled": true, "priority": 2, "limit": 50 },
+        { "type": "holodex_orgs_priority", "enabled": true, "priority": 3, "limit": 200 },
+        { "type": "twitch_favorites", "enabled": true, "priority": 4, "limit": 30 }
+      ],
+      "sorting": {
+        "rules": [
+          { "field": "viewerCount", "order": "desc" },
+          { "field": "isLive", "order": "desc" }
+        ]
+      },
+      "refresh": 300,
+      "auto_start": true,
+      "skip_watched_streams": false
+    },
+    {
+      "id": 2,
+      "screen": 2,
+      "enabled": true,
+      "width": 1366,
+      "height": 768,
+      "x": 0,
+      "y": 312,
+      "volume": 0,
+      "quality": "best",
+      "windowMaximized": true,
+      "playerType": "both",
+      "primary": false,
+      "sources": [
+        { "type": "twitch_favorites", "enabled": true, "priority": 1, "limit": 30 },
+        { "type": "holodex_favorites", "enabled": true, "priority": 1, "limit": 50 },
+        { "type": "twitch_followed", "enabled": true, "priority": 2, "limit": 50 },
+        { "type": "twitch_vtuber_tag", "enabled": true, "priority": 3, "limit": 50 },
+        { "type": "twitch_anime_tag", "enabled": true, "priority": 4, "limit": 50 },
+        { "type": "holodex_twitch_independents", "enabled": true, "priority": 5, "limit": 50 },
+        { "type": "twitch_top", "enabled": true, "priority": 6, "limit": 50 }
+      ],
+      "sorting": {
+        "rules": [
+          { "field": "viewerCount", "order": "desc" },
+          { "field": "isLive", "order": "desc" }
+        ]
+      },
+      "refresh": 300,
+      "auto_start": true,
+      "skip_watched_streams": false
+    }
+  ]
+}
