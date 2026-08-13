@@ -164,6 +164,8 @@ pub struct PlayerConfig {
     pub use_locks: bool,
     #[serde(alias = "mpvConfigDir", default)]
     pub mpv_config_dir: Option<String>,
+    #[serde(alias = "mpvYoutubeCookies", default)]
+    pub mpv_youtube_cookies: Option<String>,
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
@@ -273,6 +275,8 @@ pub struct MpvConfig {
     pub cursor: bool,
     #[serde(default)]
     pub no_cursor: bool,
+    #[serde(default)]
+    pub youtube_cookies: Option<String>,
     #[serde(flatten)]
     pub extra: HashMap<String, serde_json::Value>,
 }
@@ -719,13 +723,15 @@ impl ConfigLoader {
             .unwrap_or_default();
         let organizations = streams_data.map(|s| s.organizations).unwrap_or_default();
 
-        let player: PlayerConfig = self
-            .try_load_json_file("player.json")
-            .unwrap_or_else(|| self.default_player_config());
-
         let mpv: MpvConfig = self
             .try_load_json_file("mpv.json")
             .unwrap_or_else(|| self.default_mpv_config());
+
+        let player: PlayerConfig = self.try_load_json_file("player.json").unwrap_or_else(|| {
+            let mut config = self.default_player_config();
+            config.mpv_youtube_cookies = mpv.youtube_cookies.clone();
+            config
+        });
 
         let streamlink: StreamlinkConfig = self
             .try_load_json_file("streamlink.json")
@@ -845,6 +851,7 @@ impl ConfigLoader {
             watched_clear_hours: 10,
             use_locks: true,
             mpv_config_dir: None,
+            mpv_youtube_cookies: None,
             logging: LoggingConfig {
                 enabled: true,
                 level: "info".to_string(),
@@ -910,6 +917,7 @@ impl ConfigLoader {
             priority: "normal".to_string(),
             gpu_context: "auto".to_string(),
             config_dir: None,
+            youtube_cookies: None,
             extra: HashMap::new(),
             ..Default::default()
         }

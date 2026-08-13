@@ -3,6 +3,10 @@ use crate::services::holodex::QueryOptions;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+fn safe_substring(s: &str, max_len: usize) -> String {
+    s.chars().take(max_len).collect()
+}
+
 #[derive(serde::Deserialize)]
 struct HelixResponse {
     data: Vec<TwitchStream>,
@@ -151,23 +155,23 @@ impl TwitchService {
             data: Vec<TwitchStream>,
         }
 
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct TwitchStream {
-            id: String,
-            user_id: String,
-            user_login: String,
-            user_name: String,
-            game_id: String,
-            game_name: String,
-            #[serde(rename = "type")]
-            type_: String,
-            title: String,
-            viewer_count: u64,
-            started_at: String,
-            language: String,
-            thumbnail_url: String,
-        }
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TwitchStream {
+    id: Option<String>,
+    user_id: Option<String>,
+    user_login: Option<String>,
+    user_name: Option<String>,
+    game_id: Option<String>,
+    game_name: Option<String>,
+    #[serde(rename = "type")]
+    type_: Option<String>,
+    title: Option<String>,
+    viewer_count: Option<u64>,
+    started_at: Option<String>,
+    language: Option<String>,
+    thumbnail_url: Option<String>,
+}
 
         let helix_response: HelixResponse =
             response
@@ -175,40 +179,43 @@ impl TwitchService {
                 .await
                 .map_err(|e| TwitchError::Api(e.to_string()))?;
 
-        let sources: Vec<StreamSource> = helix_response
+let sources: Vec<StreamSource> = helix_response
             .data
             .into_iter()
-            .map(|stream| {
-                let url = format!("https://twitch.tv/{}", stream.user_login);
+            .filter_map(|stream| {
+                let user_login = stream.user_login?;
+                let user_id = stream.user_id?;
+                let title = stream.title?;
+                let url = format!("https://twitch.tv/{}", user_login);
                 debug!(
-                    channel = %stream.user_login,
-                    title = %stream.title,
-                    viewers = stream.viewer_count,
+                    channel = %user_login,
+                    title = %title,
+                    viewers = stream.viewer_count.unwrap_or(0),
                     "Found live stream"
                 );
 
                 // Parse start time from ISO8601
-                let start_time = chrono::DateTime::parse_from_rfc3339(&stream.started_at)
-                    .ok()
-                    .map(|dt| dt.timestamp());
+                let start_time = stream.started_at.as_ref().and_then(|s| {
+                    chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+                });
 
-                StreamSource {
+                Some(StreamSource {
                     url,
-                    title: Some(stream.title),
+                    title: Some(title),
                     platform: Some("twitch".to_string()),
-                    channel_id: Some(stream.user_id),
-                    channel: Some(stream.user_login),
-                    viewer_count: Some(stream.viewer_count),
+                    channel_id: Some(user_id),
+                    channel: Some(user_login),
+                    viewer_count: Some(stream.viewer_count.unwrap_or(0)),
                     start_time,
                     priority: None,
                     is_live: true,
                     ..Default::default()
-                }
+                })
             })
             .collect();
 
 info!(count = sources.len(), "Fetched live streams from Twitch");
-    Ok(sources)
+Ok(sources)
   }
 
   pub async fn query(&mut self, options: &QueryOptions) -> Result<Vec<StreamSource>, TwitchError> {
@@ -252,25 +259,25 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
     #[derive(serde::Deserialize)]
     struct HelixResponse {
       data: Vec<TwitchSearchChannel>,
-    }
-
+}
+ 
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     #[allow(unused)]
     struct TwitchSearchChannel {
-      broadcaster_login: String,
-      display_name: String,
-      game_id: Option<String>,
-      game_name: Option<String>,
-      is_live: Option<bool>,
-      tags: Option<Vec<String>>,
-      thumbnail_url: Option<String>,
-      title: Option<String>,
-      started_at: Option<String>,
+        broadcaster_login: Option<String>,
+        display_name: String,
+        game_id: Option<String>,
+        game_name: Option<String>,
+        is_live: Option<bool>,
+        tags: Option<Vec<String>>,
+        thumbnail_url: Option<String>,
+        title: Option<String>,
+        started_at: Option<String>,
     }
-
-    let helix_response: HelixResponse = serde_json::from_str(&text)
-      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, &text[..text.len().min(500)])))?;
+ 
+let helix_response: HelixResponse = serde_json::from_str(&text)
+      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, safe_substring(&text, 500))))?;
 
     let search_lower = options.search.as_ref().map(|s| s.to_lowercase());
     let tag_filter = options.tag.as_ref().map(|t| t.to_lowercase());
@@ -294,25 +301,26 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
         }
         true
       })
-      .map(|ch| {
-        let url = format!("https://twitch.tv/{}", ch.broadcaster_login);
+.map(|ch| {
+        let broadcaster_login = ch.broadcaster_login.clone().unwrap_or_default();
+        let url = format!("https://twitch.tv/{}", broadcaster_login);
         let start_time = ch.started_at.as_ref().and_then(|s| {
-          chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
         });
 
         StreamSource {
-          url,
-          title: ch.title,
-          platform: Some("twitch".to_string()),
-          channel_id: None,
-          channel: Some(ch.broadcaster_login),
-          viewer_count: None,
-          start_time,
-          priority: None,
-          is_live: ch.is_live.unwrap_or(false),
-          ..Default::default()
+            url,
+            title: ch.title,
+            platform: Some("twitch".to_string()),
+            channel_id: None,
+            channel: Some(broadcaster_login),
+            viewer_count: None,
+            start_time,
+            priority: None,
+            is_live: ch.is_live.unwrap_or(false),
+            ..Default::default()
         }
-      })
+    })
       .collect();
 
     info!(count = sources.len(), "Searched streams from Twitch");
@@ -435,28 +443,28 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
       data: Vec<TwitchSearchChannel>,
     }
 
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    #[allow(unused)]
-    struct TwitchSearchChannel {
-      broadcaster_login: String,
-      display_name: String,
-      game_id: Option<String>,
-      game_name: Option<String>,
-      is_live: Option<bool>,
-      tags: Option<Vec<String>>,
-      thumbnail_url: Option<String>,
-      title: Option<String>,
-      started_at: Option<String>,
-    }
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+#[allow(unused)]
+struct TwitchSearchChannel {
+    broadcaster_login: Option<String>,
+    display_name: Option<String>,
+    game_id: Option<String>,
+    game_name: Option<String>,
+    is_live: Option<bool>,
+    tags: Option<Vec<String>>,
+    thumbnail_url: Option<String>,
+    title: Option<String>,
+    started_at: Option<String>,
+}
 
-    let helix_response: HelixResponse = serde_json::from_str(&text)
-      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, &text[..text.len().min(500)])))?;
-
+let helix_response: HelixResponse = serde_json::from_str(&text)
+      .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, safe_substring(&text, 500))))?;
+ 
     let search_lower = "".to_string();
     let tag_filter = Some("vtuber".to_string());
 
-    let sources: Vec<StreamSource> = helix_response
+let sources: Vec<StreamSource> = helix_response
       .data
       .into_iter()
       .filter(|ch| ch.is_live.unwrap_or(false))
@@ -467,24 +475,32 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
           false
         }
       })
-      .map(|ch| {
-        let url = format!("https://twitch.tv/{}", ch.broadcaster_login);
+      .filter_map(|ch| {
+        // Handle missing broadcaster_login gracefully
+        let broadcaster_login = match ch.broadcaster_login.clone() {
+          Some(login) => login,
+          None => {
+            debug!("Skipping channel with missing broadcaster_login: {:?}", ch);
+            return None;
+          }
+        };
+        let url = format!("https://twitch.tv/{}", broadcaster_login);
         let start_time = ch.started_at.as_ref().and_then(|s| {
           chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
         });
 
-        StreamSource {
+        Some(StreamSource {
           url,
           title: ch.title,
           platform: Some("twitch".to_string()),
           channel_id: None,
-          channel: Some(ch.broadcaster_login),
+          channel: Some(broadcaster_login),
           viewer_count: None,
           start_time,
           priority: None,
           is_live: ch.is_live.unwrap_or(false),
           ..Default::default()
-        }
+        })
       })
       .collect();
 
@@ -492,7 +508,7 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
     Ok(sources)
   }
 
-  /// Get top live streams
+/// Get top live streams
   pub async fn get_top_streams(&self, limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
     let access_token = self
       .access_token
@@ -517,27 +533,62 @@ info!(count = sources.len(), "Fetched live streams from Twitch");
       )));
     }
 
-    let data = response.json::<HelixResponse>().await.map_err(|e| TwitchError::Api(e.to_string()))?;
+    // Read the response text first to handle potential encoding issues
+    let text = response.text().await.map_err(|e| TwitchError::Network(e.to_string()))?;
 
-    let sources: Vec<StreamSource> = data.data.into_iter().map(|stream| {
-      let url = format!("https://twitch.tv/{}", stream.user_login);
-      let start_time = chrono::DateTime::parse_from_rfc3339(&stream.started_at)
-        .ok()
-        .map(|dt| dt.timestamp());
+    // Use safe substring for error reporting
+    let helix_response: HelixResponse = serde_json::from_str(&text)
+      .map_err(|e| TwitchError::Api(format!("Failed to parse top streams: {} - body: {}", e, safe_substring(&text, 500))))?;
 
-      StreamSource {
-        url,
-        title: Some(stream.title),
-        platform: Some("twitch".to_string()),
-        channel_id: Some(stream.user_id),
-        channel: Some(stream.user_login),
-        viewer_count: Some(stream.viewer_count),
-        start_time,
-        priority: None,
-        is_live: true,
-        ..Default::default()
-      }
-    }).collect();
+    #[derive(serde::Deserialize)]
+    struct HelixResponse {
+      data: Vec<TwitchStream>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TwitchStream {
+      id: Option<String>,
+      user_id: Option<String>,
+      user_login: Option<String>,
+      user_name: Option<String>,
+      game_id: Option<String>,
+      game_name: Option<String>,
+      #[serde(rename = "type")]
+      type_: Option<String>,
+      title: Option<String>,
+      viewer_count: Option<u64>,
+      started_at: Option<String>,
+      language: Option<String>,
+      thumbnail_url: Option<String>,
+    }
+
+    let sources: Vec<StreamSource> = helix_response
+      .data
+      .into_iter()
+      .filter_map(|stream| {
+        let user_login = stream.user_login?;
+        let user_id = stream.user_id?;
+        let title = stream.title?;
+        let url = format!("https://twitch.tv/{}", user_login);
+        let start_time = stream.started_at.as_ref().and_then(|s| {
+            chrono::DateTime::parse_from_rfc3339(s).ok().map(|dt| dt.timestamp())
+        });
+
+        Some(StreamSource {
+            url,
+            title: Some(title),
+            platform: Some("twitch".to_string()),
+            channel_id: Some(user_id),
+            channel: Some(user_login),
+            viewer_count: Some(stream.viewer_count.unwrap_or(0)),
+            start_time,
+            priority: None,
+            is_live: true,
+            ..Default::default()
+        })
+    })
+    .collect();
 
     info!(count = sources.len(), "Fetched top streams from Twitch");
     Ok(sources)

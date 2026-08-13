@@ -303,11 +303,7 @@ async fn queue_clear(
 async fn stop_all(
   State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-  for s in 0..10 {
-    if state.orchestrator.get_state(s).await == Some(StreamState::Playing) {
-      let _ = state.orchestrator.stop_stream(s).await;
-    }
-  }
+  let _ = state.orchestrator.stop_all_players().await;
   Json(serde_json::json!({ "success": true }))
 }
 

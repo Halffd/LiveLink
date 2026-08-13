@@ -120,6 +120,7 @@ pub struct StreamStartCommand {
 
 #[derive(Parser)]
 pub struct QueueShowCommand {
+    #[arg(short, long, default_value_t = 1)]
     pub screen: u32,
 }
 
@@ -257,11 +258,7 @@ pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), St
             }
         }
         Commands::StopAll => {
-            for s in [0, 1] {
-                if orchestrator.get_state(s).await == Some(crate::core::state::StreamState::Playing) {
-                    orchestrator.stop_stream(s).await?;
-                }
-            }
+            orchestrator.stop_all_players().await?;
             println!("Stopped all streams and exiting...");
         }
         Commands::List(cmd) => {
@@ -330,10 +327,9 @@ Commands::SessionToggle { screen } => {
                 }
             } else {
                 println!("All queues:");
-                for s in [0, 1] {
-                    if let Some(q) = queue.get_queue(s) {
-                        println!(" Screen {}: {} items", s, q.len());
-                    }
+                let queues = queue.get_all_queues();
+                for (s, q) in queues {
+                    println!(" Screen {}: {} items", s, q.len());
                 }
             }
         }
@@ -392,11 +388,18 @@ Commands::SessionToggle { screen } => {
         Commands::QueueShow(cmd) => {
             let queue_arc = orchestrator.get_queue();
             let queue = queue_arc.lock().await;
-            if let Some(q) = queue.get_queue(cmd.screen) {
-                println!("Queue for screen {}:", cmd.screen);
-                for (i, source) in q.sources().iter().enumerate() {
-                    let watched = if q.is_watched(source) { " [watched]" } else { "" };
-                    println!(" {}. {} ({}){}", i + 1, source.title.as_deref().unwrap_or("Unknown"), source.url, watched);
+            if cmd.screen == 0 {
+                println!("All queues:");
+                for (s, q) in queue.get_all_queues() {
+                    println!(" Screen {}: {} items", s, q.len());
+                }
+            } else {
+                if let Some(q) = queue.get_queue(cmd.screen) {
+                    println!("Queue for screen {}:", cmd.screen);
+                    for (i, source) in q.sources().iter().enumerate() {
+                        let watched = if q.is_watched(source) { " [watched]" } else { "" };
+                        println!(" {}. {} ({}){}", i + 1, source.title.as_deref().unwrap_or("Unknown"), source.url, watched);
+                    }
                 }
             }
         }

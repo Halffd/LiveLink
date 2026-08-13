@@ -66,6 +66,7 @@ pub struct PlayerConfig {
     pub screens: Vec<crate::config::ScreenConfig>,
     pub debug: bool,
     pub mpv_config_dir: Option<String>,
+    pub mpv_youtube_cookies: Option<String>,
 }
 
 impl Default for PlayerConfig {
@@ -88,6 +89,7 @@ impl Default for PlayerConfig {
             screens: vec![],
             debug: false,
             mpv_config_dir: None,
+            mpv_youtube_cookies: None,
         }
     }
 }
@@ -177,6 +179,15 @@ pub async fn start_mpv_process(
         let mut extra_args = vec![
             format!("--gpu-context={}", self.config.mpv_gpu_context),
         ];
+        if self.config.mpv_priority != "normal" {
+            extra_args.push(format!("--priority={}", self.config.mpv_priority));
+        }
+        
+        // Add YouTube cookies if configured
+        if let Some(cookies_file) = &self.config.mpv_youtube_cookies {
+            extra_args.push(format!("--ytdl-raw-options=cookies={}", cookies_file));
+        }
+        
         if self.config.mpv_priority != "normal" {
             extra_args.push(format!("--priority={}", self.config.mpv_priority));
         }
@@ -409,7 +420,7 @@ pub async fn start_mpv_process(
 
         if instance.is_mpv {
             if let Some((_, controller)) = self.mpv_controllers.remove(&key) {
-                controller.destroy();
+                controller.stop();
             }
         } else {
             if let Some(ref mut child) = instance.process {

@@ -82,8 +82,9 @@ impl Orchestrator {
             streamlink_options: config.streamlink_options.clone(),
             streamlink_http_header: std::collections::HashMap::new(),
             screens: config.screens.clone(),
-            debug: config.debug,
+debug: config.debug,
             mpv_config_dir: None,
+            mpv_youtube_cookies: config.mpv_youtube_cookies.clone(),
         };
         let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();
@@ -91,27 +92,27 @@ impl Orchestrator {
         let holodex_service = HolodexService::new(config.holodex_api_key.clone());
         let twitch_service = TwitchService::new(config.twitch_client_id.clone(), config.twitch_client_secret.clone());
         let youtube_service = YouTubeService::new(config.youtube_api_key.clone());
-let kick_service = KickService::new();
-  let niconico_service = NiconicoService::new();
-  let bilibili_service = BilibiliService::new();
-  let facebook_service = FacebookService::new();
+        let kick_service = KickService::new();
+        let niconico_service = NiconicoService::new();
+        let bilibili_service = BilibiliService::new();
+        let facebook_service = FacebookService::new();
 
-  let orchestrator = Self {
-    config: config.clone(),
-    state: Arc::new(Mutex::new(HashMap::new())),
-    locks: DashMap::new(),
-    player: Arc::new(Mutex::new(player)),
-    queue: Arc::new(Mutex::new(queue)),
-    fallback_service: Arc::new(fallback_service),
-    holodex_service: Arc::new(holodex_service),
-    twitch_service: Arc::new(Mutex::new(twitch_service)),
-    youtube_service: Arc::new(Mutex::new(youtube_service)),
-    kick_service: Arc::new(kick_service),
-    niconico_service: Arc::new(niconico_service),
-    bilibili_service: Arc::new(bilibili_service),
-    facebook_service: Arc::new(facebook_service),
-    max_streams,
-  };
+        let orchestrator = Self {
+            config: config.clone(),
+            state: Arc::new(Mutex::new(HashMap::new())),
+            locks: DashMap::new(),
+            player: Arc::new(Mutex::new(player)),
+            queue: Arc::new(Mutex::new(queue)),
+            fallback_service: Arc::new(fallback_service),
+            holodex_service: Arc::new(holodex_service),
+            twitch_service: Arc::new(Mutex::new(twitch_service)),
+            youtube_service: Arc::new(Mutex::new(youtube_service)),
+            kick_service: Arc::new(kick_service),
+            niconico_service: Arc::new(niconico_service),
+            bilibili_service: Arc::new(bilibili_service),
+            facebook_service: Arc::new(facebook_service),
+            max_streams,
+        };
 
   let orchestrator = Arc::new(orchestrator);
 
@@ -258,6 +259,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         watched_clear_hours: self.config.watched_clear_hours,
         use_locks: true,
         mpv_config_dir: None,
+        mpv_youtube_cookies: None,
         logging: crate::config::LoggingConfig {
           enabled: true,
           level: "info".to_string(),
@@ -341,6 +343,19 @@ pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
         }
         info!("All queues refreshed");
         Ok(())
+    }
+
+    pub async fn stop_all_players(&self) -> Result<(), String> {
+        for s in 0..10 {
+            if let Err(e) = self.player.lock().await.stop_all(s).await {
+                warn!(screen = s, error = %e, "Error stopping all players");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn player_service(&self) -> Arc<Mutex<PlayerService>> {
+        self.player.clone()
     }
 }
 
