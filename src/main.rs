@@ -151,6 +151,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         auto_refresh_interval_seconds: config.player.auto_refresh_interval_seconds,
         watched_clear_hours: config.player.watched_clear_hours,
         use_locks: config.player.use_locks,
+        mpv_youtube_cookies: config.player.mpv_youtube_cookies,
     };
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
@@ -165,7 +166,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         None
     };
 
-    let (run_server_after, should_auto_start, run_start_command) = match &cli {
+    let (run_server_after, should_auto_start, _run_start_command) = match &cli {
         Some(cli) => {
             let is_start_cmd = matches!(cli.command, cli::commands::Commands::Start(_));
             let is_stream_start = matches!(cli.command, cli::commands::Commands::StreamStart(_));
@@ -224,6 +225,25 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
                 _ => {}
             }
             eprintln!("No server running on port {}. Starting one...", port);
+            
+            // For read-only commands with no server: populate queues without starting streams
+            if cli_is_read_only {
+                info!("Populating queues for read-only CLI command");
+                for screen_config in &screen_configs {
+                    if screen_config.enabled && screen_config.auto_start {
+                        info!("Registering screen {} for queue population", screen_config.screen);
+                        orchestrator.register_screen(screen_config.screen).await;
+                        let streams = orchestrator.fetch_streams_for_screen(screen_config.screen).await;
+                        if !streams.is_empty() {
+                            let stream_count = streams.len();
+                            orchestrator.set_queue(screen_config.screen, streams).await;
+                            info!("Queue populated for screen {} with {} streams", screen_config.screen, stream_count);
+                        } else {
+                            warn!("No streams available for screen {}", screen_config.screen);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -301,9 +321,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         }
         // Immediately stop all players on shutdown signal
         info!("Stopping all players immediately...");
-        for s in 0..10 {
-            let _ = orchestrator.stop_stream(s).await;
-        }
+        let _ = orchestrator.stop_all_players().await;
     };
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

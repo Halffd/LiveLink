@@ -21,10 +21,27 @@ impl Orchestrator {
         queue_service.queues.insert(screen, q);
     }
 
+    pub async fn push_stream(&self, screen: u32, source: StreamSource) {
+        let url = source.url.clone();
+        let mut queue_service = self.queue.lock().await;
+        if let Some(queue) = queue_service.queues.get_mut(&screen) {
+            queue.push(source);
+            info!(screen, url = %url, "Pushed stream to queue");
+        } else {
+            // Create new queue with the source if it doesn't exist
+            let mut q = Queue::new();
+            q.push(source);
+            queue_service.queues.insert(screen, q);
+            info!(screen, url = %url, "Created new queue and pushed stream");
+        }
+    }
+
     pub async fn clear_watched(&self, screen: u32) {
         let mut queue = self.queue.lock().await;
-        queue.clear_watched(screen);
-        info!(screen, "Cleared watched history for screen");
+        if let Some(q) = queue.queues.get_mut(&screen) {
+            q.clear_watched();
+            info!(screen, "Cleared watched history for screen");
+        }
     }
 
     pub async fn clear_all_watched(&self) {

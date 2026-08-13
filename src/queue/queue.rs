@@ -98,6 +98,10 @@ impl Queue {
             .collect()
     }
 
+    pub fn push(&mut self, source: StreamSource) {
+        self.sources.push(source);
+    }
+
     pub fn filter_by_platform(&self, platform: &str) -> Vec<&StreamSource> {
         self.sources
             .iter()
