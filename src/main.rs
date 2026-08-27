@@ -229,19 +229,8 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
             // For read-only commands with no server: populate queues without starting streams
             if cli_is_read_only {
                 info!("Populating queues for read-only CLI command");
-                for screen_config in &screen_configs {
-                    if screen_config.enabled && screen_config.auto_start {
-                        info!("Registering screen {} for queue population", screen_config.screen);
-                        orchestrator.register_screen(screen_config.screen).await;
-                        let streams = orchestrator.fetch_streams_for_screen(screen_config.screen).await;
-                        if !streams.is_empty() {
-                            let stream_count = streams.len();
-                            orchestrator.set_queue(screen_config.screen, streams).await;
-                            info!("Queue populated for screen {} with {} streams", screen_config.screen, stream_count);
-                        } else {
-                            warn!("No streams available for screen {}", screen_config.screen);
-                        }
-                    }
+                if let Err(e) = orchestrator.populate_all_screens(&screen_configs).await {
+                    warn!(error = %e, "Failed to populate screens");
                 }
             }
         }
@@ -251,18 +240,18 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
     info!("should_auto_start={}, run_server_after={}", should_auto_start, run_server_after);
     if should_auto_start {
         info!("Running auto-start for {} screens", screen_configs.len());
+        
+        // First populate all screens with unique streams
+        if let Err(e) = orchestrator.populate_all_screens(&screen_configs).await {
+            warn!(error = %e, "Failed to populate screens");
+        }
+        
+        // Then start streams for each screen
         for screen_config in &screen_configs {
             if screen_config.enabled && screen_config.auto_start {
                 info!("Auto-starting screen {} (enabled={}, auto_start={})", screen_config.screen, screen_config.enabled, screen_config.auto_start);
-                orchestrator.register_screen(screen_config.screen).await;
-                let streams = orchestrator.fetch_streams_for_screen(screen_config.screen).await;
-                if !streams.is_empty() {
-                    orchestrator.set_queue(screen_config.screen, streams).await;
-                    if let Err(e) = orchestrator.start_stream(screen_config.screen).await {
-                        warn!(screen = screen_config.screen, error = %e, "Failed to auto-start screen");
-                    }
-                } else {
-                    warn!("No streams available for screen {}", screen_config.screen);
+                if let Err(e) = orchestrator.start_stream(screen_config.screen).await {
+                    warn!(screen = screen_config.screen, error = %e, "Failed to auto-start screen");
                 }
             } else {
                 info!("Skipping screen {} (enabled={}, auto_start={})", screen_config.screen, screen_config.enabled, screen_config.auto_start);
