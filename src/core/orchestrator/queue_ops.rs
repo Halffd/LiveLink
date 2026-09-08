@@ -46,7 +46,10 @@ impl Orchestrator {
             if !screen_config.enabled || !screen_config.auto_start {
                 continue;
             }
-            
+
+            // Ensure screen is registered so start_stream can find its state
+            self.register_screen(screen_config.screen).await;
+
             // Fetch streams for this screen (already filtered by its sources config)
             let streams = self.fetch_streams_for_screen(screen_config.screen).await;
             
