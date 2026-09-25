@@ -53,6 +53,14 @@ impl Orchestrator {
             ));
         }
 
+        // URLs currently playing/starting on other screens are excluded
+        let active_urls: std::collections::HashSet<String> = guard
+            .values()
+            .filter(|s| s.screen != screen)
+            .filter(|s| matches!(s.state, StreamState::Playing | StreamState::Starting))
+            .filter_map(|s| s.stream.as_ref().map(|i| i.url.clone()))
+            .collect();
+
         let mut screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if screen_state.state != StreamState::Idle {
@@ -64,7 +72,7 @@ impl Orchestrator {
 
         let stream_source = {
             let mut queue = self.queue.lock().await;
-            queue.dequeue_next(screen)
+            queue.dequeue_next_excluding(screen, &active_urls)
         };
 
         let stream_source = stream_source.ok_or_else(|| format!("No stream in queue for screen {}", screen))?;
@@ -267,9 +275,20 @@ impl Orchestrator {
             return Err(format!("Max streams ({}) reached", self.max_streams));
         }
 
+        // URLs currently playing/starting on other screens are excluded
+        let active_urls: std::collections::HashSet<String> = {
+            let guard = self.state.lock().await;
+            guard
+                .values()
+                .filter(|s| s.screen != screen)
+                .filter(|s| matches!(s.state, StreamState::Playing | StreamState::Starting))
+                .filter_map(|s| s.stream.as_ref().map(|i| i.url.clone()))
+                .collect()
+        };
+
         let stream_source = {
             let mut queue = self.queue.lock().await;
-            queue.dequeue_next(screen)
+            queue.dequeue_next_excluding(screen, &active_urls)
         };
 
         let stream_source = stream_source.ok_or_else(|| format!("No stream in queue for screen {}", screen))?;

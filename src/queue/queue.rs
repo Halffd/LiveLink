@@ -292,6 +292,23 @@ impl QueueService {
         self.queues.get_mut(&screen)?.remove_next()
     }
 
+    /// Dequeue the first stream whose URL is not in the excluded set
+    /// (e.g. URLs currently playing on other screens).
+    pub fn dequeue_next_excluding(
+        &mut self,
+        screen: u32,
+        excluded: &std::collections::HashSet<String>,
+    ) -> Option<StreamSource> {
+        let queue = self.queues.get_mut(&screen)?;
+        let pos = queue
+            .sources
+            .iter()
+            .position(|s| !excluded.contains(&s.url))?;
+        let source = queue.sources.remove(pos);
+        debug!(url = %source.url, "Dequeued stream (excluding active)");
+        Some(source)
+    }
+
     pub fn mark_stream_watched(&mut self, screen: u32, source: &StreamSource) {
         if let Some(queue) = self.queues.get_mut(&screen) {
             queue.mark_watched(source);
