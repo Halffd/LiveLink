@@ -13,6 +13,7 @@ mod failure_tests {
             max_streams,
             startup_cooldown_ms: 100,
             crash_threshold_seconds: 3,
+            use_locks: true,
             ..Default::default()
         }
     }
@@ -48,14 +49,14 @@ mod failure_tests {
         let orch = create_orchestrator_with_screens(config, 3).await;
 
         for screen in 0..3 {
-            let state = orch.get_screen_state(screen).unwrap();
+            let state = orch.get_screen_state(screen).await.unwrap();
             assert_eq!(state.state, StreamState::Idle);
         }
 
         assert_eq!(orch.count_active_streams(), 0);
 
         {
-            let screen0_state = orch.get_screen_state(0).unwrap();
+            let screen0_state = orch.get_screen_state(0).await.unwrap();
             let mut modified = screen0_state.clone();
             modified.start_stream(make_stream_info(0));
             assert_eq!(modified.state, StreamState::Starting);
@@ -70,7 +71,7 @@ mod failure_tests {
         let orch = create_orchestrator_with_screens(config, 2).await;
 
         for screen in 0..2 {
-            let state = orch.get_screen_state(screen).unwrap();
+            let state = orch.get_screen_state(screen).await.unwrap();
             assert_eq!(state.state, StreamState::Idle);
         }
     }
@@ -80,7 +81,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(screen_state.state, StreamState::Idle);
         assert!(!screen_state.state.can_stop());
 
@@ -104,7 +105,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let orch = create_orchestrator_with_screens(config, 1).await;
 
-        let mut screen_state = orch.get_screen_state(0).unwrap();
+        let mut screen_state = orch.get_screen_state(0).await.unwrap();
         let mut info = make_stream_info(0);
         info.start_time = Some(std::time::Instant::now());
 
@@ -128,7 +129,7 @@ mod failure_tests {
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
         {
-            let state = orch.get_screen_state(0).unwrap();
+            let state = orch.get_screen_state(0).await.unwrap();
             let mut modified = state.clone();
             let mut info = make_stream_info(0);
             info.start_time = Some(std::time::Instant::now() - std::time::Duration::from_secs(5));
@@ -209,7 +210,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
 
         state.start_stream(make_stream_info(0));
@@ -225,7 +226,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
 
         assert_eq!(state.state, StreamState::Idle);
@@ -239,7 +240,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
 
         state.mark_error("Test crash".to_string());
@@ -258,7 +259,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
 
         state.start_stream(make_stream_info(0));
@@ -275,7 +276,7 @@ mod failure_tests {
         let config = create_test_config(2);
         let mut orch = create_orchestrator_with_screens(config, 1).await;
 
-        let screen_state = orch.get_screen_state(0).unwrap();
+        let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
 
         assert_eq!(state.state, StreamState::Idle);
@@ -466,10 +467,11 @@ mod exit_integration_tests {
         let orch = create_orchestrator_with_screens(config, 1).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info("http://skip.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -483,7 +485,7 @@ mod exit_integration_tests {
 
         Arc::clone(&orch).handle_process_exit(exit).await;
 
-        let state = orch.get_screen_state(0).unwrap();
+        let state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(state.state, StreamState::Idle,
             "Expected Idle after soft skip (finish_stop called), got {:?}", state.state);
         assert!(state.stream.is_none(), "Stream should be cleared after soft skip");
@@ -501,10 +503,11 @@ mod exit_integration_tests {
         let orch = create_orchestrator_with_screens(config, 1).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info_recent("http://crash.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -518,7 +521,7 @@ mod exit_integration_tests {
 
         Arc::clone(&orch).handle_process_exit(exit).await;
 
-        let state = orch.get_screen_state(0).unwrap();
+        let state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(state.state, StreamState::Error,
             "Expected Error state after crash, got {:?}", state.state);
         let err = state.last_error.unwrap();
@@ -532,10 +535,11 @@ mod exit_integration_tests {
         let orch = create_orchestrator_with_screens(config, 1).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info_old("http://normal.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -549,7 +553,7 @@ mod exit_integration_tests {
 
         Arc::clone(&orch).handle_process_exit(exit).await;
 
-        let state = orch.get_screen_state(0).unwrap();
+        let state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(state.state, StreamState::Idle,
             "Expected Idle after normal end (finish_stop called), got {:?}", state.state);
         assert!(state.stream.is_none(), "Stream should be cleared after normal end");
@@ -565,10 +569,11 @@ mod exit_integration_tests {
         orch.register_screen(0).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info_recent("http://listener.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -582,7 +587,7 @@ mod exit_integration_tests {
 
         Arc::clone(&orch).handle_process_exit(exit).await;
 
-        let state = orch.get_screen_state(0).unwrap();
+        let state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(state.state, StreamState::Error,
             "Exit via handle_process_exit should transition to Error for crash, got {:?}", state.state);
     }
@@ -593,10 +598,11 @@ mod exit_integration_tests {
         let orch = create_orchestrator_with_screens(config, 1).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info("http://first.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -618,7 +624,7 @@ mod exit_integration_tests {
         };
         Arc::clone(&orch).handle_process_exit(second_exit).await;
 
-        let state = orch.get_screen_state(0).unwrap();
+        let state = orch.get_screen_state(0).await.unwrap();
         assert_eq!(state.state, StreamState::Idle,
             "Duplicate exit on already-idle screen should not panic, got {:?}", state.state);
     }
@@ -631,10 +637,11 @@ mod exit_integration_tests {
         orch.set_queue(0, vec![]).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info("http://memberonly.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -666,10 +673,11 @@ mod exit_integration_tests {
         orch.set_queue(0, vec![]).await;
 
         {
-            let mut state = orch.get_screen_state(0).unwrap().clone();
+            let mut state = orch.get_screen_state(0).await.unwrap().clone();
             state.start_stream(make_stream_info_old("http://finished.com", 0));
             state.mark_playing();
-            let mut screen_state = orch.state.get_mut(&0).unwrap();
+            let mut state_guard = orch.state.lock().await;
+            let screen_state = state_guard.get_mut(&0).unwrap();
             *screen_state = state;
         }
 
@@ -717,7 +725,6 @@ mod mock_player_tests {
     use crate::core::state::{OrchestratorConfig, ScreenState, StreamInfo, StreamState, Platform};
     use crate::queue::queue::StreamSource;
     use crate::services::player::{PlayerConfig, PlayerError, ProcessExit};
-    use crate::services::player::MpvController;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -914,5 +921,112 @@ mod mock_player_tests {
         // For mock, we verify the stop was called
         let active = mock.get_active_count().await;
         assert_eq!(active, 0);
+    }
+}
+
+#[cfg(test)]
+mod mpv_spawn_tests {
+    use crate::config::ScreenConfig;
+    use crate::services::player::{PlayerConfig, PlayerService};
+    use tokio::sync::mpsc;
+
+    /// Build a minimal PlayerConfig with two screens (1 and 2)
+    fn test_config() -> PlayerConfig {
+        let mut config = PlayerConfig::default();
+        config.mpv_extra_args = vec![
+            "--vo=null".to_string(),
+            "--ao=null".to_string(),
+            "--force-window=no".to_string(),
+            "--really-quiet".to_string(),
+        ];
+        config.screens = vec![
+            ScreenConfig {
+                id: 1,
+                screen: 1,
+                enabled: true,
+                width: 160,
+                height: 120,
+                x: 0,
+                y: 0,
+                volume: 0,
+                quality: "worst".to_string(),
+                window_maximized: false,
+                primary: true,
+                sources: vec![],
+                sorting: None,
+                refresh: 300,
+                auto_start: true,
+                skip_watched_streams: None,
+            },
+            ScreenConfig {
+                id: 2,
+                screen: 2,
+                enabled: true,
+                width: 160,
+                height: 120,
+                x: 200,
+                y: 0,
+                volume: 0,
+                quality: "worst".to_string(),
+                window_maximized: false,
+                primary: false,
+                sources: vec![],
+                sorting: None,
+                refresh: 300,
+                auto_start: true,
+                skip_watched_streams: None,
+            },
+        ];
+        config
+    }
+
+    /// Verify that starting on 2 screens spawns 2 distinct live mpv subprocesses.
+    /// Uses a lavfi testsrc URL so no network access is required and
+    /// null video/audio output so it works headless.
+    #[tokio::test]
+    async fn test_two_screens_spawn_two_mpv_processes() {
+        let (exit_tx, _exit_rx) = mpsc::channel(100);
+        let service = PlayerService::new(exit_tx, test_config());
+
+        // lavfi testsrc plays locally without network; --idle keeps process alive
+        let url = "av://lavfi:testsrc=size=160x120:rate=10";
+
+        service
+            .start_mpv_process(1, 0, url)
+            .await
+            .expect("Failed to start mpv on screen 1");
+        service
+            .start_mpv_process(2, 0, url)
+            .await
+            .expect("Failed to start mpv on screen 2");
+
+        // Both instances must be registered as running with distinct PIDs
+        let pid1 = service.get_pid(1, 0).expect("No pid for screen 1");
+        let pid2 = service.get_pid(2, 0).expect("No pid for screen 2");
+        assert_ne!(pid1, pid2, "PID collision between screens");
+        assert!(pid1 > 0 && pid2 > 0);
+
+        // Both OS processes must actually exist (kill(pid, 0) == ESRCH if dead)
+        assert!(
+            unsafe { libc::kill(pid1 as i32, 0) } == 0,
+            "mpv process {} (screen 1) not alive",
+            pid1
+        );
+        assert!(
+            unsafe { libc::kill(pid2 as i32, 0) } == 0,
+            "mpv process {} (screen 2) not alive",
+            pid2
+        );
+
+        // Also verify via /proc for independence from signal semantics
+        assert!(std::path::Path::new(&format!("/proc/{}", pid1)).exists());
+        assert!(std::path::Path::new(&format!("/proc/{}", pid2)).exists());
+
+        // Cleanup
+        service.stop(1, 0).await.expect("Failed to stop screen 1");
+        service.stop(2, 0).await.expect("Failed to stop screen 2");
+
+        assert!(!service.is_running(1, 0));
+        assert!(!service.is_running(2, 0));
     }
 }

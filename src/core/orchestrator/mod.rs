@@ -274,7 +274,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
   }
 
   #[cfg(test)]
-    pub fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
+    pub async fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
         self.state.lock().await.get(&screen).cloned()
     }
 
