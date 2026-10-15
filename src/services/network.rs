@@ -98,7 +98,7 @@ impl Default for NetworkState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
+    
     use tokio::sync::mpsc;
 
     #[test]

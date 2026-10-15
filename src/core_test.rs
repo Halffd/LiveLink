@@ -1,12 +1,12 @@
 #[cfg(test)]
 mod failure_tests {
     use crate::core::orchestrator::Orchestrator;
-    use crate::core::state::{OrchestratorConfig, ScreenState, StreamInfo, StreamState, Platform};
+    use crate::core::state::{OrchestratorConfig, StreamInfo, StreamState, Platform};
     use crate::queue::queue::StreamSource;
-    use crate::services::network::NetworkEvent;
-    use crate::services::player::ProcessExit;
+    
+    
     use std::sync::Arc;
-    use tokio::sync::Mutex;
+    
 
     fn create_test_config(max_streams: usize) -> OrchestratorConfig {
         OrchestratorConfig {
@@ -126,7 +126,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_long_running_stream_not_marked_as_crash() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         {
             let state = orch.get_screen_state(0).await.unwrap();
@@ -208,7 +208,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_duplicate_start_ignored() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
@@ -224,7 +224,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_stop_from_idle_ignored() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
@@ -238,7 +238,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_error_state_transitions() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
@@ -257,7 +257,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_finish_stop_clears_stream() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
@@ -274,7 +274,7 @@ mod failure_tests {
     #[tokio::test]
     async fn test_state_machine_complete_flow() {
         let config = create_test_config(2);
-        let mut orch = create_orchestrator_with_screens(config, 1).await;
+        let orch = create_orchestrator_with_screens(config, 1).await;
 
         let screen_state = orch.get_screen_state(0).await.unwrap();
         let mut state = screen_state.clone();
@@ -344,17 +344,6 @@ async fn create_orchestrator_with_screens(config: OrchestratorConfig, screen_cou
 
     orch
 }
-
-    #[derive(Debug, Clone)]
-    struct TestError;
-
-    impl std::fmt::Display for TestError {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "TestError")
-        }
-    }
-
-    impl std::error::Error for TestError {}
 }
 
 #[cfg(test)]
@@ -372,19 +361,6 @@ mod exit_integration_tests {
             startup_cooldown_ms: 10,
             crash_threshold_seconds: 3,
             skip_threshold_seconds: 2,
-            ..Default::default()
-        }
-    }
-
-    fn make_stream_source(url: &str, screen: u32) -> StreamSource {
-        StreamSource {
-            url: url.to_string(),
-            title: Some(format!("Stream {}", screen)),
-            platform: Some("twitch".to_string()),
-            channel_id: Some(format!("ch{}", screen)),
-            viewer_count: Some(100),
-            priority: Some(1),
-            is_live: true,
             ..Default::default()
         }
     }
@@ -722,22 +698,24 @@ mod exit_integration_tests {
 #[cfg(test)]
 mod mock_player_tests {
     use crate::core::orchestrator::Orchestrator;
-    use crate::core::state::{OrchestratorConfig, ScreenState, StreamInfo, StreamState, Platform};
+    use crate::core::state::OrchestratorConfig;
     use crate::queue::queue::StreamSource;
-    use crate::services::player::{PlayerConfig, PlayerError, ProcessExit};
+    use crate::services::player::{PlayerError, ProcessExit};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    
     use tokio::sync::mpsc;
 
     /// A mock player that doesn't spawn real processes
     #[derive(Clone)]
     struct MockPlayer {
         instances: Arc<Mutex<HashMap<(u32, u32), MockInstance>>>,
+        #[allow(dead_code)] // mirrors PlayerService's real event channel
         exit_sender: mpsc::Sender<ProcessExit>,
         should_fail_start: Arc<Mutex<bool>>,
     }
 
+    #[allow(dead_code)] // fields mirror PlayerInstance
     struct MockInstance {
         screen: u32,
         instance_id: u32,
@@ -879,7 +857,7 @@ mod mock_player_tests {
             ..Default::default()
         };
         
-        let (orch, mock) = create_orchestrator_with_mock_player(config, 2).await;
+        let (_orch, mock) = create_orchestrator_with_mock_player(config, 2).await;
         
         // Register a stream in the queue
         let stream = StreamSource {
@@ -908,7 +886,7 @@ mod mock_player_tests {
 
     #[tokio::test]
     async fn test_mock_player_exit_callback() {
-        let (exit_tx, mut exit_rx) = tokio::sync::mpsc::channel(100);
+        let (exit_tx, _exit_rx) = tokio::sync::mpsc::channel(100);
         let mock = MockPlayer::new(exit_tx);
         
         mock.start(0, 0, "http://test.com").await.unwrap();

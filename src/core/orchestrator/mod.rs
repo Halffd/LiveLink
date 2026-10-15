@@ -1,4 +1,5 @@
 pub mod clone_impl;
+pub mod embedded_ops;
 pub mod fetch_ops;
 pub mod lock_ops;
 pub mod player_ops;
@@ -279,16 +280,6 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
   #[cfg(test)]
     pub async fn get_screen_state(&self, screen: u32) -> Option<ScreenState> {
         self.state.lock().await.get(&screen).cloned()
-    }
-
-    #[cfg(test)]
-    pub fn queue(&self) -> &Arc<Mutex<QueueService>> {
-        &self.queue
-    }
-
-    #[cfg(test)]
-    pub fn locks(&self) -> &DashMap<u32, Arc<Mutex<()>>> {
-        &self.locks
     }
 
     pub fn get_queue(&self) -> Arc<Mutex<QueueService>> {

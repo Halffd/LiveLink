@@ -651,14 +651,17 @@ Commands::Diagnostics => {
     std::thread::spawn(move || {
       let rt = tokio::runtime::Runtime::new().unwrap();
       rt.block_on(async {
-        let app = crate::ui::LiveLinkApp::new(orch);
+        let options = eframe::NativeOptions {
+          viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
+          ..Default::default()
+        };
         eframe::run_native(
           "LiveLink",
-          eframe::NativeOptions::default(),
-          Box::new(|_cc| Ok(Box::new(app))),
+          options,
+          Box::new(|cc| Ok(Box::new(crate::ui::LiveLinkApp::new(orch, cc)))),
         ).unwrap();
       });
-});
+    });
     println!("UI launched");
   }
   Commands::Config(cmd) => {
