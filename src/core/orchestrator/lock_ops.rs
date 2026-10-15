@@ -4,26 +4,6 @@ use tracing::debug;
 
 use super::Orchestrator;
 
-/// A no-op mutex that doesn't actually lock - used when locks are disabled
-struct NoOpMutex;
-
-impl NoOpMutex {
-    async fn lock(&self) -> NoOpLock {
-        NoOpLock
-    }
-}
-
-/// A no-op lock guard that does nothing
-struct NoOpLock;
-
-impl std::ops::Deref for NoOpLock {
-    type Target = ();
-
-    fn deref(&self) -> &Self::Target {
-        &()
-    }
-}
-
 impl Orchestrator {
     pub async fn get_or_create_lock(&self, screen: u32) -> Arc<Mutex<()>> {
         if !self.config.use_locks {

@@ -1,7 +1,7 @@
 use axum::{
   extract::State,
   http::StatusCode,
-  response::{IntoResponse, Json},
+  response::Json,
   routing::{get, post},
   Router,
 };
@@ -339,7 +339,7 @@ async fn refresh(
 async fn save_config(
   State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-  if let Err(e) = state.orchestrator.save_config("config") {
+  if let Err(_) = state.orchestrator.save_config("config") {
     return Err(StatusCode::INTERNAL_SERVER_ERROR);
   }
   Ok(Json(serde_json::json!({ "success": true })))

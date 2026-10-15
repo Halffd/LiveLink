@@ -78,10 +78,12 @@ impl NetworkMonitor {
         }
     }
 
+    #[allow(dead_code)]
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_waiters();
     }
 
+    #[allow(dead_code)]
     pub fn get_state(&self) -> NetworkState {
         self.state
     }

@@ -154,6 +154,7 @@ impl PlayerService {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_defaults(event_sender: mpsc::Sender<ProcessExit>) -> Self {
         Self::new(event_sender, PlayerConfig::default())
     }
@@ -259,7 +260,7 @@ pub async fn start_mpv_process(
 
         let controller_clone = controller.clone();
         let url_owned = url.to_string();
-        let play_result = tokio::task::spawn_blocking(move || {
+        let _play_result = tokio::task::spawn_blocking(move || {
             controller_clone.play(&url_owned)
                 .map_err(|e| PlayerError::Mpv(e.to_string()))
         }).await
@@ -420,7 +421,7 @@ pub async fn start_mpv_process(
 
         if instance.is_mpv {
             if let Some((_, controller)) = self.mpv_controllers.remove(&key) {
-                controller.stop();
+                let _ = controller.stop();
             }
         } else {
             if let Some(ref mut child) = instance.process {
@@ -472,10 +473,12 @@ pub async fn start_mpv_process(
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn is_running(&self, screen: u32, instance_id: u32) -> bool {
         self.instances.contains_key(&(screen, instance_id))
     }
 
+    #[allow(dead_code)]
     pub fn get_pid(&self, screen: u32, instance_id: u32) -> Option<u32> {
         let key = (screen, instance_id);
         if let Some(inst) = self.instances.get(&key) {
@@ -489,7 +492,7 @@ pub async fn start_mpv_process(
         }
     }
 
-/// Poll for process exits and send events for any that have terminated.
+    #[allow(dead_code)]
     pub fn poll_exits(&self) {
         let keys: Vec<(u32, u32)> = self.instances.iter().map(|r| *r.key()).collect();
         let instances = self.instances.clone();
@@ -544,7 +547,6 @@ pub async fn start_mpv_process(
                         if mpv_time > 0.0 {
                             playback_time = mpv_time;
                         }
-                        c.destroy();
                     }
                 }
                 let sender = self.event_sender.clone();
@@ -565,6 +567,7 @@ pub async fn start_mpv_process(
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_playback_time(&self, screen: u32, instance_id: u32) -> Option<f64> {
         self.instances.get(&(screen, instance_id)).map(|inst| inst.playback_time)
     }
@@ -600,6 +603,7 @@ pub async fn start_mpv_process(
     }
 
     /// Send a property set command to mpv via IPC
+    #[allow(dead_code)]
     pub async fn set_property(&self, screen: u32, instance_id: u32, property: &str, value: &str) -> Result<(), PlayerError> {
         let key = (screen, instance_id);
         let is_mpv = self.instances.get(&key).map(|i| i.is_mpv).unwrap_or(false);
@@ -661,6 +665,7 @@ pub async fn start_mpv_process(
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn shutdown(&self) {
         self.shutdown_notify.notify_waiters();
     }

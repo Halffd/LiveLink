@@ -9,11 +9,11 @@ mod ui;
 #[cfg(test)]
 mod core_test;
 
-use config::{ConfigLoader, Env};
+use config::ConfigLoader;
 use core::orchestrator::Orchestrator;
 use core::state::OrchestratorConfig;
 use services::network::{NetworkEvent, NetworkMonitor};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tokio::sync::mpsc;
@@ -130,6 +130,8 @@ async fn main() {
         twitch_client_secret: config.twitch.client_secret,
         youtube_api_key: config.youtube.api_key,
         mpv_ipc_dir: mpv_config_dir,
+        mpv_path: config.mpv.path.clone(),
+        mpv_config_dir: config.mpv.config_dir.clone(),
         mpv_gpu_context: config.mpv.gpu_context.clone(),
         mpv_priority: config.mpv.priority.clone(),
         mpv_extra_args: config.mpv.to_args(),

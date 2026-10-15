@@ -20,12 +20,11 @@ use crate::services::network::{NetworkEvent, NetworkState};
 use crate::services::player::{PlayerConfig, PlayerService, ProcessExit};
 use crate::services::twitch::TwitchService;
 use crate::services::youtube::YouTubeService;
-use crate::queue::queue::StreamSource;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct Orchestrator {
     pub config: OrchestratorConfig,
@@ -60,7 +59,11 @@ impl Orchestrator {
                 "vlc" => crate::services::player::PlayerType::VlcProcess,
                 _ => crate::services::player::PlayerType::MpvProcess,
             },
-            mpv_path: "mpv".to_string(),
+            mpv_path: if config.mpv_path.is_empty() {
+                "mpv".to_string()
+            } else {
+                config.mpv_path.clone()
+            },
             streamlink_path: if config.streamlink_path.is_empty() {
                 "streamlink".to_string()
             } else {
@@ -83,7 +86,7 @@ impl Orchestrator {
             streamlink_http_header: std::collections::HashMap::new(),
             screens: config.screens.clone(),
 debug: config.debug,
-            mpv_config_dir: None,
+            mpv_config_dir: config.mpv_config_dir.clone(),
             mpv_youtube_cookies: config.mpv_youtube_cookies.clone(),
         };
         let player = PlayerService::new(exit_sender, player_config);
@@ -121,11 +124,11 @@ debug: config.debug,
     Self::exit_listener(receiver, orchestrator_for_exit).await;
   });
 
-  // Network listener - DISABLED FOR DEBUGGING
-  // let orchestrator_for_network = orchestrator.clone();
-  // tokio::spawn(async move {
-  //   Self::network_listener(network_receiver, orchestrator_for_network).await;
-  // });
+  // Network listener - recovers crashed streams when connectivity is restored
+  let orchestrator_for_network = orchestrator.clone();
+  tokio::spawn(async move {
+    Self::network_listener(network_receiver, orchestrator_for_network).await;
+  });
 
   // Auto-refresh background task - DISABLED FOR DEBUGGING
   // let orchestrator_for_refresh = orchestrator.clone();
@@ -321,20 +324,6 @@ pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
         Ok(())
     }
 
-    pub async fn start_auto_screens(&self) {
-        for screen_config in &self.config.screens {
-            if screen_config.auto_start && self.is_screen_enabled(screen_config.screen).await {
-                let streams = self.fetch_streams_for_screen(screen_config.screen).await;
-                if !streams.is_empty() {
-                    self.set_queue(screen_config.screen, streams).await;
-                    if let Err(e) = self.start_stream(screen_config.screen).await {
-                        warn!(screen = screen_config.screen, error = %e, "Failed to auto-start screen");
-                    }
-                }
-            }
-        }
-    }
-
     pub async fn refresh_all_queues(&self) -> Result<(), String> {
         for screen in [0, 1] {
             let streams = self.fetch_streams_for_screen(screen).await;
@@ -352,10 +341,6 @@ pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
             }
         }
         Ok(())
-    }
-
-    pub fn player_service(&self) -> Arc<Mutex<PlayerService>> {
-        self.player.clone()
     }
 }
 

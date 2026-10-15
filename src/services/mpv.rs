@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
-use tracing::{error, info, trace, warn};
+use tracing::{info, trace, warn};
 
 #[derive(Error, Debug)]
 #[allow(dead_code)]
@@ -129,18 +129,6 @@ impl MpvInstance {
         Ok(())
     }
 
-    pub fn pause(&mut self) -> Result<(), MpvError> {
-        self.send_ipc_command("set pause yes")?;
-        self.paused = true;
-        Ok(())
-    }
-
-    pub fn resume(&mut self) -> Result<(), MpvError> {
-        self.send_ipc_command("set pause no")?;
-        self.paused = false;
-        Ok(())
-    }
-
     pub fn stop(&mut self) -> Result<(), MpvError> {
         if let Some(pid) = self.child_pid {
             // Try graceful quit via IPC first
@@ -174,11 +162,6 @@ impl MpvInstance {
         Ok(())
     }
 
-    pub fn seek(&mut self, seconds: f64) -> Result<(), MpvError> {
-        self.send_ipc_command(&format!("seek {} relative", seconds))?;
-        Ok(())
-    }
-
     pub fn set_volume(&mut self, volume: u8) -> Result<(), MpvError> {
         self.volume = volume;
         self.send_ipc_command(&format!("set volume {}", volume))?;
@@ -187,18 +170,6 @@ impl MpvInstance {
 
     pub fn get_playback_time(&self) -> f64 {
         self.playback_time
-    }
-
-    pub fn is_paused(&self) -> bool {
-        self.paused
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.url.is_some() && self.child_pid.is_some()
-    }
-
-    pub fn current_url(&self) -> Option<&str> {
-        self.url.as_deref()
     }
 
     pub fn pid(&self) -> Option<i32> {
@@ -232,40 +203,11 @@ impl MpvInstance {
             Err(e) => Err(MpvError::Ipc(e.to_string())),
         }
     }
-
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-    pub fn x(&self) -> i32 {
-        self.x
-    }
-    pub fn y(&self) -> i32 {
-        self.y
-    }
-    pub fn volume(&self) -> u8 {
-        self.volume
-    }
-
-    pub fn destroy(&mut self) {
-        let _ = self.stop();
-    }
 }
 
 #[derive(Debug, Clone)]
 pub enum MpvEvent {
     EndFile,
-    Idle,
-    StartFile,
-    FileLoaded,
-    Pause,
-    Unpause,
-    Shutdown,
-    AudioReconfig,
-    VideoReconfig,
-    Error(String),
 }
 
 #[derive(Clone)]
@@ -334,7 +276,6 @@ impl MpvController {
                         info!("MPV process exited (wait thread)");
                         true
                     }
-                    Ok(Some(_)) => false,
                     Ok(None) => false,
                     Err(_) => {
                         warn!("Error polling mpv in wait thread");
@@ -353,20 +294,8 @@ impl MpvController {
         Ok(())
     }
 
-    pub fn pause(&self) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().pause()
-    }
-
-    pub fn resume(&self) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().resume()
-    }
-
     pub fn stop(&self) -> Result<(), MpvError> {
         self.inner.lock().unwrap().stop()
-    }
-
-    pub fn seek(&self, seconds: f64) -> Result<(), MpvError> {
-        self.inner.lock().unwrap().seek(seconds)
     }
 
     pub fn set_volume(&self, volume: u8) -> Result<(), MpvError> {
@@ -391,6 +320,7 @@ impl MpvController {
             .configure(width, height, x, y, volume)
     }
 
+    #[allow(dead_code)]
     pub fn poll_event(&self, timeout_ms: u64) -> Result<Option<MpvEvent>, MpvError> {
         self.inner.lock().unwrap().poll_event(timeout_ms)
     }
@@ -403,56 +333,8 @@ impl MpvController {
         self.inner.lock().unwrap().send_ipc_command(&full_cmd)
     }
 
-    pub fn is_paused(&self) -> bool {
-        self.inner.lock().unwrap().is_paused()
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.inner.lock().unwrap().is_playing()
-    }
-
-    pub fn current_url(&self) -> Option<String> {
-        self.inner.lock().unwrap().current_url().map(String::from)
-    }
-
     pub fn pid(&self) -> Option<i32> {
         self.inner.lock().unwrap().pid()
-    }
-
-    pub fn geometry(&self) -> (u32, u32, i32, i32) {
-        let inst = self.inner.lock().unwrap();
-        (inst.width, inst.height, inst.x, inst.y)
-    }
-
-    pub fn volume(&self) -> u8 {
-        self.inner.lock().unwrap().volume()
-    }
-
-    pub fn destroy(&self) {
-        self.inner.lock().unwrap().destroy();
-    }
-
-    pub fn run_event_loop(&self) -> std::thread::JoinHandle<()> {
-        let inner = Arc::clone(&self.inner);
-        std::thread::spawn(move || loop {
-            let event = {
-                let mut inst = match inner.lock() {
-                    Ok(i) => i,
-                    Err(_) => break,
-                };
-                match inst.poll_event(100) {
-                    Ok(Some(e)) => e,
-                    Ok(None) => continue,
-                    Err(e) => {
-                        error!("Event poll error: {}", e);
-                        break;
-                    }
-                }
-            };
-            if matches!(event, MpvEvent::EndFile) {
-                break;
-            }
-        })
     }
 }
 

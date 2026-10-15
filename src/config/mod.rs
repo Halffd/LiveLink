@@ -13,7 +13,6 @@ pub use favorites::{FavoriteChannel, FavoriteChannels, PlatformFavorites};
 #[derive(Debug, Clone, Deserialize)]
 #[allow(unused)]
 pub struct Config {
-    pub streams: Vec<StreamEntry>,
     pub organizations: Vec<String>,
     pub favorite_channels: FavoriteChannels,
     pub holodex: HolodexConfig,
@@ -226,8 +225,6 @@ pub struct MpvConfig {
     #[serde(rename = "gpu-context", default = "default_gpu_context")]
     pub gpu_context: String,
     #[serde(default)]
-    pub volume: u8,
-    #[serde(default)]
     pub border: bool,
     #[serde(default)]
     pub fullscreen: bool,
@@ -409,21 +406,6 @@ impl MpvConfig {
 
         args
     }
-
-    fn value_to_arg(&self, key: &str, value: &serde_json::Value) -> Option<String> {
-        match value {
-            serde_json::Value::Bool(b) => {
-                if *b {
-                    Some(format!("--{}", key))
-                } else {
-                    Some(format!("--{}=no", key))
-                }
-            }
-            serde_json::Value::Number(n) => Some(format!("--{}={}", key, n)),
-            serde_json::Value::String(s) => Some(format!("--{}={}", key, s)),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -591,17 +573,6 @@ impl FiltersConfig {
 
         let is_exclude_mode = self.mode == "exclude" || self.mode == "blacklist";
 
-        let matched_pattern = self
-            .title_patterns
-            .iter()
-            .any(|p| title_lower.contains(&p.to_lowercase()));
-
-        let matched_regex = self.title_patterns_regex.iter().any(|p| {
-            regex::Regex::new(p)
-                .map(|re| re.is_match(title))
-                .unwrap_or(false)
-        });
-
         // Check rules for title
         for rule in &self.rules {
             if rule.rule_type.as_deref() == Some("title") || rule.rule_type.is_none() {
@@ -645,20 +616,6 @@ impl FiltersConfig {
         } else {
             !is_exclude_mode
         }
-    }
-
-    pub fn should_filter(&self, channel_name: &str, title: &str) -> bool {
-        let channel_matches = self
-            .channel_names
-            .iter()
-            .any(|p| channel_name.to_lowercase().contains(&p.to_lowercase()));
-
-        let title_matches = self
-            .title_patterns
-            .iter()
-            .any(|p| title.to_lowercase().contains(&p.to_lowercase()));
-
-        channel_matches || title_matches
     }
 }
 
@@ -717,10 +674,6 @@ impl ConfigLoader {
         };
 
         let streams_data: Option<StreamsFile> = self.try_load_json_file("streams.json");
-        let streams = streams_data
-            .as_ref()
-            .map(|s| s.streams.clone())
-            .unwrap_or_default();
         let organizations = streams_data.map(|s| s.organizations).unwrap_or_default();
 
         let mpv: MpvConfig = self
@@ -748,7 +701,6 @@ impl ConfigLoader {
         let main_config: Option<MainConfig> = self.try_load_json_file("config.json");
 
         Config {
-            streams,
             organizations,
             favorite_channels,
             holodex: HolodexConfig {
@@ -960,36 +912,8 @@ impl Default for ConfigLoader {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub(crate) struct StreamEntry {
-    pub id: u32,
-    pub screen: u32,
-    #[serde(default = "default_true_bool")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub sources: Vec<SourceConfig>,
-    #[serde(default)]
-    pub sorting: Option<SortingConfig>,
-    #[serde(default)]
-    pub refresh: Option<u32>,
-    #[serde(default, alias = "autoStart")]
-    pub auto_start: Option<bool>,
-    #[serde(default, alias = "skipWatchedStreams")]
-    pub skip_watched_streams: Option<bool>,
-}
-
-fn default_true_bool() -> bool {
-    true
-}
-
 #[derive(Debug, Deserialize)]
 struct StreamsFile {
-    #[serde(default, alias = "skipWatchedStreams")]
-    pub skip_watched_streams: Option<bool>,
-    #[serde(default, alias = "sorting")]
-    pub sorting: Option<SortingConfig>,
-    pub streams: Vec<StreamEntry>,
-    #[serde(default)]
     pub organizations: Vec<String>,
 }
 

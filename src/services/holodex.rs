@@ -77,59 +77,6 @@ impl HolodexService {
         !self.api_key.is_empty()
     }
 
-    pub async fn get_live_streams(&self) -> Result<Vec<StreamSource>, HolodexError> {
-        let client_guard = self.client.read().await;
-        let client = client_guard
-            .as_ref()
-            .ok_or_else(|| HolodexError::Config("Holodex client not initialized".into()))?;
-
-        let filter = VideoFilterBuilder::default()
-            .status(&[VideoStatus::Live])
-            .video_type(VideoType::Stream)
-            .build();
-
-        let video_stream = client.video_stream(&filter);
-
-        let videos: Vec<holodex::model::Video> = video_stream
-            .try_collect()
-            .await
-            .map_err(|e| HolodexError::Network(e.to_string()))?;
-
-        let sources: Vec<StreamSource> = videos
-            .into_iter()
-            .map(|video| {
-                let url = format!("https://www.youtube.com/watch?v={}", video.id);
-
-                trace!(channel_id = %video.channel.id(), title = %video.title, "Found live stream");
-
-                let live_info = video.live_info;
-                let viewer_count = live_info.live_viewers.map(|v| v as u64);
-                let start_time = live_info
-                    .start_scheduled
-                    .map(|s| s.timestamp() as i64);
-
-StreamSource {
-                url,
-                title: Some(video.title),
-                platform: Some("holodex".to_string()),
-                channel_id: Some(video.channel.id().to_string()),
-                channel: Some(match &video.channel {
-                    holodex::model::VideoChannel::Min(c) => c.name.clone(),
-                    holodex::model::VideoChannel::Id(_) => String::new(),
-                }),
-                viewer_count,
-                start_time,
-                priority: None,
-                is_live: true,
-                ..Default::default()
-            }
-            })
-.collect();
-
-        info!(count = sources.len(), "Fetched live streams from Holodex");
-        Ok(sources)
-    }
-
     /// Get live streams from specific organizations in priority order
   pub async fn get_live_streams_by_orgs(&self, orgs: &[String], limit_per_org: u32) -> Result<Vec<StreamSource>, HolodexError> {
     let mut all_sources = Vec::new();
@@ -371,7 +318,7 @@ StreamSource {
                 viewer_count,
                 start_time,
                 priority: None,
-                is_live: true,
+                is_live,
                 ..Default::default()
             }
             })

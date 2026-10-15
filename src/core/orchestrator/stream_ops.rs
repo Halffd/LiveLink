@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::core::state::{Platform, StreamInfo, StreamState};
 use crate::queue::queue::StreamSource;
@@ -7,38 +6,6 @@ use crate::services::player::ProcessExit;
 use tracing::{debug, error, info, warn};
 
 use super::Orchestrator;
-
-fn extract_youtube_video_id(url: &str) -> Option<String> {
-    let patterns = [
-        r"(?:youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})",
-        r"(?:youtu\.be/)([a-zA-Z0-9_-]{11})",
-        r"(?:youtube\.com/embed/)([a-zA-Z0-9_-]{11})",
-        r"(?:youtube\.com/v/)([a-zA-Z0-9_-]{11})",
-    ];
-    for pattern in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(captures) = re.captures(url) {
-                return captures.get(1).map(|m| m.as_str().to_string());
-            }
-        }
-    }
-    None
-}
-
-fn extract_twitch_channel(url: &str) -> Option<String> {
-    let patterns = [
-        r"(?:twitch\.tv/)([a-zA-Z0-9_]+)",
-        r"(?:twitch\.tv/([a-zA-Z0-9_]+)\/?)",
-    ];
-    for pattern in patterns {
-        if let Ok(re) = regex::Regex::new(pattern) {
-            if let Some(captures) = re.captures(url) {
-                return captures.get(1).map(|m| m.as_str().to_string());
-            }
-        }
-    }
-    None
-}
 
 impl Orchestrator {
     pub async fn start_stream(&self, screen: u32) -> Result<(), String> {
@@ -61,7 +28,7 @@ impl Orchestrator {
             .filter_map(|s| s.stream.as_ref().map(|i| i.url.clone()))
             .collect();
 
-        let mut screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
+        let screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if screen_state.state != StreamState::Idle {
             return Err(format!(
@@ -99,8 +66,6 @@ impl Orchestrator {
 
         screen_state.start_stream(stream_info);
 
-        drop(screen_state);
-
         let player = self.player.clone();
         let player_screen = screen;
         let player_instance = 0;
@@ -126,7 +91,7 @@ impl Orchestrator {
 
     pub async fn stop_stream_locked(&self, screen: u32) -> Result<(), String> {
         let mut guard = self.state.lock().await;
-        let mut screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
+        let screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if !screen_state.state.can_stop() {
             return Err(format!(
@@ -138,8 +103,9 @@ impl Orchestrator {
         let url = screen_state.stream.as_ref().map(|s| s.url.clone());
 
         screen_state.stop_stream();
+        screen_state.finish_stop();
 
-        drop(screen_state);
+        drop(guard);
 
         let player = self.player.clone();
         tokio::spawn(async move {
@@ -148,11 +114,6 @@ impl Orchestrator {
                 warn!(screen, error = %e, "Failed to stop process");
             }
         });
-
-        let mut guard = self.state.lock().await;
-        if let Some(screen_state) = guard.get_mut(&screen) {
-            screen_state.finish_stop();
-        }
 
         if let Some(url) = url {
             let mut queue = self.queue.lock().await;
@@ -173,7 +134,7 @@ impl Orchestrator {
         let _guard = lock.lock().await;
 
         let mut guard = self.state.lock().await;
-        let mut screen_state = match guard.get_mut(&screen) {
+        let screen_state = match guard.get_mut(&screen) {
             Some(s) => s,
             None => {
                 let keys: Vec<_> = guard.keys().collect();
@@ -240,8 +201,6 @@ impl Orchestrator {
         } else {
             let url_for_queue = url.clone();
             screen_state.finish_stop();
-
-            drop(screen_state);
 
             if !url_for_queue.is_empty() {
                 let mut queue = self.queue.lock().await;
@@ -322,86 +281,5 @@ impl Orchestrator {
 
         info!(screen, instance_id, "Stream instance stopped");
         Ok(())
-    }
-
-    pub fn create_stream_source_from_url(&self, url: &str) -> Option<StreamSource> {
-        if url.contains("kick.com") {
-            let channel = url.split('/').last().unwrap_or("unknown");
-            Some(StreamSource {
-                url: url.to_string(),
-                title: Some(format!("Kick Stream: {}", channel)),
-                platform: Some("kick".to_string()),
-                channel_id: Some(channel.to_string()),
-                channel: Some(channel.to_string()),
-                viewer_count: Some(0),
-                priority: Some(1),
-                is_live: true,
-                ..Default::default()
-            })
-        } else if url.contains("youtube.com/watch") || url.contains("youtu.be") {
-            let video_id = extract_youtube_video_id(url)?;
-            Some(StreamSource {
-                url: url.to_string(),
-                title: Some(format!("YouTube Video: {}", video_id)),
-                platform: Some("youtube".to_string()),
-                channel_id: Some(video_id.to_string()),
-                channel: Some(video_id.to_string()),
-                viewer_count: Some(0),
-                priority: Some(1),
-                is_live: true,
-                ..Default::default()
-            })
-        } else if url.contains("twitch.tv") {
-            let channel = extract_twitch_channel(url)?;
-            Some(StreamSource {
-                url: url.to_string(),
-                title: Some(format!("Twitch: {}", channel)),
-                platform: Some("twitch".to_string()),
-                channel_id: Some(channel.to_string()),
-                channel: Some(channel.to_string()),
-                viewer_count: Some(0),
-                priority: Some(1),
-                is_live: true,
-                ..Default::default()
-            })
-        } else {
-            Some(StreamSource {
-                url: url.to_string(),
-                title: Some(format!("Direct Stream: {}", url)),
-                platform: Some("direct".to_string()),
-                channel_id: Some(url.to_string()),
-                channel: Some(url.to_string()),
-                viewer_count: Some(0),
-                priority: Some(1),
-                is_live: true,
-                ..Default::default()
-            })
-        }
-    }
-
-    pub async fn validate_stream(&self, url: &str) -> bool {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
-            .build()
-            .ok();
-
-        if let Some(client) = client {
-            match client.head(url).send().await {
-                Ok(response) => {
-                    if url.contains("youtube.com") || url.contains("youtu.be") {
-                        return response.status().is_success() || response.status().is_redirection();
-                    }
-                    if url.contains("twitch.tv") {
-                        return response.status().is_success();
-                    }
-                    return response.status().is_success();
-                }
-                Err(e) => {
-                    debug!(url, error = %e, "Stream validation failed");
-                    return false;
-                }
-            }
-        }
-        false
     }
 }

@@ -158,19 +158,11 @@ impl TwitchService {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TwitchStream {
-    id: Option<String>,
     user_id: Option<String>,
     user_login: Option<String>,
-    user_name: Option<String>,
-    game_id: Option<String>,
-    game_name: Option<String>,
-    #[serde(rename = "type")]
-    type_: Option<String>,
     title: Option<String>,
     viewer_count: Option<u64>,
     started_at: Option<String>,
-    language: Option<String>,
-    thumbnail_url: Option<String>,
 }
 
         let helix_response: HelixResponse =
@@ -354,7 +346,7 @@ let helix_response: HelixResponse = serde_json::from_str(&text)
         .http_client
         .get(&url)
         .header("Client-ID", &self.client_id)
-        .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+        .header("Authorization", format!("Bearer {}", access_token))
         .send()
         .await
         .map_err(|e| TwitchError::Network(e.to_string()))?;
@@ -387,20 +379,13 @@ let helix_response: HelixResponse = serde_json::from_str(&text)
           ..Default::default()
         });
 
-        if all_sources.len() >= 100 {
+        if all_sources.len() >= limit as usize {
           break;
         }
       }
     }
 
     Ok(all_sources)
-  }
-
-  /// Get live streams from followed channels (requires user OAuth)
-  pub async fn get_live_streams_followed(&self, _user_access_token: &str, limit: u32) -> Result<Vec<StreamSource>, TwitchError> {
-    // This requires user OAuth token with channel:read:subscriptions scope
-    // For now, return empty - would need user OAuth implementation
-    Ok(Vec::new())
   }
 
   /// Get live streams by tag
@@ -421,7 +406,7 @@ let helix_response: HelixResponse = serde_json::from_str(&text)
       .http_client
       .get(&url)
       .header("Client-ID", &self.client_id)
-      .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+      .header("Authorization", format!("Bearer {}", access_token))
       .send()
       .await
       .map_err(|e| TwitchError::Network(e.to_string()))?;
@@ -460,17 +445,16 @@ struct TwitchSearchChannel {
 
 let helix_response: HelixResponse = serde_json::from_str(&text)
       .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, safe_substring(&text, 500))))?;
- 
-    let search_lower = "".to_string();
-    let tag_filter = Some("vtuber".to_string());
+
+    let tag_lower = tag.to_lowercase();
 
 let sources: Vec<StreamSource> = helix_response
       .data
       .into_iter()
       .filter(|ch| ch.is_live.unwrap_or(false))
       .filter(|ch| {
-        if let Some(ref tag) = ch.tags {
-          tag.iter().any(|t| t.to_lowercase().contains("vtuber"))
+        if let Some(ref tags) = ch.tags {
+          tags.iter().any(|t| t.to_lowercase().contains(&tag_lower))
         } else {
           false
         }
@@ -521,7 +505,7 @@ let sources: Vec<StreamSource> = helix_response
       .http_client
       .get(&url)
       .header("Client-ID", &self.client_id)
-      .header("Authorization", format!("Bearer {}", self.access_token.as_ref().unwrap()))
+      .header("Authorization", format!("Bearer {}", access_token))
       .send()
       .await
       .map_err(|e| TwitchError::Network(e.to_string()))?;
@@ -548,19 +532,11 @@ let sources: Vec<StreamSource> = helix_response
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct TwitchStream {
-      id: Option<String>,
       user_id: Option<String>,
       user_login: Option<String>,
-      user_name: Option<String>,
-      game_id: Option<String>,
-      game_name: Option<String>,
-      #[serde(rename = "type")]
-      type_: Option<String>,
       title: Option<String>,
       viewer_count: Option<u64>,
       started_at: Option<String>,
-      language: Option<String>,
-      thumbnail_url: Option<String>,
     }
 
     let sources: Vec<StreamSource> = helix_response
