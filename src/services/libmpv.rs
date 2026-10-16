@@ -39,6 +39,7 @@ pub struct MpvVideo {
     pub paused: bool,
     pub volume: i64,
     last_time: f64,
+    last_duration: f64,
 }
 
 /// Resolve GL function pointers for mpv through the eframe-provided loader.
@@ -138,12 +139,14 @@ impl MpvVideo {
             paused: false,
             volume: 100,
             last_time: 0.0,
+            last_duration: 0.0,
         })
     }
 
     /// Play a URL, replacing whatever is loaded.
     pub fn load(&mut self, url: &str) {
         self.last_time = 0.0;
+        self.last_duration = 0.0;
         if let Err(e) = self.mpv.command("loadfile", &[url, "replace"]) {
             tracing::warn!(error = %e, url, "mpv loadfile failed");
             return;
@@ -181,6 +184,21 @@ impl MpvVideo {
     /// Seconds of playback of the current/last file.
     pub fn time_pos(&self) -> f64 {
         self.last_time
+    }
+
+    /// Duration of the current file in seconds (0 when unknown).
+    pub fn duration(&mut self) -> f64 {
+        if let Ok(d) = self.mpv.get_property::<f64>("duration") {
+            self.last_duration = d;
+        }
+        self.last_duration
+    }
+
+    /// Human-readable title of the current media, when available.
+    pub fn media_title(&mut self) -> String {
+        self.mpv
+            .get_property::<String>("media-title")
+            .unwrap_or_default()
     }
 
     /// Drain pending mpv events. Non-blocking.

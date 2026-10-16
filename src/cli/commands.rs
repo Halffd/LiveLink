@@ -70,6 +70,7 @@ pub enum Commands {
   Ochs,
   Diagnostics,
   Ui,
+  PlayerUi(PlayerUiCommand),
   Config(ConfigCommand),
 }
 
@@ -175,6 +176,18 @@ pub struct QueryCommand {
   pub provider: Option<String>,
   #[arg(short, long, default_value_t = 25, help = "Maximum results")]
   pub limit: u32,
+}
+
+#[derive(Parser)]
+pub struct PlayerUiCommand {
+  #[arg(short, long, default_value_t = 1, help = "Screen number (uses config entry when present)")]
+  pub screen: u32,
+  #[arg(long, help = "URL to play (repeatable)")]
+  pub url: Vec<String>,
+  #[arg(long, help = "Playlist file: one URL per line, '#' starts a comment")]
+  pub playlist: Option<String>,
+  #[arg(long, help = "Control port for JSON commands (default 3100 + screen)")]
+  pub port: Option<u16>,
 }
 
 #[derive(Parser)]
@@ -648,7 +661,7 @@ Commands::Diagnostics => {
   Commands::Ui => {
     println!("Launching UI...");
     let orch = orchestrator.clone();
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
       let rt = tokio::runtime::Runtime::new().unwrap();
       rt.block_on(async {
         let options = eframe::NativeOptions {
@@ -662,7 +675,41 @@ Commands::Diagnostics => {
         ).unwrap();
       });
     });
-    println!("UI launched");
+    println!("UI launched (close the window to exit)");
+    handle.join().map_err(|_| "UI thread panicked".to_string())?;
+  }
+  Commands::PlayerUi(cmd) => {
+    let screen_cfg = orchestrator
+      .config
+      .screens
+      .iter()
+      .find(|s| s.screen == cmd.screen)
+      .cloned()
+      .unwrap_or_else(|| crate::player_ui::default_screen_config(cmd.screen));
+
+    let mut urls = cmd.url.clone();
+    if let Some(ref path) = cmd.playlist {
+      let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
+      for line in content.lines() {
+        let line = line.trim();
+        if !line.is_empty() && !line.starts_with('#') {
+          urls.push(line.to_string());
+        }
+      }
+    }
+    if urls.is_empty() {
+      println!("No URLs given — the window will wait for a {{\"cmd\":\"play\"}} command");
+    }
+
+    let port = cmd
+      .port
+      .unwrap_or(3100 + u16::try_from(cmd.screen).unwrap_or(0));
+    println!(
+      "Launching player for screen {} on control port {} (close the window to exit)",
+      cmd.screen, port
+    );
+    crate::player_ui::run(&screen_cfg, urls, std::path::PathBuf::from(cli.config_dir.clone()), port)?;
   }
   Commands::Config(cmd) => {
     if cmd.get {
@@ -782,5 +829,33 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         assert_eq!(cli.port, 8080);
+    }
+
+    #[test]
+    fn test_parse_player_ui_command() {
+        let cli = Cli::try_parse_from([
+            "livelink",
+            "player-ui",
+            "--screen",
+            "2",
+            "--url",
+            "https://example.com/live",
+            "--url",
+            "https://example.com/vod",
+            "--playlist",
+            "list.txt",
+            "--port",
+            "3105",
+        ])
+        .unwrap_or_else(|e| panic!("parse failed: {e}"));
+        match cli.command {
+            Commands::PlayerUi(cmd) => {
+                assert_eq!(cmd.screen, 2);
+                assert_eq!(cmd.url.len(), 2);
+                assert_eq!(cmd.playlist.as_deref(), Some("list.txt"));
+                assert_eq!(cmd.port, Some(3105));
+            }
+            _ => panic!("Expected PlayerUi"),
+        }
     }
 }

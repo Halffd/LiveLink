@@ -7,7 +7,7 @@ use crate::core::orchestrator::embedded_ops::EmbeddedEndKind;
 use crate::core::orchestrator::Orchestrator;
 use crate::core::state::StreamState;
 use crate::queue::queue::StreamSource;
-use crate::ui::player::{MpvVideo, PlayerEvent};
+use crate::services::libmpv::{MpvVideo, PlayerEvent};
 
 enum Tab {
     Streams,

@@ -1,18 +1,8 @@
-mod api;
-mod cli;
-mod config;
-mod core;
-mod queue;
-mod services;
-mod ui;
-
-#[cfg(test)]
-mod core_test;
-
-use config::ConfigLoader;
-use core::orchestrator::Orchestrator;
-use core::state::OrchestratorConfig;
-use services::network::{NetworkEvent, NetworkMonitor};
+use livelink::cli;
+use livelink::config::ConfigLoader;
+use livelink::core::orchestrator::Orchestrator;
+use livelink::core::state::OrchestratorConfig;
+use livelink::services::network::{NetworkEvent, NetworkMonitor};
 use tracing::{debug, info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
@@ -190,8 +180,11 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
             } else {
                 false
             };
-            // Auto-start from config: run when no CLI args, or when Start command without explicit args
-            let should_auto_start = !cli_is_read_only && (!is_start_cmd || !start_cmd_has_explicit);
+            // Auto-start from config: run when no CLI args, or when Start command without explicit args.
+            // The standalone player window manages its own playback and must not spawn players.
+            let is_player_ui = matches!(cli.command, cli::commands::Commands::PlayerUi(_));
+            let should_auto_start =
+                !cli_is_read_only && !is_player_ui && (!is_start_cmd || !start_cmd_has_explicit);
             (run_server_after, should_auto_start, is_start_cmd && start_cmd_has_explicit)
         }
         None => (true, true, false),
@@ -288,7 +281,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
     }
 
     let orchestrator_for_api = orchestrator.clone();
-    let app = api::routes::create_router(orchestrator_for_api);
+    let app = livelink::api::routes::create_router(orchestrator_for_api);
 
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting API server on {}", addr);
