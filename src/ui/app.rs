@@ -340,12 +340,38 @@ impl LiveLinkApp {
                     });
                 }
             }
+            if ui.add_enabled(is_playing, egui::Button::new("⏪")).clicked() {
+                if let Some(p) = &mut self.players[screen as usize] {
+                    p.seek_relative(-10.0);
+                }
+            }
+            if ui.add_enabled(is_playing, egui::Button::new("⏩")).clicked() {
+                if let Some(p) = &mut self.players[screen as usize] {
+                    p.seek_relative(10.0);
+                }
+            }
             ui.label(format!("{:?}", state));
         });
 
         ui.horizontal(|ui| {
-            if let Some(p) = &self.players[screen as usize] {
-                ui.label(format!("t: {:.0}s", p.time_pos()));
+            let mut seek_to = None;
+            if let Some(p) = &mut self.players[screen as usize] {
+                let t = p.time_pos();
+                ui.label(format!("t: {:.0}s", t));
+                let dur = p.duration();
+                if dur > 0.0 {
+                    let mut pos = t;
+                    let slider = egui::Slider::new(&mut pos, 0.0..=dur);
+                    let r = ui.add_sized([140.0, 18.0], slider);
+                    if r.changed() {
+                        seek_to = Some(pos);
+                    }
+                }
+                if ui.button(if p.muted() { "🔇" } else { "🔊" }).clicked() {
+                    p.set_mute(!p.muted());
+                }
+            } else {
+                ui.label("t:");
             }
             ui.label("Vol:");
             let mut vol = self.players[screen as usize]
@@ -360,6 +386,11 @@ impl LiveLinkApp {
                 }
             }
             self.volume = vol;
+            if let Some(pos) = seek_to {
+                if let Some(p) = &mut self.players[screen as usize] {
+                    p.seek_absolute(pos);
+                }
+            }
         });
 
         ui.separator();

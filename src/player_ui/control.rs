@@ -6,6 +6,9 @@
 //!   {"cmd":"stop"}                        stop playback
 //!   {"cmd":"pause","value":true}          pause (true) / resume (false)
 //!   {"cmd":"volume","value":50}           set volume (mpv scale)
+//!   {"cmd":"seek","value":-10}            seek relative in seconds
+//!   {"cmd":"speed","value":1.5}           set playback speed multiplier
+//!   {"cmd":"mute","value":true}           mute (true/false, omits to toggle)
 //!   {"cmd":"next"} / {"cmd":"prev"}       playlist navigation
 //!   {"cmd":"reload"}                      reload player-ui.json
 //!   {"cmd":"quit"}                        close this player window
@@ -101,6 +104,17 @@ mod tests {
 
         let c = parse_line(r#"{"cmd":"pause","value":true}"#).unwrap();
         assert_eq!(c.value, Some(1.0));
+
+        let c = parse_line(r#"{"cmd":"seek","value":-10}"#).unwrap();
+        assert_eq!(c.cmd, "seek");
+        assert_eq!(c.value, Some(-10.0));
+
+        let c = parse_line(r#"{"cmd":"speed","value":1.5}"#).unwrap();
+        assert_eq!(c.value, Some(1.5));
+
+        let c = parse_line(r#"{"cmd":"mute"}"#).unwrap();
+        assert_eq!(c.cmd, "mute");
+        assert_eq!(c.value, None);
 
         assert!(parse_line(r#"{"cmd":"next"}"#).is_some());
         assert!(parse_line("garbage").is_none());

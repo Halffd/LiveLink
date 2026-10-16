@@ -38,6 +38,7 @@ pub struct MpvVideo {
     pub playing: bool,
     pub paused: bool,
     pub volume: i64,
+    muted: bool,
     last_time: f64,
     last_duration: f64,
 }
@@ -138,6 +139,7 @@ impl MpvVideo {
             playing: false,
             paused: false,
             volume: 100,
+            muted: false,
             last_time: 0.0,
             last_duration: 0.0,
         })
@@ -179,6 +181,73 @@ impl MpvVideo {
             return;
         }
         self.volume = volume;
+    }
+
+    /// Mute or unmute audio output.
+    pub fn set_mute(&mut self, mute: bool) {
+        if let Err(e) = self.mpv.set_property("mute", mute) {
+            tracing::warn!(error = %e, "mpv set mute failed");
+            return;
+        }
+        self.muted = mute;
+    }
+
+    /// Whether audio output is muted.
+    pub fn muted(&self) -> bool {
+        self.muted
+    }
+
+    /// Seek relative to the current position in seconds (negative goes back).
+    /// Keyframe-quantized, which keeps network streams responsive.
+    pub fn seek_relative(&mut self, seconds: f64) {
+        let secs = seconds.to_string();
+        if let Err(e) = self.mpv.command("seek", &[&secs, "relative"]) {
+            tracing::warn!(error = %e, seconds, "mpv seek failed");
+        }
+    }
+
+    /// Seek to an absolute position in seconds.
+    pub fn seek_absolute(&mut self, seconds: f64) {
+        let secs = seconds.max(0.0).to_string();
+        if let Err(e) = self.mpv.command("seek", &[&secs, "absolute"]) {
+            tracing::warn!(error = %e, seconds, "mpv absolute seek failed");
+        }
+    }
+
+    /// Seek to a percentage of the stream (usable when duration is unknown).
+    pub fn seek_percent(&mut self, percent: f64) {
+        let pct = percent.clamp(0.0, 100.0).to_string();
+        if let Err(e) = self.mpv.command("seek", &[&pct, "absolute-percent"]) {
+            tracing::warn!(error = %e, percent, "mpv percent seek failed");
+        }
+    }
+
+    /// Advance one video frame and pause (mpv semantics).
+    pub fn frame_step(&mut self) {
+        if let Err(e) = self.mpv.command("frame-step", &[]) {
+            tracing::warn!(error = %e, "mpv frame-step failed");
+        }
+        self.paused = true;
+    }
+
+    /// Go back one video frame and pause (mpv semantics).
+    pub fn frame_back_step(&mut self) {
+        if let Err(e) = self.mpv.command("frame-back-step", &[]) {
+            tracing::warn!(error = %e, "mpv frame-back-step failed");
+        }
+        self.paused = true;
+    }
+
+    /// Set playback speed multiplier (mpv accepts roughly 0.01-100).
+    pub fn set_speed(&mut self, speed: f64) {
+        if let Err(e) = self.mpv.set_property("speed", speed) {
+            tracing::warn!(error = %e, speed, "mpv set speed failed");
+        }
+    }
+
+    /// Current playback speed multiplier (1.0 when unknown).
+    pub fn speed(&self) -> f64 {
+        self.mpv.get_property::<f64>("speed").unwrap_or(1.0)
     }
 
     /// Seconds of playback of the current/last file.
@@ -252,10 +321,9 @@ impl MpvVideo {
 
     /// Poll playback time and render the current video frame into the texture.
     pub fn render(&mut self) {
-        if self.playing {
-            if let Ok(t) = self.mpv.get_property::<f64>("time-pos") {
-                self.last_time = t;
-            }
+        // Also poll while paused so seeks and frame steps update the UI.
+        if let Ok(t) = self.mpv.get_property::<f64>("time-pos") {
+            self.last_time = t;
         }
         // flip=true: mpv writes the video top row first, which is what egui
         // expects. Set to false if the picture appears upside down.
@@ -302,5 +370,13 @@ mod tests {
         let _ = mpv.get_property::<f64>("time-pos");
         let _ = mpv.set_property("pause", true);
         let _ = mpv.set_property("volume", 50i64);
+
+        // Properties used by the player controls.
+        mpv.set_property("speed", 1.5f64)
+            .expect("speed property must be settable");
+        assert_eq!(mpv.get_property::<f64>("speed").unwrap(), 1.5);
+        mpv.set_property("mute", true)
+            .expect("mute property must be settable");
+        assert!(mpv.get_property::<bool>("mute").unwrap());
     }
 }

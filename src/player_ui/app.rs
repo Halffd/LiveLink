@@ -29,6 +29,8 @@ pub struct PlayerApp {
     last_pointer_move: Option<Instant>,
     settings_open: bool,
     theme_applied: bool,
+    /// Slider position while the user is dragging the seek bar.
+    seek_drag: Option<f64>,
 }
 
 impl PlayerApp {
@@ -69,6 +71,7 @@ impl PlayerApp {
             last_pointer_move: None,
             settings_open: false,
             theme_applied: false,
+            seek_drag: None,
         }
     }
 
@@ -128,6 +131,22 @@ impl PlayerApp {
                         let v = cmd.value.unwrap_or(100.0).clamp(0.0, 130.0) as i64;
                         mpv.set_volume(v);
                         self.settings.volume = v;
+                    }
+                }
+                "seek" => {
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.seek_relative(cmd.value.unwrap_or(10.0));
+                    }
+                }
+                "speed" => {
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.set_speed(cmd.value.unwrap_or(1.0).clamp(0.25, 4.0));
+                    }
+                }
+                "mute" => {
+                    if let Some(mpv) = &mut self.mpv {
+                        let value = cmd.value.map(|v| v != 0.0).unwrap_or(!mpv.muted());
+                        mpv.set_mute(value);
                     }
                 }
                 "next" => self.advance(1),
@@ -321,6 +340,11 @@ impl PlayerApp {
                             if ui.button("⏮").clicked() {
                                 self.advance(-1);
                             }
+                            if ui.button("⏪").clicked() {
+                                if let Some(mpv) = &mut self.mpv {
+                                    mpv.seek_relative(-10.0);
+                                }
+                            }
                             if ui
                                 .add_enabled(
                                     playing,
@@ -337,40 +361,84 @@ impl PlayerApp {
                                     mpv.stop();
                                 }
                             }
+                            if ui.button("⏩").clicked() {
+                                if let Some(mpv) = &mut self.mpv {
+                                    mpv.seek_relative(10.0);
+                                }
+                            }
                             if ui.button("⏭").clicked() {
                                 self.advance(1);
                             }
 
                             if self.settings.show_progress && playing {
-                                let (time, dur) = if let Some(mpv) = &mut self.mpv {
-                                    (mpv.time_pos(), mpv.duration())
-                                } else {
-                                    (0.0, 0.0)
-                                };
+                                let (mut t, dur) = self
+                                    .mpv
+                                    .as_mut()
+                                    .map(|m| (m.time_pos(), m.duration()))
+                                    .unwrap_or((0.0, 0.0));
                                 if dur > 0.0 {
-                                    ui.add(
-                                        egui::ProgressBar::new(
-                                            ((time / dur) as f32).clamp(0.0, 1.0),
-                                        )
-                                        .desired_width(280.0)
-                                        .text(format!("{:.0}s / {:.0}s", time, dur)),
-                                    );
+                                    if let Some(v) = self.seek_drag {
+                                        t = v;
+                                    }
+                                    let text = format!("{:.0}s / {:.0}s", t, dur);
+                                    let slider = egui::Slider::new(&mut t, 0.0..=dur).text(text);
+                                    let response = ui.add_sized([380.0, 20.0], slider);
+                                    if response.dragged() {
+                                        self.seek_drag = Some(t);
+                                    } else if let Some(v) = self.seek_drag.take() {
+                                        if let Some(mpv) = &mut self.mpv {
+                                            mpv.seek_absolute(v);
+                                        }
+                                    } else if response.changed() {
+                                        if let Some(mpv) = &mut self.mpv {
+                                            mpv.seek_absolute(t);
+                                        }
+                                    }
                                 } else {
-                                    ui.label(format!("{:.0}s", time));
+                                    // No duration (live): show elapsed time only.
+                                    ui.label(format!("{:.0}s", t));
                                 }
                             }
 
+                            let mut save_volume = false;
                             if let Some(mpv) = &mut self.mpv {
+                                if ui.button(if mpv.muted() { "🔇" } else { "🔊" }).clicked() {
+                                    mpv.set_mute(!mpv.muted());
+                                }
                                 let mut vol = mpv.volume;
                                 let slider =
-                                    ui.add(egui::Slider::new(&mut vol, 0..=130).text("🔊"));
+                                    ui.add(egui::Slider::new(&mut vol, 0..=130).text("Vol"));
                                 if slider.changed() {
                                     mpv.set_volume(vol);
                                     self.settings.volume = vol;
                                 }
-                                if slider.drag_stopped() {
-                                    self.save_settings();
+                                save_volume = slider.drag_stopped();
+
+                                let mut speed = mpv.speed();
+                                let mut speed_selected = false;
+                                egui::ComboBox::from_id_salt("playback_speed")
+                                    .selected_text(format!("{speed:.2}x"))
+                                    .width(72.0)
+                                    .show_ui(ui, |ui| {
+                                        for s in [0.25, 0.5, 1.0, 1.5, 2.0, 4.0] {
+                                            if ui
+                                                .selectable_label(
+                                                    (speed - s).abs() < 0.01,
+                                                    format!("{s}x"),
+                                                )
+                                                .clicked()
+                                            {
+                                                speed = s;
+                                                speed_selected = true;
+                                            }
+                                        }
+                                    });
+                                if speed_selected {
+                                    mpv.set_speed(speed);
                                 }
+                            }
+                            if save_volume {
+                                self.save_settings();
                             }
 
                             if ui.button("⚙").clicked() {
@@ -457,6 +525,8 @@ impl PlayerApp {
                     "settings file: {}",
                     PlayerUiSettings::path(&self.config_dir).display()
                 ));
+                ui.separator();
+                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · f fullscreen · , . frame step");
             });
         self.settings_open = open;
     }
@@ -471,9 +541,59 @@ impl eframe::App for PlayerApp {
 
         self.drain_commands(ctx);
 
-        if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+        let (space, left, right, up, down, mute_key, full, step_fwd, step_back) = ctx.input(|i| {
+            (
+                i.key_pressed(egui::Key::Space),
+                i.key_pressed(egui::Key::ArrowLeft),
+                i.key_pressed(egui::Key::ArrowRight),
+                i.key_pressed(egui::Key::ArrowUp),
+                i.key_pressed(egui::Key::ArrowDown),
+                i.key_pressed(egui::Key::M),
+                i.key_pressed(egui::Key::F),
+                i.key_pressed(egui::Key::Period),
+                i.key_pressed(egui::Key::Comma),
+            )
+        });
+        if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
+            }
+        }
+        if left {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.seek_relative(-10.0);
+            }
+        }
+        if right {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.seek_relative(10.0);
+            }
+        }
+        if up || down {
+            if let Some(mpv) = &mut self.mpv {
+                let v = (mpv.volume + if up { 5 } else { -5 }).clamp(0, 130);
+                mpv.set_volume(v);
+                self.settings.volume = v;
+            }
+        }
+        if mute_key {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.set_mute(!mpv.muted());
+            }
+        }
+        if full {
+            self.settings.fullscreen = !self.settings.fullscreen;
+            self.apply_viewport_settings(ctx);
+            self.save_settings();
+        }
+        if step_fwd {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.frame_step();
+            }
+        }
+        if step_back {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.frame_back_step();
             }
         }
 
