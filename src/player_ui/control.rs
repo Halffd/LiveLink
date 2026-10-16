@@ -120,4 +120,32 @@ mod tests {
         assert!(parse_line("garbage").is_none());
         assert!(parse_line("").is_none());
     }
+
+    #[test]
+    fn playlist_from_dir_filters_and_sorts_media() {
+        let dir = std::env::temp_dir().join("player-ui-dir-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b.mkv"), "").unwrap();
+        std::fs::write(dir.join("a.mp4"), "").unwrap();
+        std::fs::write(dir.join("notes.txt"), "").unwrap();
+        std::fs::write(dir.join("song.mp3"), "").unwrap();
+        std::fs::write(dir.join("no_ext"), "").unwrap();
+
+        let files = super::super::playlist_from_dir(&dir).unwrap();
+        assert_eq!(
+            files,
+            vec![
+                dir.join("a.mp4").to_string_lossy().to_string(),
+                dir.join("b.mkv").to_string_lossy().to_string(),
+                dir.join("song.mp3").to_string_lossy().to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_keeps_non_http_urls_unchanged() {
+        let resolved = super::super::resolve_with_streamlink("streamlink", "/tmp/a.mp4", "best").await;
+        assert_eq!(resolved, "/tmp/a.mp4");
+    }
 }

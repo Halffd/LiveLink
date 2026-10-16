@@ -7,12 +7,30 @@ pub mod app;
 pub mod control;
 pub mod settings;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
 use crate::config::ScreenConfig;
 
 pub use app::PlayerApp;
+
+/// Everything needed to open one player window. Built from the
+/// `livelink player-ui` command line and passed to [`run`].
+pub struct PlayerWindowConfig {
+    pub screen_cfg: ScreenConfig,
+    /// URLs and/or local media file paths, in play order.
+    pub playlist: Vec<String>,
+    /// Directory holding `player-ui.json`.
+    pub config_dir: PathBuf,
+    /// Control port; `None` disables the JSON listener.
+    pub control_port: Option<u16>,
+    /// Force borderless regardless of saved settings.
+    pub borderless: bool,
+    /// Window position; `None` lets the window manager place it.
+    pub position: Option<[f32; 2]>,
+    /// Video rotation in degrees (0/90/180/270).
+    pub rotate: u32,
+}
 
 /// Sensible window defaults for a screen that has no config entry.
 pub fn default_screen_config(screen: u32) -> ScreenConfig {
@@ -36,51 +54,111 @@ pub fn default_screen_config(screen: u32) -> ScreenConfig {
     }
 }
 
+/// Media file extensions accepted when playing a directory.
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "ts", "mp3", "m4a", "ogg", "wav",
+];
+
+/// Sorted playlist of media files directly inside `dir` (not recursive).
+pub fn playlist_from_dir(dir: &Path) -> Result<Vec<String>, String> {
+    let mut files: Vec<String> = std::fs::read_dir(dir)
+        .map_err(|e| format!("failed to read directory {}: {e}", dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_ascii_lowercase());
+            matches!(ext.as_deref(), Some(e) if MEDIA_EXTENSIONS.contains(&e))
+        })
+        .map(|path| path.to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+/// Resolve `url` to a direct stream URL via `streamlink <url> <quality>
+/// --stream-url`, mirroring the subprocess player. Returns the input unchanged
+/// for non-HTTP URLs and whenever streamlink is missing, times out, or fails
+/// (mpv's ytdl hook may still resolve it).
+pub async fn resolve_with_streamlink(
+    streamlink_path: &str,
+    url: &str,
+    quality: &str,
+) -> String {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return url.to_string();
+    }
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        tokio::process::Command::new(streamlink_path)
+            .args([url, quality, "--stream-url"])
+            .output(),
+    )
+    .await;
+    match result {
+        Ok(Ok(output)) if output.status.success() && !output.stdout.is_empty() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+        Ok(Ok(output)) => {
+            tracing::warn!(
+                url,
+                quality,
+                stderr = %String::from_utf8_lossy(&output.stderr),
+                "streamlink could not resolve, playing URL directly"
+            );
+            url.to_string()
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(url, quality, error = %e, "failed to run streamlink");
+            url.to_string()
+        }
+        Err(_) => {
+            tracing::warn!(url, quality, "streamlink resolution timed out");
+            url.to_string()
+        }
+    }
+}
+
 /// Launch a player window for one screen and block until it closes.
 ///
-/// Starts the control listener on `port` before the window opens so commands
-/// sent during startup are queued, loads persisted settings from
-/// `<config_dir>/player-ui.json`, then runs the eframe event loop on a
-/// dedicated thread (eframe must not run on a tokio worker).
-pub fn run(
-    screen_cfg: &ScreenConfig,
-    playlist: Vec<String>,
-    config_dir: PathBuf,
-    port: u16,
-) -> Result<(), String> {
+/// Starts the control listener (unless disabled) before the window opens so
+/// commands sent during startup are queued, then runs the eframe event loop on
+/// a dedicated thread (eframe must not run on a tokio worker). Settings are
+/// loaded from `<config_dir>/player-ui.json` inside the app creator; saved
+/// settings are overridden by `borderless` and the window geometry from
+/// `screen_cfg`.
+pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
-    control::spawn_listener(port, tx);
+    match window.control_port {
+        Some(port) => control::spawn_listener(port, tx),
+        None => drop(tx), // receiver reports disconnection; app treats it as idle
+    }
 
-    let settings = settings::PlayerUiSettings::load(&config_dir);
-
-    let title = format!("LiveLink Player — screen {}", screen_cfg.screen);
-    let width = screen_cfg.width;
-    let height = screen_cfg.height;
-    let screen_cfg = screen_cfg.clone();
+    let title = format!("LiveLink Player — screen {}", window.screen_cfg.screen);
+    let width = window.screen_cfg.width;
+    let height = window.screen_cfg.height;
+    let position = window.position;
 
     // NativeOptions holds non-Send event-loop hooks, so it must be built on
     // the thread that calls run_native.
     let handle = std::thread::spawn(move || {
+        let mut viewport = eframe::egui::ViewportBuilder::default()
+            .with_title(title)
+            .with_inner_size([width as f32, height as f32]);
+        if let Some([x, y]) = position {
+            viewport = viewport.with_position([x, y]);
+        }
         let options = eframe::NativeOptions {
-            viewport: eframe::egui::ViewportBuilder::default()
-                .with_title(title)
-                .with_inner_size([width as f32, height as f32]),
+            viewport,
             ..Default::default()
         };
         eframe::run_native(
             "LiveLink Player",
             options,
-            Box::new(move |cc| {
-                Ok(Box::new(app::PlayerApp::new(
-                    cc,
-                    &screen_cfg,
-                    playlist,
-                    settings,
-                    config_dir,
-                    rx,
-                    port,
-                )))
-            }),
+            Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx)))),
         )
         .map_err(|e| format!("player window failed: {e}"))
     });

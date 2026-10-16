@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
-use crate::config::ScreenConfig;
 use crate::player_ui::control::PlayerCommand;
 use crate::player_ui::settings::{
     PlayerUiSettings, CONTROLS_ALWAYS, CONTROLS_AUTO, CONTROLS_NEVER,
 };
+use crate::player_ui::PlayerWindowConfig;
 use crate::services::libmpv::{MpvVideo, PlayerEvent};
 
 const OVERLAY_HIDE_AFTER: Duration = Duration::from_secs(3);
@@ -25,7 +25,7 @@ pub struct PlayerApp {
     config_dir: PathBuf,
     cmd_rx: Receiver<PlayerCommand>,
     screen: u32,
-    control_port: u16,
+    control_port: Option<u16>,
     last_pointer_move: Option<Instant>,
     settings_open: bool,
     theme_applied: bool,
@@ -34,16 +34,18 @@ pub struct PlayerApp {
 }
 
 impl PlayerApp {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        screen_cfg: &ScreenConfig,
-        playlist: Vec<String>,
-        settings: PlayerUiSettings,
-        config_dir: PathBuf,
+        window: &PlayerWindowConfig,
         cmd_rx: Receiver<PlayerCommand>,
-        control_port: u16,
     ) -> Self {
+        let screen_cfg = &window.screen_cfg;
+
+        let mut settings = PlayerUiSettings::load(&window.config_dir);
+        if window.borderless {
+            settings.borderless = true;
+        }
+
         let mut mpv = None;
         if let (Some(gl), Some(proc_addr)) = (&cc.gl, cc.get_proc_address) {
             // SAFETY: the loader is owned by the eframe runner and outlives the app.
@@ -52,6 +54,9 @@ impl PlayerApp {
             match MpvVideo::new(gl, proc_addr, screen_cfg.width, screen_cfg.height) {
                 Ok(mut m) => {
                     m.set_volume(settings.volume);
+                    if window.rotate != 0 {
+                        m.set_rotation(window.rotate);
+                    }
                     mpv = Some(m);
                 }
                 Err(e) => tracing::warn!(error = %e, "libmpv init failed; window will be idle"),
@@ -60,14 +65,14 @@ impl PlayerApp {
 
         Self {
             mpv,
-            playlist,
+            playlist: window.playlist.clone(),
             index: 0,
             settings,
             settings_dirty: false,
-            config_dir,
+            config_dir: window.config_dir.clone(),
             cmd_rx,
             screen: screen_cfg.screen,
-            control_port,
+            control_port: window.control_port,
             last_pointer_move: None,
             settings_open: false,
             theme_applied: false,
@@ -266,10 +271,10 @@ impl PlayerApp {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(40.0);
                                 ui.heading(format!("LiveLink Player — screen {}", self.screen));
-                                ui.label(format!(
-                                    "control port: {}",
-                                    self.control_port
-                                ));
+                                ui.label(match self.control_port {
+                                    Some(port) => format!("control port: {}", port),
+                                    None => "control port: disabled".to_string(),
+                                });
                                 if self.mpv.is_none() {
                                     ui.label("libmpv failed to initialize");
                                 } else if self.playlist.is_empty() {

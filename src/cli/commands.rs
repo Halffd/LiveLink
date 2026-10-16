@@ -186,7 +186,25 @@ pub struct PlayerUiCommand {
   pub url: Vec<String>,
   #[arg(long, help = "Playlist file: one URL per line, '#' starts a comment")]
   pub playlist: Option<String>,
-  #[arg(long, help = "Control port for JSON commands (default 3100 + screen)")]
+  #[arg(long, help = "Play media files from this directory (sorted by name, not recursive)")]
+  pub dir: Option<String>,
+  #[arg(long, help = "Resolve stream URLs via streamlink at this quality (best, worst, 720p, ...)")]
+  pub quality: Option<String>,
+  #[arg(long, help = "Window x position")]
+  pub x: Option<i32>,
+  #[arg(long, help = "Window y position")]
+  pub y: Option<i32>,
+  #[arg(long, help = "Window width override")]
+  pub width: Option<u32>,
+  #[arg(long, help = "Window height override")]
+  pub height: Option<u32>,
+  #[arg(long, help = "Run borderless (no window decorations)")]
+  pub borderless: bool,
+  #[arg(long, help = "Rotate video 0, 90, 180, or 270 degrees")]
+  pub rotate: Option<u32>,
+  #[arg(long, help = "Disable the JSON control port")]
+  pub no_control: bool,
+  #[arg(long, help = "Control port (default 3100 + screen)")]
   pub port: Option<u16>,
 }
 
@@ -679,13 +697,31 @@ Commands::Diagnostics => {
     handle.join().map_err(|_| "UI thread panicked".to_string())?;
   }
   Commands::PlayerUi(cmd) => {
-    let screen_cfg = orchestrator
+    if let Some(deg) = cmd.rotate {
+      if deg % 90 != 0 || deg > 270 {
+        return Err(format!("invalid --rotate {deg}: use 0, 90, 180, or 270"));
+      }
+    }
+
+    let mut screen_cfg = orchestrator
       .config
       .screens
       .iter()
       .find(|s| s.screen == cmd.screen)
       .cloned()
       .unwrap_or_else(|| crate::player_ui::default_screen_config(cmd.screen));
+    if let Some(x) = cmd.x {
+      screen_cfg.x = x;
+    }
+    if let Some(y) = cmd.y {
+      screen_cfg.y = y;
+    }
+    if let Some(w) = cmd.width {
+      screen_cfg.width = w;
+    }
+    if let Some(h) = cmd.height {
+      screen_cfg.height = h;
+    }
 
     let mut urls = cmd.url.clone();
     if let Some(ref path) = cmd.playlist {
@@ -698,18 +734,63 @@ Commands::Diagnostics => {
         }
       }
     }
+    if let Some(ref dir) = cmd.dir {
+      let files = crate::player_ui::playlist_from_dir(std::path::Path::new(dir))?;
+      if files.is_empty() {
+        return Err(format!("no media files found in {}", dir));
+      }
+      urls.extend(files);
+    }
     if urls.is_empty() {
       println!("No URLs given — the window will wait for a {{\"cmd\":\"play\"}} command");
     }
 
-    let port = cmd
-      .port
-      .unwrap_or(3100 + u16::try_from(cmd.screen).unwrap_or(0));
+    let urls = match (&cmd.quality, &orchestrator.config.streamlink_path) {
+      (Some(quality), path) if !path.is_empty() => {
+        let path = path.clone();
+        let quality = quality.clone();
+        futures::future::join_all(urls.iter().map(|url| {
+          crate::player_ui::resolve_with_streamlink(&path, url, &quality)
+        }))
+        .await
+      }
+      (Some(_), _) => {
+        println!("streamlink path not configured — playing URLs directly");
+        urls
+      }
+      (None, _) => urls,
+    };
+
+    let position = match (cmd.x, cmd.y) {
+      (Some(x), Some(y)) => Some([x as f32, y as f32]),
+      (Some(x), None) => Some([x as f32, screen_cfg.y as f32]),
+      (None, Some(y)) => Some([screen_cfg.x as f32, y as f32]),
+      (None, None) => None,
+    };
+
+    let control_port = if cmd.no_control {
+      None
+    } else {
+      Some(cmd.port.unwrap_or(3100 + u16::try_from(cmd.screen).unwrap_or(0)))
+    };
+
     println!(
-      "Launching player for screen {} on control port {} (close the window to exit)",
-      cmd.screen, port
+      "Launching player for screen {} (close the window to exit){}",
+      cmd.screen,
+      match control_port {
+        Some(port) => format!(" on control port {}", port),
+        None => " (control disabled)".to_string(),
+      }
     );
-    crate::player_ui::run(&screen_cfg, urls, std::path::PathBuf::from(cli.config_dir.clone()), port)?;
+    crate::player_ui::run(crate::player_ui::PlayerWindowConfig {
+      screen_cfg,
+      playlist: urls,
+      config_dir: std::path::PathBuf::from(cli.config_dir.clone()),
+      control_port,
+      borderless: cmd.borderless,
+      position,
+      rotate: cmd.rotate.unwrap_or(0),
+    })?;
   }
   Commands::Config(cmd) => {
     if cmd.get {
@@ -844,6 +925,22 @@ mod tests {
             "https://example.com/vod",
             "--playlist",
             "list.txt",
+            "--dir",
+            "/tmp/media",
+            "--quality",
+            "720p",
+            "--x",
+            "100",
+            "--y",
+            "50",
+            "--width",
+            "1280",
+            "--height",
+            "720",
+            "--borderless",
+            "--rotate",
+            "90",
+            "--no-control",
             "--port",
             "3105",
         ])
@@ -853,6 +950,15 @@ mod tests {
                 assert_eq!(cmd.screen, 2);
                 assert_eq!(cmd.url.len(), 2);
                 assert_eq!(cmd.playlist.as_deref(), Some("list.txt"));
+                assert_eq!(cmd.dir.as_deref(), Some("/tmp/media"));
+                assert_eq!(cmd.quality.as_deref(), Some("720p"));
+                assert_eq!(cmd.x, Some(100));
+                assert_eq!(cmd.y, Some(50));
+                assert_eq!(cmd.width, Some(1280));
+                assert_eq!(cmd.height, Some(720));
+                assert!(cmd.borderless);
+                assert_eq!(cmd.rotate, Some(90));
+                assert!(cmd.no_control);
                 assert_eq!(cmd.port, Some(3105));
             }
             _ => panic!("Expected PlayerUi"),

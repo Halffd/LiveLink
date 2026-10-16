@@ -250,6 +250,15 @@ impl MpvVideo {
         self.mpv.get_property::<f64>("speed").unwrap_or(1.0)
     }
 
+    /// Rotate the video by 0/90/180/270 degrees (mpv `video-rotate`).
+    /// The rotated frame is fitted inside the render texture, so pair a 90
+    /// degree rotation with swapped window width/height.
+    pub fn set_rotation(&mut self, degrees: u32) {
+        if let Err(e) = self.mpv.set_property("video-rotate", degrees as i64) {
+            tracing::warn!(error = %e, degrees, "mpv set video-rotate failed");
+        }
+    }
+
     /// Seconds of playback of the current/last file.
     pub fn time_pos(&self) -> f64 {
         self.last_time
