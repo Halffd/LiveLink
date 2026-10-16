@@ -14,7 +14,10 @@ impl FallbackService {
     /// DEPRECATED: This returns favorites as if they're all live without checking.
     /// Use YouTubeService.check_via_rss() or get_live_streams() instead.
     /// This method exists for backward compatibility only.
-    #[deprecated(since = "2026-04-20", note = "Use YouTubeService.is_channel_live() for actual live status")]
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use YouTubeService.is_channel_live() for actual live status"
+    )]
     pub fn get_youtube_streams(&self) -> Vec<StreamSource> {
         warn!(
             count = self.favorite_channels.youtube.default.len(),
