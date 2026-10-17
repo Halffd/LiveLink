@@ -20,7 +20,9 @@ pub struct PlayerWindowConfig {
     pub screen_cfg: ScreenConfig,
     /// URLs and/or local media file paths, in play order.
     pub playlist: Vec<String>,
-    /// Directory holding `player-ui.json`.
+    /// External subtitle files/URLs attached to every loaded media.
+    pub subtitles: Vec<String>,
+    /// Directory holding `player-ui.toml`.
     pub config_dir: PathBuf,
     /// Control port; `None` disables the JSON listener.
     pub control_port: Option<u16>,

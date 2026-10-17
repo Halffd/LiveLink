@@ -9,6 +9,9 @@
 //!   {"cmd":"seek","value":-10}            seek relative in seconds
 //!   {"cmd":"speed","value":1.5}           set playback speed multiplier
 //!   {"cmd":"mute","value":true}           mute (true/false, omits to toggle)
+//!   {"cmd":"sub","value":2}               select subtitle track (0 = off)
+//!   {"cmd":"sub-pos","value":50}          subtitle position 0=top .. 100=bottom
+//!   {"cmd":"sub-add","url":"subs.srt"}    attach external subtitle file/url
 //!   {"cmd":"next"} / {"cmd":"prev"}       playlist navigation
 //!   {"cmd":"reload"}                      reload player-ui.json
 //!   {"cmd":"quit"}                        close this player window
@@ -131,6 +134,17 @@ mod tests {
         let c = parse_line(r#"{"cmd":"mute"}"#).unwrap();
         assert_eq!(c.cmd, "mute");
         assert_eq!(c.value, None);
+
+        let c = parse_line(r#"{"cmd":"sub","value":2}"#).unwrap();
+        assert_eq!(c.cmd, "sub");
+        assert_eq!(c.value, Some(2.0));
+
+        let c = parse_line(r#"{"cmd":"sub-pos","value":30}"#).unwrap();
+        assert_eq!(c.value, Some(30.0));
+
+        let c = parse_line(r#"{"cmd":"sub-add","url":"/tmp/subs.srt"}"#).unwrap();
+        assert_eq!(c.cmd, "sub-add");
+        assert_eq!(c.url.as_deref(), Some("/tmp/subs.srt"));
 
         assert!(parse_line(r#"{"cmd":"next"}"#).is_some());
         assert!(parse_line("garbage").is_none());

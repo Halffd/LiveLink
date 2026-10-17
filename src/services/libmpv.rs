@@ -21,6 +21,35 @@ pub enum PlayerEvent {
     Failed,
 }
 
+/// One subtitle track of the current file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubTrackInfo {
+    pub id: i64,
+    pub lang: String,
+    pub title: String,
+    pub selected: bool,
+}
+
+impl SubTrackInfo {
+    /// Compact label for pickers, e.g. "en — English [CC]".
+    pub fn label(&self) -> String {
+        let mut label = String::new();
+        if !self.lang.is_empty() {
+            label.push_str(&self.lang);
+        }
+        if !self.title.is_empty() {
+            if !label.is_empty() {
+                label.push_str(" — ");
+            }
+            label.push_str(&self.title);
+        }
+        if label.is_empty() {
+            label = format!("track {}", self.id);
+        }
+        label
+    }
+}
+
 /// An mpv instance rendering into an OpenGL texture that egui can display.
 ///
 /// Must only be used from the egui UI thread (mpv render context + GL context
@@ -109,6 +138,14 @@ impl MpvVideo {
             init.set_option("input-default-bindings", "no")?;
             init.set_option("input-vo-keyboard", "no")?;
             init.set_option("input-cursor", "no")?;
+            // Auto-load external subtitle files next to the media (movie.srt).
+            init.set_option("sub-auto", "fuzzy")?;
+            // Ask yt-dlp for every subtitle track (manual + auto captions) so
+            // YouTube and other supported sites come with selectable subs.
+            init.set_option(
+                "ytdl-raw-options",
+                "write-subs=yes,write-auto-subs=yes,sub-langs=all",
+            )?;
             Ok(())
         })?;
         mpv.set_property("volume", 100i64)?;
@@ -259,6 +296,171 @@ impl MpvVideo {
         }
     }
 
+    /// Pan the video inside the window (-1..1, fractions of window size).
+    pub fn set_video_pan(&mut self, x: f64, y: f64) {
+        if let Err(e) = self.mpv.set_property("video-pan-x", x) {
+            tracing::warn!(error = %e, x, "mpv set video-pan-x failed");
+        }
+        if let Err(e) = self.mpv.set_property("video-pan-y", y) {
+            tracing::warn!(error = %e, y, "mpv set video-pan-y failed");
+        }
+    }
+
+    /// Zoom the video (1.0 = fit, larger crops in).
+    pub fn set_video_zoom(&mut self, zoom: f64) {
+        if let Err(e) = self.mpv.set_property("video-zoom", zoom) {
+            tracing::warn!(error = %e, zoom, "mpv set video-zoom failed");
+        }
+    }
+
+    /// Add an external subtitle file/URL and select it. Only valid while a
+    /// file is loaded.
+    pub fn sub_add(&mut self, path: &str) {
+        if let Err(e) = self.mpv.command("sub-add", &[path, "select"]) {
+            tracing::warn!(error = %e, path, "mpv sub-add failed");
+        }
+    }
+
+    /// Subtitle tracks of the current file (empty before a file loads).
+    pub fn sub_tracks(&self) -> Vec<SubTrackInfo> {
+        let count = match self.mpv.get_property::<i64>("track-list/count") {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let mut tracks = Vec::new();
+        for i in 0..count {
+            let track = format!("track-list/{i}");
+            let Ok(kind) = self.mpv.get_property::<String>(&format!("{track}/type")) else {
+                continue;
+            };
+            if kind != "sub" {
+                continue;
+            }
+            tracks.push(SubTrackInfo {
+                id: self
+                    .mpv
+                    .get_property::<i64>(&format!("{track}/id"))
+                    .unwrap_or(0),
+                lang: self
+                    .mpv
+                    .get_property::<String>(&format!("{track}/lang"))
+                    .unwrap_or_default(),
+                title: self
+                    .mpv
+                    .get_property::<String>(&format!("{track}/title"))
+                    .unwrap_or_default(),
+                selected: self
+                    .mpv
+                    .get_property::<bool>(&format!("{track}/selected"))
+                    .unwrap_or(false),
+            });
+        }
+        tracks
+    }
+
+    /// Selected primary subtitle track id (0 = none).
+    pub fn current_sub_id(&self) -> i64 {
+        self.mpv.get_property::<i64>("sid").unwrap_or(0)
+    }
+
+    /// Select the primary subtitle track (0 = off).
+    pub fn set_sub_track(&mut self, id: i64) {
+        if let Err(e) = self.mpv.set_property("sid", id) {
+            tracing::warn!(error = %e, id, "mpv set sid failed");
+        }
+    }
+
+    /// Selected stacked secondary subtitle track id (0 = none).
+    pub fn current_secondary_sub_id(&self) -> i64 {
+        self.mpv.get_property::<i64>("secondary-sid").unwrap_or(0)
+    }
+
+    /// Select the stacked secondary subtitle track (0 = off). Renders on top
+    /// of the primary subtitle.
+    pub fn set_secondary_sub_track(&mut self, id: i64) {
+        if let Err(e) = self.mpv.set_property("secondary-sid", id) {
+            tracing::warn!(error = %e, id, "mpv set secondary-sid failed");
+        }
+    }
+
+    /// Cycle to the next primary subtitle track (wraps through off).
+    pub fn cycle_sub(&mut self) {
+        if let Err(e) = self.mpv.command("cycle", &["sid"]) {
+            tracing::warn!(error = %e, "mpv cycle sid failed");
+        }
+    }
+
+    /// Show or hide subtitles.
+    pub fn set_sub_visible(&mut self, visible: bool) {
+        if let Err(e) = self.mpv.set_property("sub-visibility", visible) {
+            tracing::warn!(error = %e, "mpv set sub-visibility failed");
+        }
+    }
+
+    /// Whether subtitles are shown.
+    pub fn sub_visible(&self) -> bool {
+        self.mpv
+            .get_property::<bool>("sub-visibility")
+            .unwrap_or(true)
+    }
+
+    /// Subtitle vertical position, 0 = top .. 100 = bottom (default 100).
+    pub fn set_sub_pos(&mut self, pos: i64) {
+        if let Err(e) = self.mpv.set_property("sub-pos", pos.clamp(0, 100)) {
+            tracing::warn!(error = %e, "mpv set sub-pos failed");
+        }
+    }
+
+    /// Subtitle font name (empty = mpv default).
+    pub fn set_sub_font(&mut self, font: &str) {
+        if let Err(e) = self.mpv.set_property("sub-font", font) {
+            tracing::warn!(error = %e, font, "mpv set sub-font failed");
+        }
+    }
+
+    /// Subtitle font size for plain text subs (mpv default 55).
+    pub fn set_sub_font_size(&mut self, size: f64) {
+        if let Err(e) = self.mpv.set_property("sub-font-size", size) {
+            tracing::warn!(error = %e, "mpv set sub-font-size failed");
+        }
+    }
+
+    /// Subtitle scale factor (also affects ASS when overriding).
+    pub fn set_sub_scale(&mut self, scale: f64) {
+        if let Err(e) = self.mpv.set_property("sub-scale", scale.clamp(0.1, 10.0)) {
+            tracing::warn!(error = %e, "mpv set sub-scale failed");
+        }
+    }
+
+    /// Subtitle text/border colors as hex ("rrggbb", "" = mpv default).
+    pub fn set_sub_colors(&mut self, text: &str, border: &str, border_size: f64) {
+        let hex = |name: &str, value: &str, prop: &str| {
+            if let Some(c) = crate::player_ui::settings::parse_hex_color(value) {
+                if let Err(e) = self
+                    .mpv
+                    .set_property(prop, format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b()))
+                {
+                    tracing::warn!(error = %e, prop, "mpv set {prop} failed");
+                }
+            } else if !value.is_empty() {
+                tracing::warn!(name, value, "invalid subtitle color hex");
+            }
+        };
+        hex("text", text, "sub-color");
+        hex("border", border, "sub-border-color");
+        if let Err(e) = self.mpv.set_property("sub-border-size", border_size) {
+            tracing::warn!(error = %e, "mpv set sub-border-size failed");
+        }
+    }
+
+    /// Force our styling onto authored ASS subtitles.
+    pub fn set_sub_ass_override(&mut self, yes: bool) {
+        let value = if yes { "yes" } else { "no" };
+        if let Err(e) = self.mpv.set_property("sub-ass-override", value) {
+            tracing::warn!(error = %e, "mpv set sub-ass-override failed");
+        }
+    }
+
     /// Seconds of playback of the current/last file.
     pub fn time_pos(&self) -> f64 {
         self.last_time
@@ -387,5 +589,17 @@ mod tests {
         mpv.set_property("mute", true)
             .expect("mute property must be settable");
         assert!(mpv.get_property::<bool>("mute").unwrap());
+
+        // Subtitle control properties.
+        mpv.set_property("sub-pos", 80i64)
+            .expect("sub-pos must be settable");
+        assert_eq!(mpv.get_property::<i64>("sub-pos").unwrap(), 80);
+        mpv.set_property("sub-font-size", 42f64)
+            .expect("sub-font-size must be settable");
+        assert_eq!(mpv.get_property::<f64>("sub-font-size").unwrap(), 42.0);
+        mpv.set_property("secondary-sid", 0i64)
+            .expect("secondary-sid must be settable");
+        assert_eq!(mpv.get_property::<i64>("secondary-sid").unwrap(), 0);
+        let _ = mpv.get_property::<i64>("track-list/count");
     }
 }

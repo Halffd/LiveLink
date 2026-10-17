@@ -20,6 +20,8 @@ pub struct PlayerApp {
     mpv: Option<MpvVideo>,
     playlist: Vec<String>,
     index: usize,
+    /// External subtitle files/URLs re-attached when each file loads.
+    subtitles: Vec<String>,
     settings: PlayerUiSettings,
     settings_dirty: bool,
     config_dir: PathBuf,
@@ -63,10 +65,11 @@ impl PlayerApp {
             }
         }
 
-        Self {
+        let mut app = Self {
             mpv,
             playlist: window.playlist.clone(),
             index: 0,
+            subtitles: window.subtitles.clone(),
             settings,
             settings_dirty: false,
             config_dir: window.config_dir.clone(),
@@ -77,6 +80,27 @@ impl PlayerApp {
             settings_open: false,
             theme_applied: false,
             seek_drag: None,
+        };
+        app.apply_sub_settings();
+        app
+    }
+
+    /// Push subtitle and video framing settings to mpv (init + Apply).
+    fn apply_sub_settings(&mut self) {
+        if let Some(mpv) = &mut self.mpv {
+            let s = &self.settings;
+            mpv.set_sub_visible(s.sub_visible);
+            mpv.set_sub_pos(s.sub_pos);
+            mpv.set_secondary_sub_track(s.sub_secondary_id);
+            if !s.sub_font.is_empty() {
+                mpv.set_sub_font(&s.sub_font);
+            }
+            mpv.set_sub_font_size(s.sub_font_size);
+            mpv.set_sub_scale(s.sub_scale);
+            mpv.set_sub_colors(&s.sub_color, &s.sub_border_color, s.sub_border_size);
+            mpv.set_sub_ass_override(s.sub_ass_override);
+            mpv.set_video_pan(s.video_pan_x, s.video_pan_y);
+            mpv.set_video_zoom(s.video_zoom);
         }
     }
 
@@ -154,6 +178,22 @@ impl PlayerApp {
                         mpv.set_mute(value);
                     }
                 }
+                "sub" => {
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.set_sub_track(cmd.value.unwrap_or(0.0) as i64);
+                    }
+                }
+                "sub-pos" => {
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.set_sub_pos(cmd.value.unwrap_or(100.0) as i64);
+                    }
+                }
+                "sub-add" => {
+                    if let (Some(mpv), Some(url)) = (&mut self.mpv, cmd.url) {
+                        mpv.sub_add(&url);
+                        self.subtitles.push(url);
+                    }
+                }
                 "next" => self.advance(1),
                 "prev" => self.advance(-1),
                 "reload" => {
@@ -175,7 +215,16 @@ impl PlayerApp {
         };
         for ev in events {
             match ev {
-                PlayerEvent::Loaded => {}
+                PlayerEvent::Loaded => {
+                    let subs = self.subtitles.clone();
+                    if !subs.is_empty() {
+                        if let Some(mpv) = &mut self.mpv {
+                            for sub in &subs {
+                                mpv.sub_add(sub);
+                            }
+                        }
+                    }
+                }
                 PlayerEvent::Eof => self.advance(1),
                 PlayerEvent::Stopped => {}
                 PlayerEvent::Failed => {
@@ -401,6 +450,43 @@ impl PlayerApp {
                                 }
                             }
 
+                            if let Some(mpv) = &mut self.mpv {
+                                let tracks = mpv.sub_tracks();
+                                if !tracks.is_empty() {
+                                    let mut current = mpv.current_sub_id();
+                                    let mut selected = false;
+                                    egui::ComboBox::from_id_salt("sub_track")
+                                        .selected_text(if current == 0 {
+                                            "CC off".to_string()
+                                        } else {
+                                            tracks
+                                                .iter()
+                                                .find(|t| t.id == current)
+                                                .map(|t| format!("CC: {}", t.label()))
+                                                .unwrap_or_else(|| format!("CC: {current}"))
+                                        })
+                                        .width(140.0)
+                                        .show_ui(ui, |ui| {
+                                            if ui.selectable_label(current == 0, "off").clicked() {
+                                                current = 0;
+                                                selected = true;
+                                            }
+                                            for t in &tracks {
+                                                if ui
+                                                    .selectable_label(t.id == current, t.label())
+                                                    .clicked()
+                                                {
+                                                    current = t.id;
+                                                    selected = true;
+                                                }
+                                            }
+                                        });
+                                    if selected {
+                                        mpv.set_sub_track(current);
+                                    }
+                                }
+                            }
+
                             let mut save_volume = false;
                             if let Some(mpv) = &mut self.mpv {
                                 if ui.button(if mpv.muted() { "🔇" } else { "🔊" }).clicked() {
@@ -459,6 +545,13 @@ impl PlayerApp {
 
     fn paint_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
+        let sub_tracks = self
+            .mpv
+            .as_ref()
+            .map(|m| m.sub_tracks())
+            .unwrap_or_default();
+        let current_sub = self.mpv.as_ref().map(|m| m.current_sub_id()).unwrap_or(0);
+        let mut sub_pick: Option<i64> = None;
         egui::Window::new("Player settings")
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -522,15 +615,120 @@ impl PlayerApp {
                     ui.add(egui::Slider::new(&mut s.rounding, 0.0..=24.0));
                 });
                 ui.separator();
+                ui.heading("Subtitles");
+                ui.checkbox(&mut s.sub_visible, "Show subtitles");
+                if !sub_tracks.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label("Track:");
+                        let current_label = if current_sub == 0 {
+                            "off".to_string()
+                        } else {
+                            sub_tracks
+                                .iter()
+                                .find(|t| t.id == current_sub)
+                                .map(|t| t.label())
+                                .unwrap_or_else(|| current_sub.to_string())
+                        };
+                        egui::ComboBox::from_id_salt("settings_sub_track")
+                            .selected_text(current_label)
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(current_sub == 0, "off").clicked() {
+                                    sub_pick = Some(0);
+                                }
+                                for t in &sub_tracks {
+                                    if ui.selectable_label(t.id == current_sub, t.label()).clicked()
+                                    {
+                                        sub_pick = Some(t.id);
+                                    }
+                                }
+                            });
+                        ui.label("Stack:");
+                        egui::ComboBox::from_id_salt("settings_sub_secondary")
+                            .selected_text(if s.sub_secondary_id == 0 {
+                                "off".to_string()
+                            } else {
+                                sub_tracks
+                                    .iter()
+                                    .find(|t| t.id == s.sub_secondary_id)
+                                    .map(|t| t.label())
+                                    .unwrap_or_else(|| s.sub_secondary_id.to_string())
+                            })
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(s.sub_secondary_id == 0, "off")
+                                    .clicked()
+                                {
+                                    s.sub_secondary_id = 0;
+                                }
+                                for t in &sub_tracks {
+                                    if ui
+                                        .selectable_label(t.id == s.sub_secondary_id, t.label())
+                                        .clicked()
+                                    {
+                                        s.sub_secondary_id = t.id;
+                                    }
+                                }
+                            });
+                    });
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Position:");
+                    ui.add(egui::Slider::new(&mut s.sub_pos, 0..=100).text("0 = top, 100 = bottom"));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Font:");
+                    ui.text_edit_singleline(&mut s.sub_font);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Font size:");
+                    ui.add(egui::Slider::new(&mut s.sub_font_size, 10.0..=120.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Scale:");
+                    ui.add(egui::Slider::new(&mut s.sub_scale, 0.1..=5.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Text color (hex, empty = default):");
+                    ui.text_edit_singleline(&mut s.sub_color);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Border color:");
+                    ui.text_edit_singleline(&mut s.sub_border_color);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Border size:");
+                    ui.add(egui::Slider::new(&mut s.sub_border_size, 0.0..=10.0));
+                });
+                ui.checkbox(
+                    &mut s.sub_ass_override,
+                    "Force styling on ASS subtitles (needed for youtube/position/scale)",
+                );
+                ui.separator();
+                ui.heading("Video framing");
+                ui.horizontal(|ui| {
+                    ui.label("Pan X:");
+                    ui.add(egui::Slider::new(&mut s.video_pan_x, -1.0..=1.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Pan Y:");
+                    ui.add(egui::Slider::new(&mut s.video_pan_y, -1.0..=1.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Zoom:");
+                    ui.add(egui::Slider::new(&mut s.video_zoom, 0.5..=4.0));
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Apply").clicked() {
                         self.apply_viewport_settings(ctx);
+                        self.apply_sub_settings();
                         self.theme_applied = false;
                         self.save_settings();
                     }
                     if ui.button("Reset defaults").clicked() {
                         self.settings = PlayerUiSettings::default();
                         self.apply_viewport_settings(ctx);
+                        self.apply_sub_settings();
                         self.theme_applied = false;
                         self.save_settings();
                     }
@@ -540,8 +738,13 @@ impl PlayerApp {
                     PlayerUiSettings::path(&self.config_dir).display()
                 ));
                 ui.separator();
-                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · f fullscreen · , . frame step");
+                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · v subs · j next sub · f fullscreen · , . frame step");
             });
+        if let Some(id) = sub_pick {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.set_sub_track(id);
+            }
+        }
         self.settings_open = open;
     }
 }
@@ -555,7 +758,19 @@ impl eframe::App for PlayerApp {
 
         self.drain_commands(ctx);
 
-        let (space, left, right, up, down, mute_key, full, step_fwd, step_back) = ctx.input(|i| {
+        let (
+            space,
+            left,
+            right,
+            up,
+            down,
+            mute_key,
+            full,
+            step_fwd,
+            step_back,
+            subs_toggle,
+            sub_next,
+        ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
                 i.key_pressed(egui::Key::ArrowLeft),
@@ -566,6 +781,8 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::F),
                 i.key_pressed(egui::Key::Period),
                 i.key_pressed(egui::Key::Comma),
+                i.key_pressed(egui::Key::V),
+                i.key_pressed(egui::Key::J),
             )
         });
         if space {
@@ -608,6 +825,16 @@ impl eframe::App for PlayerApp {
         if step_back {
             if let Some(mpv) = &mut self.mpv {
                 mpv.frame_back_step();
+            }
+        }
+        if subs_toggle {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.set_sub_visible(!mpv.sub_visible());
+            }
+        }
+        if sub_next {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.cycle_sub();
             }
         }
 

@@ -202,6 +202,8 @@ pub struct PlayerUiCommand {
   pub borderless: bool,
   #[arg(long, help = "Rotate video 0, 90, 180, or 270 degrees")]
   pub rotate: Option<u32>,
+  #[arg(long, help = "External subtitle file or URL (repeatable, attached to every media)")]
+  pub sub: Vec<String>,
   #[arg(long, help = "Disable the JSON control port")]
   pub no_control: bool,
   #[arg(long, help = "Control port (default 3100 + screen)")]
@@ -787,6 +789,7 @@ Commands::Diagnostics => {
     crate::player_ui::run(crate::player_ui::PlayerWindowConfig {
       screen_cfg,
       playlist: urls,
+      subtitles: cmd.sub.clone(),
       config_dir: std::path::PathBuf::from(cli.config_dir.clone()),
       control_port,
       borderless: cmd.borderless,
@@ -942,6 +945,8 @@ mod tests {
             "--borderless",
             "--rotate",
             "90",
+            "--sub",
+            "/tmp/subs.srt",
             "--no-control",
             "--port",
             "3105",
@@ -960,6 +965,7 @@ mod tests {
                 assert_eq!(cmd.height, Some(720));
                 assert!(cmd.borderless);
                 assert_eq!(cmd.rotate, Some(90));
+                assert_eq!(cmd.sub, vec!["/tmp/subs.srt".to_string()]);
                 assert!(cmd.no_control);
                 assert_eq!(cmd.port, Some(3105));
             }

@@ -50,6 +50,32 @@ pub struct PlayerUiSettings {
     pub respawn: bool,
     /// Initial playback volume (mpv scale, 0-130)
     pub volume: i64,
+    /// Show subtitles (mpv sub-visibility)
+    pub sub_visible: bool,
+    /// Subtitle vertical position: 0 = top .. 100 = bottom
+    pub sub_pos: i64,
+    /// Stacked second subtitle language track id (0 = off)
+    pub sub_secondary_id: i64,
+    /// Subtitle font name (empty = mpv default)
+    pub sub_font: String,
+    /// Subtitle font size for plain text subs (mpv default 55)
+    pub sub_font_size: f64,
+    /// Subtitle scale factor (0.1-10)
+    pub sub_scale: f64,
+    /// Subtitle text color hex ("rrggbb", empty = mpv default)
+    pub sub_color: String,
+    /// Subtitle border color hex (empty = mpv default)
+    pub sub_border_color: String,
+    /// Subtitle border size in points (mpv default 3)
+    pub sub_border_size: f64,
+    /// Force styling onto authored ASS subtitles (sub-ass-override)
+    pub sub_ass_override: bool,
+    /// Video pan X (-1..1, fraction of window size)
+    pub video_pan_x: f64,
+    /// Video pan Y (-1..1, fraction of window size)
+    pub video_pan_y: f64,
+    /// Video zoom (1.0 = fit)
+    pub video_zoom: f64,
 }
 
 impl Default for PlayerUiSettings {
@@ -69,6 +95,19 @@ impl Default for PlayerUiSettings {
             loop_playlist: true,
             respawn: true,
             volume: 100,
+            sub_visible: true,
+            sub_pos: 100,
+            sub_secondary_id: 0,
+            sub_font: String::new(),
+            sub_font_size: 55.0,
+            sub_scale: 1.0,
+            sub_color: String::new(),
+            sub_border_color: String::new(),
+            sub_border_size: 3.0,
+            sub_ass_override: false,
+            video_pan_x: 0.0,
+            video_pan_y: 0.0,
+            video_zoom: 1.0,
         }
     }
 }
