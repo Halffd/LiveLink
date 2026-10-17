@@ -52,10 +52,18 @@ pub struct PlayerUiSettings {
     pub volume: i64,
     /// Show subtitles (mpv sub-visibility)
     pub sub_visible: bool,
+    /// Show the stacked secondary subtitle (mpv secondary-sub-visibility)
+    pub sub_secondary_visible: bool,
     /// Subtitle vertical position: 0 = top .. 100 = bottom
     pub sub_pos: i64,
     /// Stacked second subtitle language track id (0 = off)
     pub sub_secondary_id: i64,
+    /// Primary subtitle delay in seconds (negative = earlier)
+    pub sub_delay: f64,
+    /// Secondary subtitle delay in seconds
+    pub sub_secondary_delay: f64,
+    /// Pause playback when a subtitle ends (Memento subtitle-pause)
+    pub sub_pause_end: bool,
     /// Subtitle font name (empty = mpv default)
     pub sub_font: String,
     /// Subtitle font size for plain text subs (mpv default 55)
@@ -96,8 +104,12 @@ impl Default for PlayerUiSettings {
             respawn: true,
             volume: 100,
             sub_visible: true,
+            sub_secondary_visible: true,
             sub_pos: 100,
             sub_secondary_id: 0,
+            sub_delay: 0.0,
+            sub_secondary_delay: 0.0,
+            sub_pause_end: false,
             sub_font: String::new(),
             sub_font_size: 55.0,
             sub_scale: 1.0,

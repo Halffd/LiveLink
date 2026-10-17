@@ -1,6 +1,7 @@
 //! Single-window libmpv player: video fills the window, controls overlay on
 //! demand, settings persisted to player-ui.json.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -11,10 +12,16 @@ use crate::player_ui::control::PlayerCommand;
 use crate::player_ui::settings::{
     PlayerUiSettings, CONTROLS_ALWAYS, CONTROLS_AUTO, CONTROLS_NEVER,
 };
+use crate::player_ui::subtitle::{self, SubtitleInfo};
 use crate::player_ui::PlayerWindowConfig;
 use crate::services::libmpv::{MpvVideo, PlayerEvent};
 
 const OVERLAY_HIDE_AFTER: Duration = Duration::from_secs(3);
+
+/// Memento's pause-on-subtitle-end tolerance window in seconds.
+const PAUSE_DELTA: f64 = 0.04;
+/// Memento's seek epsilon when jumping to a subtitle line.
+const SEEK_ERROR: f64 = 0.028;
 
 pub struct PlayerApp {
     mpv: Option<MpvVideo>,
@@ -33,6 +40,20 @@ pub struct PlayerApp {
     theme_applied: bool,
     /// Slider position while the user is dragging the seek bar.
     seek_drag: Option<f64>,
+    /// Whether the subtitle list panel is visible.
+    sub_list_open: bool,
+    /// Search filter for the subtitle list panel.
+    sub_search: String,
+    /// Parsed external subtitle lines per track id (Memento's subtitle map).
+    subs_parsed: HashMap<i64, Vec<SubtitleInfo>>,
+    /// Track id the parsed primary list belongs to.
+    tracked_primary_sid: i64,
+    /// Track id the parsed secondary list belongs to.
+    tracked_secondary_sid: i64,
+    /// Set after pausing for the current subtitle (reset when it changes).
+    paused_for_subtitle: bool,
+    /// Index of the primary subtitle line active at the last frame.
+    last_sub_index: Option<usize>,
 }
 
 impl PlayerApp {
@@ -80,6 +101,13 @@ impl PlayerApp {
             settings_open: false,
             theme_applied: false,
             seek_drag: None,
+            sub_list_open: false,
+            sub_search: String::new(),
+            subs_parsed: HashMap::new(),
+            tracked_primary_sid: -1,
+            tracked_secondary_sid: -1,
+            paused_for_subtitle: false,
+            last_sub_index: None,
         };
         app.apply_sub_settings();
         app
@@ -92,6 +120,9 @@ impl PlayerApp {
             mpv.set_sub_visible(s.sub_visible);
             mpv.set_sub_pos(s.sub_pos);
             mpv.set_secondary_sub_track(s.sub_secondary_id);
+            mpv.set_secondary_sub_visible(s.sub_secondary_visible);
+            mpv.set_sub_delay(s.sub_delay);
+            mpv.set_secondary_sub_delay(s.sub_secondary_delay);
             if !s.sub_font.is_empty() {
                 mpv.set_sub_font(&s.sub_font);
             }
@@ -102,6 +133,172 @@ impl PlayerApp {
             mpv.set_video_pan(s.video_pan_x, s.video_pan_y);
             mpv.set_video_zoom(s.video_zoom);
         }
+    }
+
+    /// Parse (and cache) the subtitle lines of an external track, mirroring
+    /// Memento's per-sid subtitle map.
+    fn ensure_parsed(&mut self, sid: i64) {
+        if sid <= 0 || self.subs_parsed.contains_key(&sid) {
+            return;
+        }
+        let filename = self.mpv.as_ref().and_then(|m| {
+            m.sub_tracks()
+                .into_iter()
+                .find(|t| t.id == sid)
+                .and_then(|t| t.external_filename)
+        });
+        if let Some(file) = filename {
+            let parsed = subtitle::parse_subtitles(&file);
+            if !parsed.is_empty() {
+                self.subs_parsed.insert(sid, parsed);
+            }
+        }
+    }
+
+    /// Re-resolve the parsed lists when the selected tracks change.
+    fn refresh_subtitle_lists(&mut self) {
+        let Some(mpv) = &self.mpv else {
+            return;
+        };
+        let primary = mpv.current_sub_id();
+        let secondary = mpv.current_secondary_sub_id();
+        if primary != self.tracked_primary_sid {
+            self.tracked_primary_sid = primary;
+            self.last_sub_index = None;
+            self.paused_for_subtitle = false;
+            self.ensure_parsed(primary);
+        }
+        if secondary != self.tracked_secondary_sid {
+            self.tracked_secondary_sid = secondary;
+            self.ensure_parsed(secondary);
+        }
+    }
+
+    /// Memento's pause-on-subtitle-end: pause once when the current primary
+    /// subtitle line reaches its end (within PAUSE_DELTA). No-op without a
+    /// parsed track (e.g. embedded youtube subs).
+    fn handle_pause_on_subtitle_end(&mut self) {
+        if !self.settings.sub_pause_end || self.paused_for_subtitle {
+            return;
+        }
+        let playing = self.mpv.as_ref().map(|m| m.playing).unwrap_or(false);
+        let paused = self.mpv.as_ref().map(|m| m.paused).unwrap_or(true);
+        if !playing || paused {
+            return;
+        }
+        let Some(list) = self.subs_parsed.get(&self.tracked_primary_sid) else {
+            return;
+        };
+        let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
+        // Find the line covering t: last line with start <= t.
+        let idx = list.partition_point(|s| s.start <= t).checked_sub(1);
+        let Some(idx) = idx else {
+            return;
+        };
+        let line = &list[idx];
+        if t >= line.end {
+            return;
+        }
+        if self.last_sub_index != Some(idx) {
+            // New subtitle: allow pausing at its end again.
+            self.last_sub_index = Some(idx);
+            self.paused_for_subtitle = false;
+            return;
+        }
+        let time_to_end = line.end - t;
+        if time_to_end.abs() <= PAUSE_DELTA && t > PAUSE_DELTA {
+            if let Some(mpv) = &mut self.mpv {
+                mpv.set_paused(true);
+            }
+            self.paused_for_subtitle = true;
+        }
+    }
+
+    /// The subtitle list panel: parsed lines of the primary (and secondary)
+    /// track with timestamps, current-line highlight, search, and click to
+    /// seek — Memento's subtitle list.
+    fn paint_subtitle_list(&mut self, ctx: &egui::Context) {
+        let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
+        let accent = ctx.style().visuals.hyperlink_color;
+        let primary = self
+            .subs_parsed
+            .get(&self.tracked_primary_sid)
+            .cloned()
+            .unwrap_or_default();
+        let secondary = self
+            .subs_parsed
+            .get(&self.tracked_secondary_sid)
+            .cloned()
+            .unwrap_or_default();
+        let search = self.sub_search.to_lowercase();
+        let matches =
+            |line: &SubtitleInfo| search.is_empty() || line.text.to_lowercase().contains(&search);
+
+        egui::SidePanel::right("subtitle_list")
+            .resizable(true)
+            .default_width(380.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Subtitles");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sub_search)
+                                .hint_text("Search...")
+                                .desired_width(160.0),
+                        );
+                    });
+                });
+                ui.separator();
+
+                let show_secondary = self.tracked_secondary_sid > 0 && !secondary.is_empty();
+                let mut render_list = |ui: &mut egui::Ui, title: &str, list: &[SubtitleInfo]| {
+                    ui.strong(title);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for line in list.iter() {
+                                if !matches(line) {
+                                    continue;
+                                }
+                                let is_current = t >= line.start && t < line.end;
+                                let label = format!(
+                                    "[{:02}:{:06.3}] {}",
+                                    (line.start / 60.0).floor(),
+                                    line.start % 60.0,
+                                    line.text.replace('\n', " / ")
+                                );
+                                let mut text = egui::RichText::new(label);
+                                if is_current {
+                                    text = text.strong().color(accent);
+                                }
+                                let response = ui.add(egui::Label::new(text).wrap());
+                                if is_current {
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                }
+                                if response.clicked() {
+                                    // Memento seeks to line start + sub-delay + epsilon.
+                                    let pos = (line.start + SEEK_ERROR).max(0.0);
+                                    if let Some(mpv) = &mut self.mpv {
+                                        mpv.seek_absolute(pos);
+                                    }
+                                }
+                            }
+                            if list.is_empty() {
+                                ui.weak("no parsed lines (external subtitle files only)");
+                            }
+                        });
+                    ui.separator();
+                };
+
+                if show_secondary {
+                    ui.columns(2, |columns| {
+                        render_list(&mut columns[0], "Primary", &primary);
+                        render_list(&mut columns[1], "Secondary", &secondary);
+                    });
+                } else {
+                    render_list(ui, "Primary", &primary);
+                }
+            });
     }
 
     fn load_current(&mut self) {
@@ -528,6 +725,9 @@ impl PlayerApp {
                                 self.save_settings();
                             }
 
+                            if ui.button("☰").on_hover_text("Subtitle list (l)").clicked() {
+                                self.sub_list_open = !self.sub_list_open;
+                            }
                             if ui.button("⚙").clicked() {
                                 self.settings_open = !self.settings_open;
                             }
@@ -617,6 +817,16 @@ impl PlayerApp {
                 ui.separator();
                 ui.heading("Subtitles");
                 ui.checkbox(&mut s.sub_visible, "Show subtitles");
+                ui.checkbox(&mut s.sub_secondary_visible, "Show stacked subtitle");
+                ui.checkbox(&mut s.sub_pause_end, "Pause when a subtitle ends");
+                ui.horizontal(|ui| {
+                    ui.label("Delay (s):");
+                    ui.add(egui::Slider::new(&mut s.sub_delay, -10.0..=10.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Stack delay (s):");
+                    ui.add(egui::Slider::new(&mut s.sub_secondary_delay, -10.0..=10.0));
+                });
                 if !sub_tracks.is_empty() {
                     ui.horizontal(|ui| {
                         ui.label("Track:");
@@ -738,7 +948,7 @@ impl PlayerApp {
                     PlayerUiSettings::path(&self.config_dir).display()
                 ));
                 ui.separator();
-                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · v subs · j next sub · f fullscreen · , . frame step");
+                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · v subs · j next sub · [ ] sub size · l sub list · f fullscreen · , . frame step");
             });
         if let Some(id) = sub_pick {
             if let Some(mpv) = &mut self.mpv {
@@ -758,6 +968,12 @@ impl eframe::App for PlayerApp {
 
         self.drain_commands(ctx);
 
+        self.refresh_subtitle_lists();
+        self.handle_pause_on_subtitle_end();
+
+        // Ignore shortcuts while a text field has the keyboard (search box,
+        // settings inputs).
+        let typing = ctx.wants_keyboard_input();
         let (
             space,
             left,
@@ -770,6 +986,9 @@ impl eframe::App for PlayerApp {
             step_back,
             subs_toggle,
             sub_next,
+            list_toggle,
+            sub_bigger,
+            sub_smaller,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -783,8 +1002,25 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::Comma),
                 i.key_pressed(egui::Key::V),
                 i.key_pressed(egui::Key::J),
+                i.key_pressed(egui::Key::L),
+                i.key_pressed(egui::Key::OpenBracket),
+                i.key_pressed(egui::Key::CloseBracket),
             )
         });
+        let space = space && !typing;
+        let left = left && !typing;
+        let right = right && !typing;
+        let up = up && !typing;
+        let down = down && !typing;
+        let mute_key = mute_key && !typing;
+        let full = full && !typing;
+        let step_fwd = step_fwd && !typing;
+        let step_back = step_back && !typing;
+        let subs_toggle = subs_toggle && !typing;
+        let sub_next = sub_next && !typing;
+        let list_toggle = list_toggle && !typing;
+        let sub_bigger = sub_bigger && !typing;
+        let sub_smaller = sub_smaller && !typing;
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -837,11 +1073,25 @@ impl eframe::App for PlayerApp {
                 mpv.cycle_sub();
             }
         }
+        if list_toggle {
+            self.sub_list_open = !self.sub_list_open;
+        }
+        if sub_bigger || sub_smaller {
+            // Memento's subtitle size increase/decrease.
+            let factor = if sub_bigger { 1.1 } else { 1.0 / 1.1 };
+            self.settings.sub_scale = (self.settings.sub_scale * factor).clamp(0.1, 5.0);
+            if let Some(mpv) = &mut self.mpv {
+                mpv.set_sub_scale(self.settings.sub_scale);
+            }
+        }
 
         self.handle_events();
         self.render_mpv(frame);
         self.paint_video(ctx);
         self.paint_overlays(ctx);
+        if self.sub_list_open {
+            self.paint_subtitle_list(ctx);
+        }
 
         let playing = self.mpv.as_ref().map(|m| m.playing).unwrap_or(false);
         if playing {

@@ -6,6 +6,7 @@
 pub mod app;
 pub mod control;
 pub mod settings;
+pub mod subtitle;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;

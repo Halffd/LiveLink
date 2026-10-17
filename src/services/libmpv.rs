@@ -28,6 +28,10 @@ pub struct SubTrackInfo {
     pub lang: String,
     pub title: String,
     pub selected: bool,
+    /// Whether the track comes from an external file
+    pub external: bool,
+    /// Path/URL of the external subtitle file, when present
+    pub external_filename: Option<String>,
 }
 
 impl SubTrackInfo {
@@ -353,6 +357,15 @@ impl MpvVideo {
                     .mpv
                     .get_property::<bool>(&format!("{track}/selected"))
                     .unwrap_or(false),
+                external: self
+                    .mpv
+                    .get_property::<bool>(&format!("{track}/external"))
+                    .unwrap_or(false),
+                external_filename: self
+                    .mpv
+                    .get_property::<String>(&format!("{track}/external-filename"))
+                    .ok()
+                    .filter(|f| !f.is_empty()),
             });
         }
         tracks
@@ -402,6 +415,46 @@ impl MpvVideo {
         self.mpv
             .get_property::<bool>("sub-visibility")
             .unwrap_or(true)
+    }
+
+    /// Show or hide the stacked secondary subtitle track only.
+    pub fn set_secondary_sub_visible(&mut self, visible: bool) {
+        if let Err(e) = self.mpv.set_property("secondary-sub-visibility", visible) {
+            tracing::warn!(error = %e, "mpv set secondary-sub-visibility failed");
+        }
+    }
+
+    /// Subtitle delay in seconds (negative shows subs earlier).
+    pub fn set_sub_delay(&mut self, delay: f64) {
+        if let Err(e) = self.mpv.set_property("sub-delay", delay) {
+            tracing::warn!(error = %e, delay, "mpv set sub-delay failed");
+        }
+    }
+
+    /// Current primary subtitle delay in seconds.
+    pub fn sub_delay(&self) -> f64 {
+        self.mpv.get_property::<f64>("sub-delay").unwrap_or(0.0)
+    }
+
+    /// Delay of the stacked secondary subtitle track in seconds.
+    pub fn set_secondary_sub_delay(&mut self, delay: f64) {
+        if let Err(e) = self.mpv.set_property("secondary-sub-delay", delay) {
+            tracing::warn!(error = %e, delay, "mpv set secondary-sub-delay failed");
+        }
+    }
+
+    /// Current secondary subtitle delay in seconds.
+    pub fn secondary_sub_delay(&self) -> f64 {
+        self.mpv
+            .get_property::<f64>("secondary-sub-delay")
+            .unwrap_or(0.0)
+    }
+
+    /// Text of the currently shown primary subtitle (empty when none).
+    pub fn sub_text(&self) -> String {
+        self.mpv
+            .get_property::<String>("sub-text")
+            .unwrap_or_default()
     }
 
     /// Subtitle vertical position, 0 = top .. 100 = bottom (default 100).
