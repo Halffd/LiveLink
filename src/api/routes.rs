@@ -1,5 +1,5 @@
 use axum::{
-  extract::State,
+  extract::{Path, State},
   http::StatusCode,
   response::Json,
   routing::{get, post},
@@ -31,6 +31,18 @@ struct StatusResponse {
     screens: Vec<ScreenStatus>,
     total_active: usize,
     max_streams: usize,
+}
+
+#[derive(Deserialize)]
+pub struct ChannelPlayRequest {
+    screen: u32,
+    url: String,
+}
+
+#[derive(Deserialize)]
+pub struct ChannelMoveRequest {
+    from: u32,
+    to: u32,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +116,79 @@ async fn start_stream(
         "success": true,
         "screen": req.screen
     })))
+}
+
+async fn channel_next(
+    State(state): State<AppState>,
+    Json(req): Json<StartRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .orchestrator
+        .next_channel(req.screen)
+        .await
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(serde_json::json!({ "success": true, "screen": req.screen })))
+}
+
+async fn channel_prev(
+    State(state): State<AppState>,
+    Json(req): Json<StartRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .orchestrator
+        .prev_channel(req.screen)
+        .await
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(serde_json::json!({ "success": true, "screen": req.screen })))
+}
+
+async fn channel_play(
+    State(state): State<AppState>,
+    Json(req): Json<ChannelPlayRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .orchestrator
+        .play_channel(req.screen, &req.url)
+        .await
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(
+        serde_json::json!({ "success": true, "screen": req.screen, "url": req.url }),
+    ))
+}
+
+async fn channel_move(
+    State(state): State<AppState>,
+    Json(req): Json<ChannelMoveRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state
+        .orchestrator
+        .move_stream(req.from, req.to)
+        .await
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
+    Ok(Json(
+        serde_json::json!({ "success": true, "from": req.from, "to": req.to }),
+    ))
+}
+
+/// Current channel and full queue of a screen, for the player's channel panel.
+async fn get_channels(
+    State(state): State<AppState>,
+    Path(screen): Path<u32>,
+) -> Json<serde_json::Value> {
+    let current = state.orchestrator.current_channel(screen).await;
+    let queue = {
+        let queues = state.orchestrator.get_queue();
+        let queues = queues.lock().await;
+        queues
+            .get_queue(screen)
+            .map(|q| q.sources().to_vec())
+            .unwrap_or_default()
+    };
+    Json(serde_json::json!({
+        "screen": screen,
+        "current": current,
+        "queue": queue,
+    }))
 }
 
 async fn stop_stream(
@@ -439,6 +524,11 @@ pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
     .route("/stream/start", post(start_stream))
     .route("/stream/stop", post(stop_stream))
     .route("/stream/stop-all", post(stop_all))
+    .route("/channel/next", post(channel_next))
+    .route("/channel/prev", post(channel_prev))
+    .route("/channel/play", post(channel_play))
+    .route("/channel/move", post(channel_move))
+    .route("/channels/:screen", get(get_channels))
     .route("/queue/add", post(queue_add))
     .route("/queue/clear", post(queue_clear))
     .route("/queue/clear-watched", post(clear_watched))

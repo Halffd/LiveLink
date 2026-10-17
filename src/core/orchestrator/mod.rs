@@ -1,3 +1,4 @@
+pub mod channel_ops;
 pub mod clone_impl;
 pub mod embedded_ops;
 pub mod fetch_ops;
@@ -43,6 +44,8 @@ kick_service: Arc<KickService>,
   facebook_service: Arc<FacebookService>,
   pub max_streams: usize,
   stream_changes: tokio::sync::broadcast::Sender<StreamChangeEvent>,
+  /// Recently watched channels per screen, for prev-channel.
+  pub(crate) channel_history: dashmap::DashMap<u32, Vec<crate::queue::queue::StreamSource>>,
 }
 
 /// A stream on a screen changed, either by starting a new one or stopping.
@@ -151,6 +154,7 @@ debug: config.debug,
             facebook_service: Arc::new(facebook_service),
             max_streams,
             stream_changes: tokio::sync::broadcast::channel(32).0,
+            channel_history: dashmap::DashMap::new(),
         };
 
   let orchestrator = Arc::new(orchestrator);

@@ -63,6 +63,9 @@ pub enum Commands {
   PlayerPause { screen: Option<String> },
   PlayerVolume { volume: u8, screen: Option<String> },
   PlayerSeek { seconds: i64, screen: u32 },
+  ChannelNext { screen: u32 },
+  ChannelPrev { screen: u32 },
+  ChannelMove { from: u32, to: u32 },
   Player(PlayerCommand),
   Download(DownloadCommand),
   Query(QueryCommand),
@@ -647,6 +650,18 @@ Commands::SessionToggle { screen } => {
                 println!("Screen {} enabled", screen);
             }
         }
+        Commands::ChannelNext { screen } => {
+            orchestrator.next_channel(*screen).await?;
+            println!("Skipped to next channel on screen {}", screen);
+        }
+        Commands::ChannelPrev { screen } => {
+            orchestrator.prev_channel(*screen).await?;
+            println!("Went back to previous channel on screen {}", screen);
+        }
+        Commands::ChannelMove { from, to } => {
+            orchestrator.move_stream(*from, *to).await?;
+            println!("Moved stream from screen {} to screen {}", from, to);
+        }
         Commands::PlayerPause { screen } => {
             let screens: Vec<u32> = match screen.as_deref() {
                 Some("all") => vec![0, 1],
@@ -869,6 +884,13 @@ Commands::Diagnostics => {
       borderless: cmd.borderless,
       position,
       rotate: cmd.rotate.unwrap_or(0),
+      server_url: Some(format!("http://localhost:{}", cli.port)),
+      screens: orchestrator
+        .config
+        .screens
+        .iter()
+        .map(|s| s.screen)
+        .collect(),
     })?;
   }
   Commands::Subs(cmd) => {
@@ -1027,6 +1049,30 @@ mod tests {
         assert!(cli.is_ok());
         let cli = cli.unwrap();
         assert_eq!(cli.port, 8080);
+    }
+
+    #[test]
+    fn test_parse_channel_commands() {
+        let cli = Cli::try_parse_from(["livelink", "channel-next", "1"]).unwrap();
+        match cli.command {
+            Commands::ChannelNext { screen } => assert_eq!(screen, 1),
+            _ => panic!("Expected ChannelNext"),
+        }
+
+        let cli = Cli::try_parse_from(["livelink", "channel-prev", "1"]).unwrap();
+        match cli.command {
+            Commands::ChannelPrev { screen } => assert_eq!(screen, 1),
+            _ => panic!("Expected ChannelPrev"),
+        }
+
+        let cli = Cli::try_parse_from(["livelink", "channel-move", "0", "1"]).unwrap();
+        match cli.command {
+            Commands::ChannelMove { from, to } => {
+                assert_eq!(from, 0);
+                assert_eq!(to, 1);
+            }
+            _ => panic!("Expected ChannelMove"),
+        }
     }
 
     #[test]

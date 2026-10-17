@@ -71,6 +71,44 @@ pub struct PlayerApp {
     delay_primary_ephemeral: Option<f64>,
     /// Session-only secondary delay override.
     delay_secondary_ephemeral: Option<f64>,
+    /// LiveLink server base URL for channel surfing.
+    server_url: Option<String>,
+    /// All configured screens (move-to-screen targets).
+    screens: Vec<u32>,
+    /// Whether the channel panel is visible.
+    channels_open: bool,
+    /// Latest channel list snapshot from the server (None = not fetched yet).
+    channels: Option<ChannelsSnapshot>,
+    /// Failed server contact message, shown in the panel.
+    channels_error: Option<String>,
+    /// Receiver for background channel snapshots.
+    channels_rx: Option<std::sync::mpsc::Receiver<ChannelsSnapshot>>,
+}
+
+/// One channel row in the panel.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct ChannelEntry {
+    pub url: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub is_live: bool,
+}
+
+impl ChannelEntry {
+    fn label(&self) -> String {
+        let live = if self.is_live { "[LIVE] " } else { "" };
+        format!("{}{}", live, self.title.as_deref().unwrap_or(&self.url))
+    }
+}
+
+/// Snapshot of a screen's current channel and queue from the server.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct ChannelsSnapshot {
+    #[serde(default)]
+    pub current: Option<ChannelEntry>,
+    #[serde(default)]
+    pub queue: Vec<ChannelEntry>,
 }
 
 impl PlayerApp {
@@ -128,7 +166,18 @@ impl PlayerApp {
             secondary_on: false,
             delay_primary_ephemeral: None,
             delay_secondary_ephemeral: None,
+            server_url: window.server_url.clone(),
+            screens: window.screens.clone(),
+            channels_open: false,
+            channels: None,
+            channels_error: None,
+            channels_rx: None,
         };
+        if let Some(server_url) = window.server_url.clone() {
+            let (tx, rx) = std::sync::mpsc::channel::<ChannelsSnapshot>();
+            Self::spawn_channel_fetch(server_url, screen_cfg.screen, tx);
+            app.channels_rx = Some(rx);
+        }
         app.apply_sub_settings();
         app
     }
@@ -431,6 +480,187 @@ impl PlayerApp {
                 } else {
                     render_list(ui, "Primary", &primary);
                 }
+            });
+    }
+
+    /// Drain fresh channel snapshots from the background fetch thread.
+    fn drain_channels(&mut self) {
+        let Some(rx) = &self.channels_rx else {
+            return;
+        };
+        while let Ok(snapshot) = rx.try_recv() {
+            self.channels = Some(snapshot);
+        }
+    }
+
+    /// POST a channel command to the LiveLink server. Errors surface in the
+    /// channel panel; they are not fatal.
+    fn post_channel_command(&mut self, path: &str, body: &serde_json::Value) {
+        let Some(server) = &self.server_url else {
+            self.channels_error = Some("no server configured".to_string());
+            return;
+        };
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                self.channels_error = Some(format!("http client: {e}"));
+                return;
+            }
+        };
+        match client
+            .post(format!("{}/api/channel/{}", server, path))
+            .json(body)
+            .send()
+        {
+            Ok(resp) if resp.status().is_success() => {
+                self.channels_error = None;
+            }
+            Ok(resp) => {
+                self.channels_error = Some(format!("server: {}", resp.status()));
+            }
+            Err(e) => {
+                self.channels_error = Some(format!("server unreachable: {e}"));
+            }
+        }
+    }
+
+    /// Poll the server for this screen's channels in the background; sends
+    /// snapshots into `tx` every few seconds until the app goes away.
+    fn spawn_channel_fetch(
+        server_url: String,
+        screen: u32,
+        tx: std::sync::mpsc::Sender<ChannelsSnapshot>,
+    ) {
+        std::thread::spawn(move || {
+            let client = match reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(3))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+            loop {
+                if let Ok(resp) = client
+                    .get(format!("{}/api/channels/{}", server_url, screen))
+                    .send()
+                {
+                    if resp.status().is_success() {
+                        if let Ok(snapshot) = resp.json::<ChannelsSnapshot>() {
+                            if tx.send(snapshot).is_err() {
+                                return; // app closed
+                            }
+                        }
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_secs(4));
+            }
+        });
+    }
+
+    /// The channel panel: current channel, queue with click-to-switch, and
+    /// move-to-screen buttons — the TV remote.
+    fn paint_channels(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("channels")
+            .resizable(true)
+            .default_width(320.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Channels");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("≫").on_hover_text("Next channel (n)").clicked() {
+                            self.post_channel_command(
+                                "next",
+                                &serde_json::json!({ "screen": self.screen }),
+                            );
+                        }
+                        if ui
+                            .button("≪")
+                            .on_hover_text("Previous channel (b)")
+                            .clicked()
+                        {
+                            self.post_channel_command(
+                                "prev",
+                                &serde_json::json!({ "screen": self.screen }),
+                            );
+                        }
+                    });
+                });
+                ui.separator();
+
+                if self.server_url.is_none() {
+                    ui.weak("channel surfing needs the LiveLink server (start livelink)");
+                    return;
+                }
+                if let Some(err) = &self.channels_error {
+                    ui.weak(format!("server: {err}"));
+                    ui.separator();
+                }
+
+                let snapshot = self.channels.clone();
+                let Some(snapshot) = snapshot else {
+                    ui.weak("loading channels...");
+                    return;
+                };
+
+                if let Some(current) = &snapshot.current {
+                    ui.label(egui::RichText::new(format!("now: {}", current.label())).strong());
+                } else {
+                    ui.weak("idle");
+                }
+                ui.separator();
+
+                let other_screens: Vec<u32> = self
+                    .screens
+                    .iter()
+                    .copied()
+                    .filter(|s| *s != self.screen)
+                    .collect();
+                if !other_screens.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.label("move to:");
+                        for target in other_screens {
+                            if ui.button(format!("screen {target}")).clicked() {
+                                self.post_channel_command(
+                                    "move",
+                                    &serde_json::json!({
+                                        "from": self.screen,
+                                        "to": target,
+                                    }),
+                                );
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
+
+                let current_url = snapshot.current.as_ref().map(|c| c.url.clone());
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for entry in &snapshot.queue {
+                            let is_current = current_url.as_deref() == Some(entry.url.as_str());
+                            let mut text = egui::RichText::new(entry.label());
+                            if is_current {
+                                text = text.strong().color(ui.visuals().hyperlink_color);
+                            }
+                            let response = ui.add(egui::Label::new(text).wrap());
+                            if response.clicked() {
+                                self.post_channel_command(
+                                    "play",
+                                    &serde_json::json!({
+                                        "screen": self.screen,
+                                        "url": entry.url,
+                                    }),
+                                );
+                            }
+                        }
+                        if snapshot.queue.is_empty() {
+                            ui.weak("queue empty");
+                        }
+                    });
             });
     }
 
@@ -878,6 +1108,9 @@ impl PlayerApp {
                                 self.save_settings();
                             }
 
+                            if ui.button("📺").on_hover_text("Channels (c)").clicked() {
+                                self.channels_open = !self.channels_open;
+                            }
                             if ui.button("☰").on_hover_text("Subtitle list (l)").clicked() {
                                 self.sub_list_open = !self.sub_list_open;
                             }
@@ -1215,6 +1448,9 @@ impl eframe::App for PlayerApp {
             sec_toggle,
             ctrl,
             shift,
+            ch_next,
+            ch_prev,
+            ch_panel,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -1234,6 +1470,9 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::S),
                 i.modifiers.ctrl,
                 i.modifiers.shift,
+                i.key_pressed(egui::Key::N),
+                i.key_pressed(egui::Key::B),
+                i.key_pressed(egui::Key::C),
             )
         });
         let space = space && !typing;
@@ -1250,6 +1489,9 @@ impl eframe::App for PlayerApp {
         let list_toggle = list_toggle && !typing;
         let sub_bigger = sub_bigger && !typing && !ctrl;
         let sub_smaller = sub_smaller && !typing && !ctrl;
+        let ch_next = ch_next && !typing;
+        let ch_prev = ch_prev && !typing;
+        let ch_panel = ch_panel && !typing;
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -1331,10 +1573,24 @@ impl eframe::App for PlayerApp {
             }
         }
 
+        if ch_next {
+            self.post_channel_command("next", &serde_json::json!({ "screen": self.screen }));
+        }
+        if ch_prev {
+            self.post_channel_command("prev", &serde_json::json!({ "screen": self.screen }));
+        }
+        if ch_panel {
+            self.channels_open = !self.channels_open;
+        }
+
+        self.drain_channels();
         self.handle_events();
         self.render_mpv(frame);
         self.paint_video(ctx);
         self.paint_overlays(ctx);
+        if self.channels_open {
+            self.paint_channels(ctx);
+        }
         if self.sub_list_open {
             self.paint_subtitle_list(ctx);
         }

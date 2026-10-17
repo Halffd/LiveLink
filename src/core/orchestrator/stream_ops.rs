@@ -11,6 +11,43 @@ impl Orchestrator {
     pub async fn start_stream(&self, screen: u32) -> Result<(), String> {
         let lock = self.get_or_create_lock(screen).await;
         let _guard = lock.lock().await;
+
+        // Max-stream check before dequeue so a full server never eats a queue
+        // entry. URLs currently playing/starting on other screens are excluded.
+        let active_urls: std::collections::HashSet<String> = {
+            let guard = self.state.lock().await;
+            let active_count = Orchestrator::count_active_streams_internal_with_guard(&guard);
+            if active_count >= self.max_streams {
+                return Err(format!(
+                    "Max streams ({}) reached, {} active",
+                    self.max_streams, active_count
+                ));
+            }
+            guard
+                .values()
+                .filter(|s| s.screen != screen)
+                .filter(|s| matches!(s.state, StreamState::Playing | StreamState::Starting))
+                .filter_map(|s| s.stream.as_ref().map(|i| i.url.clone()))
+                .collect()
+        };
+
+        let stream_source = {
+            let mut queue = self.queue.lock().await;
+            queue.dequeue_next_excluding(screen, &active_urls)
+        };
+
+        let stream_source = stream_source.ok_or_else(|| format!("No stream in queue for screen {}", screen))?;
+
+        self.start_stream_with_source(screen, stream_source).await
+    }
+
+    /// Start a specific source on a screen. Caller must hold the per-screen
+    /// lock; this takes the state lock internally.
+    pub(crate) async fn start_stream_with_source(
+        &self,
+        screen: u32,
+        stream_source: StreamSource,
+    ) -> Result<(), String> {
         let mut guard = self.state.lock().await;
         let active_count = Orchestrator::count_active_streams_internal_with_guard(&guard);
         if active_count >= self.max_streams {
@@ -20,14 +57,6 @@ impl Orchestrator {
             ));
         }
 
-        // URLs currently playing/starting on other screens are excluded
-        let active_urls: std::collections::HashSet<String> = guard
-            .values()
-            .filter(|s| s.screen != screen)
-            .filter(|s| matches!(s.state, StreamState::Playing | StreamState::Starting))
-            .filter_map(|s| s.stream.as_ref().map(|i| i.url.clone()))
-            .collect();
-
         let screen_state = guard.get_mut(&screen).ok_or_else(|| format!("Screen {} not found", screen))?;
 
         if screen_state.state != StreamState::Idle {
@@ -36,13 +65,6 @@ impl Orchestrator {
                 screen, screen_state.state
             ));
         }
-
-        let stream_source = {
-            let mut queue = self.queue.lock().await;
-            queue.dequeue_next_excluding(screen, &active_urls)
-        };
-
-        let stream_source = stream_source.ok_or_else(|| format!("No stream in queue for screen {}", screen))?;
 
         let platform = match stream_source.platform.as_deref() {
             Some("twitch") => Platform::Twitch,

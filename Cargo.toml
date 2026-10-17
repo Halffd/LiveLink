@@ -23,7 +23,7 @@ clap = { version = "4", features = ["derive"] }
 holodex = "0.3"
 twitch_api = { version = "0.7", features = ["helix", "client"] }
 futures = "0.3"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 chrono = "0.4"
 youtube-api = "0.1"
 dotenv = "0.15"

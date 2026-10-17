@@ -33,6 +33,11 @@ pub struct PlayerWindowConfig {
     pub position: Option<[f32; 2]>,
     /// Video rotation in degrees (0/90/180/270).
     pub rotate: u32,
+    /// LiveLink server base URL (e.g. http://localhost:3001) for channel
+    /// surfing; `None` disables server-driven channel switching.
+    pub server_url: Option<String>,
+    /// All configured screen numbers, for the move-to-screen buttons.
+    pub screens: Vec<u32>,
 }
 
 /// Sensible window defaults for a screen that has no config entry.
