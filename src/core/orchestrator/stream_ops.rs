@@ -5,7 +5,7 @@ use crate::queue::queue::StreamSource;
 use crate::services::player::ProcessExit;
 use tracing::{debug, error, info, warn};
 
-use super::Orchestrator;
+use super::{Orchestrator, StreamChangeKind};
 
 impl Orchestrator {
     pub async fn start_stream(&self, screen: u32) -> Result<(), String> {
@@ -66,6 +66,8 @@ impl Orchestrator {
 
         screen_state.start_stream(stream_info);
 
+        self.emit_stream_change(screen, &url, StreamChangeKind::Started);
+
         let player = self.player.clone();
         let player_screen = screen;
         let player_instance = 0;
@@ -106,6 +108,8 @@ impl Orchestrator {
         screen_state.finish_stop();
 
         drop(guard);
+
+        self.emit_stream_change(screen, "", StreamChangeKind::Stopped);
 
         let player = self.player.clone();
         tokio::spawn(async move {

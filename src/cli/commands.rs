@@ -771,7 +771,9 @@ Commands::Diagnostics => {
     let control_port = if cmd.no_control {
       None
     } else {
-      Some(cmd.port.unwrap_or(3100 + u16::try_from(cmd.screen).unwrap_or(0)))
+      Some(cmd.port.unwrap_or(
+        crate::player_ui::control::DEFAULT_BASE_PORT + u16::try_from(cmd.screen).unwrap_or(0),
+      ))
     };
 
     println!(

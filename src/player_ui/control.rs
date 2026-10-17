@@ -17,6 +17,11 @@ use serde::Deserialize;
 use std::net::TcpListener;
 use std::sync::mpsc::Sender;
 
+/// First port of the player control port range; a player window on screen N
+/// defaults to `DEFAULT_BASE_PORT + N`. The server uses the same convention to
+/// forward stream changes.
+pub const DEFAULT_BASE_PORT: u16 = 3100;
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PlayerCommand {
     pub cmd: String,
@@ -90,6 +95,17 @@ pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>) {
             }
         }
     });
+}
+
+/// Send one newline-terminated JSON command to a player control port. Fails
+/// when no player window is listening (the normal case when it is closed).
+pub async fn send_command(port: u16, line: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await?;
+    stream.write_all(line.as_bytes()).await?;
+    stream.write_all(b"\n").await?;
+    stream.flush().await?;
+    Ok(())
 }
 
 #[cfg(test)]

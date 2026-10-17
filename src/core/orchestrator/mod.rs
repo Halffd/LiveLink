@@ -42,9 +42,43 @@ kick_service: Arc<KickService>,
   bilibili_service: Arc<BilibiliService>,
   facebook_service: Arc<FacebookService>,
   pub max_streams: usize,
+  stream_changes: tokio::sync::broadcast::Sender<StreamChangeEvent>,
+}
+
+/// A stream on a screen changed, either by starting a new one or stopping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamChangeEvent {
+    pub screen: u32,
+    pub url: String,
+    pub kind: StreamChangeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamChangeKind {
+    Started,
+    Stopped,
 }
 
 impl Orchestrator {
+    /// Subscribe to stream change events (started/stopped per screen). Used to
+    /// forward changes to standalone player windows via their control port.
+    pub fn subscribe_stream_changes(&self) -> tokio::sync::broadcast::Receiver<StreamChangeEvent> {
+        self.stream_changes.subscribe()
+    }
+
+    /// Publish a stream change to all subscribers. Best-effort: dropping the
+    /// event when no receiver is listening or the buffer is full is fine.
+    pub(crate) fn emit_stream_change(&self, screen: u32, url: &str, kind: StreamChangeKind) {
+        let event = StreamChangeEvent {
+            screen,
+            url: url.to_string(),
+            kind,
+        };
+        if let Err(e) = self.stream_changes.send(event) {
+            debug!(screen, kind = ?kind, error = %e, "no stream change subscribers");
+        }
+    }
+
     pub fn new(
         config: OrchestratorConfig,
         exit_receiver: mpsc::Receiver<ProcessExit>,
@@ -116,6 +150,7 @@ debug: config.debug,
             bilibili_service: Arc::new(bilibili_service),
             facebook_service: Arc::new(facebook_service),
             max_streams,
+            stream_changes: tokio::sync::broadcast::channel(32).0,
         };
 
   let orchestrator = Arc::new(orchestrator);

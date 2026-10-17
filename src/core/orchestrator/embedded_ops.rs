@@ -2,7 +2,7 @@ use crate::core::state::{Platform, ScreenState, StreamInfo, StreamState};
 use crate::queue::queue::StreamSource;
 use tracing::{info, warn};
 
-use super::Orchestrator;
+use super::{Orchestrator, StreamChangeKind};
 
 /// How an embedded (in-process) stream ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,8 @@ impl Orchestrator {
                 s.start_stream(info);
             }
         }
+
+        self.emit_stream_change(screen, &stream_source.url, StreamChangeKind::Started);
 
         info!(screen, url = %stream_source.url, "Embedded stream starting");
         Ok(stream_source)

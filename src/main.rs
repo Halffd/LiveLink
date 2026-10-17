@@ -148,6 +148,47 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
 
+    // Forward stream changes to standalone player windows listening on the
+    // control port convention (DEFAULT_BASE_PORT + screen). Best-effort: no
+    // listener on a screen just means there is no player window for it.
+    {
+        let mut stream_changes = orchestrator.subscribe_stream_changes();
+        tokio::spawn(async move {
+            loop {
+                match stream_changes.recv().await {
+                    Ok(event) => {
+                        let port = livelink::player_ui::control::DEFAULT_BASE_PORT
+                            .saturating_add(u16::try_from(event.screen).unwrap_or(0));
+                        let line = match event.kind {
+                            livelink::core::orchestrator::StreamChangeKind::Started => {
+                                serde_json::json!({"cmd": "play", "url": event.url}).to_string()
+                            }
+                            livelink::core::orchestrator::StreamChangeKind::Stopped => {
+                                serde_json::json!({"cmd": "stop"}).to_string()
+                            }
+                        };
+                        match livelink::player_ui::control::send_command(port, &line).await {
+                            Ok(()) => info!(
+                                screen = event.screen,
+                                kind = ?event.kind,
+                                "forwarded stream change to player window"
+                            ),
+                            Err(e) => debug!(
+                                screen = event.screen,
+                                error = %e,
+                                "no player window listening on control port"
+                            ),
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "stream change receiver lagged");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+    }
+
     tokio::spawn(async move {
         network_monitor.start().await;
     });
