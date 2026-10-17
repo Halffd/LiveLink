@@ -12,8 +12,19 @@
 //!   {"cmd":"sub","value":2}               select subtitle track (0 = off)
 //!   {"cmd":"sub-pos","value":50}          subtitle position 0=top .. 100=bottom
 //!   {"cmd":"sub-add","url":"subs.srt"}    attach external subtitle file/url
+//!   {"cmd":"sub-delay","value":1.5}       primary delay (s, ephemeral override)
+//!   {"cmd":"sub-delay-by","value":-0.1}  nudge primary delay relative
+//!   {"cmd":"sub-delay-reset"}             drop primary delay override
+//!   {"cmd":"sec-sub-delay","value":1.5}   secondary delay (s)
+//!   {"cmd":"sec-sub-delay-by","value":0}  nudge secondary delay relative
+//!   {"cmd":"sec-sub-delay-reset"}         drop secondary delay override
+//!   {"cmd":"sub-mode","text":"stacked"}   visibility mode: primary-only,
+//!                                        secondary-only, stacked, hidden,
+//!                                        toggle-secondary
+//!   {"cmd":"sub-mode-cycle"}              cycle to the next mode
+//!   {"cmd":"sub-toggle-secondary"}        toggle the secondary lane
 //!   {"cmd":"next"} / {"cmd":"prev"}       playlist navigation
-//!   {"cmd":"reload"}                      reload player-ui.json
+//!   {"cmd":"reload"}                      reload player-ui.toml
 //!   {"cmd":"quit"}                        close this player window
 
 use serde::Deserialize;
@@ -30,6 +41,9 @@ pub struct PlayerCommand {
     pub cmd: String,
     #[serde(default)]
     pub url: Option<String>,
+    /// String argument for commands like `sub-mode` whose value is a name.
+    #[serde(default)]
+    pub text: Option<String>,
     /// Accepts a JSON number or boolean (pause sends true/false).
     #[serde(default, deserialize_with = "deserialize_flex_value")]
     pub value: Option<f64>,
@@ -145,6 +159,16 @@ mod tests {
         let c = parse_line(r#"{"cmd":"sub-add","url":"/tmp/subs.srt"}"#).unwrap();
         assert_eq!(c.cmd, "sub-add");
         assert_eq!(c.url.as_deref(), Some("/tmp/subs.srt"));
+
+        let c = parse_line(r#"{"cmd":"sub-mode","text":"stacked"}"#).unwrap();
+        assert_eq!(c.text.as_deref(), Some("stacked"));
+
+        let c = parse_line(r#"{"cmd":"sub-delay-by","value":-0.1}"#).unwrap();
+        assert_eq!(c.value, Some(-0.1));
+
+        let c = parse_line(r#"{"cmd":"sub-delay-reset"}"#).unwrap();
+        assert_eq!(c.value, None);
+        assert_eq!(c.text, None);
 
         assert!(parse_line(r#"{"cmd":"next"}"#).is_some());
         assert!(parse_line("garbage").is_none());

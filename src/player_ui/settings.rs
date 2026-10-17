@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 
+use crate::core::subtitles::SubtitleMode;
+
 /// How the control overlay behaves.
 pub const CONTROLS_AUTO: &str = "auto"; // show on pointer movement, hide after idle
 pub const CONTROLS_ALWAYS: &str = "always";
@@ -50,18 +52,17 @@ pub struct PlayerUiSettings {
     pub respawn: bool,
     /// Initial playback volume (mpv scale, 0-130)
     pub volume: i64,
-    /// Show subtitles (mpv sub-visibility)
-    pub sub_visible: bool,
-    /// Show the stacked secondary subtitle (mpv secondary-sub-visibility)
-    pub sub_secondary_visible: bool,
     /// Subtitle vertical position: 0 = top .. 100 = bottom
     pub sub_pos: i64,
+    /// Visibility mode: primary-only | secondary-only | stacked | hidden |
+    /// toggle-secondary (visibility is derived from this, not toggled raw)
+    pub sub_mode: String,
+    /// Global default primary subtitle delay in seconds (session overrides win)
+    pub sub_delay_primary: f64,
+    /// Global default stacked secondary subtitle delay in seconds
+    pub sub_delay_secondary: f64,
     /// Stacked second subtitle language track id (0 = off)
     pub sub_secondary_id: i64,
-    /// Primary subtitle delay in seconds (negative = earlier)
-    pub sub_delay: f64,
-    /// Secondary subtitle delay in seconds
-    pub sub_secondary_delay: f64,
     /// Pause playback when a subtitle ends (Memento subtitle-pause)
     pub sub_pause_end: bool,
     /// Subtitle font name (empty = mpv default)
@@ -103,12 +104,11 @@ impl Default for PlayerUiSettings {
             loop_playlist: true,
             respawn: true,
             volume: 100,
-            sub_visible: true,
-            sub_secondary_visible: true,
             sub_pos: 100,
+            sub_mode: SubtitleMode::PrimaryOnly.as_str().to_string(),
+            sub_delay_primary: 0.0,
+            sub_delay_secondary: 0.0,
             sub_secondary_id: 0,
-            sub_delay: 0.0,
-            sub_secondary_delay: 0.0,
             sub_pause_end: false,
             sub_font: String::new(),
             sub_font_size: 55.0,

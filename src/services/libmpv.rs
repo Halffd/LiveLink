@@ -82,6 +82,13 @@ fn gl_get_proc_address(ctx: &&'static dyn Fn(&CStr) -> *const c_void, name: &str
     (*ctx)(&name) as *mut c_void
 }
 
+fn clamp_delay(seconds: f64) -> f64 {
+    seconds.clamp(
+        -crate::core::subtitles::MAX_SUB_DELAY,
+        crate::core::subtitles::MAX_SUB_DELAY,
+    )
+}
+
 fn create_video_texture(gl: &glow::Context, width: u32, height: u32) -> glow::Texture {
     use glow::HasContext as _;
     let zero = vec![0u8; (width as usize) * (height as usize) * 4];
@@ -426,6 +433,7 @@ impl MpvVideo {
 
     /// Subtitle delay in seconds (negative shows subs earlier).
     pub fn set_sub_delay(&mut self, delay: f64) {
+        let delay = clamp_delay(delay);
         if let Err(e) = self.mpv.set_property("sub-delay", delay) {
             tracing::warn!(error = %e, delay, "mpv set sub-delay failed");
         }
@@ -438,6 +446,7 @@ impl MpvVideo {
 
     /// Delay of the stacked secondary subtitle track in seconds.
     pub fn set_secondary_sub_delay(&mut self, delay: f64) {
+        let delay = clamp_delay(delay);
         if let Err(e) = self.mpv.set_property("secondary-sub-delay", delay) {
             tracing::warn!(error = %e, delay, "mpv set secondary-sub-delay failed");
         }

@@ -71,6 +71,7 @@ pub enum Commands {
   Diagnostics,
   Ui,
   PlayerUi(PlayerUiCommand),
+  Subs(SubsCommand),
   Config(ConfigCommand),
 }
 
@@ -178,6 +179,46 @@ pub struct QueryCommand {
   pub limit: u32,
 }
 
+/// Subtitle control for player windows: `livelink subs delay 1 +2`,
+/// `--by -0.5`, `--reset`, `--all`, plus mode and stack toggles. Commands are
+/// delivered to the window's JSON control port (3100 + screen by default).
+#[derive(Parser)]
+pub struct SubsCommand {
+    #[command(subcommand)]
+    pub action: SubsAction,
+}
+
+#[derive(Subcommand)]
+pub enum SubsAction {
+    /// Set, nudge, or reset the primary subtitle delay (seconds, ±10).
+    Delay {
+        #[arg(long, help = "Apply to every configured screen")]
+        all: bool,
+        #[arg(long, help = "Treat the value as a relative nudge")]
+        by: bool,
+        #[arg(long, help = "Drop the session override (back to the global default)")]
+        reset: bool,
+        #[arg(help = "Screen number (omit with --all)")]
+        screen: Option<u32>,
+        #[arg(help = "Seconds, accepts a sign: +2.5, -0.5, 2")]
+        value: Option<String>,
+    },
+    /// Set the subtitle visibility mode.
+    Mode {
+        #[arg(long, help = "Apply to every configured screen")]
+        all: bool,
+        #[arg(long, help = "Screen number (omit with --all)")]
+        screen: Option<u32>,
+        #[arg(help = "primary-only | secondary-only | stacked | hidden | toggle-secondary")]
+        mode: String,
+    },
+    /// Toggle the stacked secondary subtitle lane.
+    ToggleSecondary {
+        #[arg(help = "Screen number")]
+        screen: u32,
+    },
+}
+
 #[derive(Parser)]
 pub struct PlayerUiCommand {
   #[arg(short, long, default_value_t = 1, help = "Screen number (uses config entry when present)")]
@@ -245,6 +286,39 @@ pub enum QueueSortField {
     Priority,
     Viewers,
     Name,
+}
+
+/// Screens a `subs` command targets: the explicit one, every configured
+/// screen with `--all`, or the two default screens when nothing is configured.
+fn subs_target_screens(
+    configured: &[u32],
+    screen: Option<u32>,
+    all: bool,
+) -> Result<Vec<u32>, String> {
+    if all {
+        if configured.is_empty() {
+            return Ok(vec![0, 1]);
+        }
+        return Ok(configured.to_vec());
+    }
+    screen
+        .map(|s| vec![s])
+        .ok_or_else(|| "specify a screen number or use --all".to_string())
+}
+
+/// Deliver one subtitle command to the player window control port.
+async fn send_subtitle_command(screen: u32, line: serde_json::Value) -> Result<(), String> {
+    let port = crate::player_ui::control::DEFAULT_BASE_PORT + u16::try_from(screen).unwrap_or(0);
+    crate::player_ui::control::send_command(port, &line.to_string())
+        .await
+        .map_err(|e| {
+            format!(
+                "screen {}: no player window on control port {} ({})",
+                screen, port, e
+            )
+        })?;
+    println!("screen {}: {}", screen, line);
+    Ok(())
 }
 
 pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), String> {
@@ -797,6 +871,44 @@ Commands::Diagnostics => {
       rotate: cmd.rotate.unwrap_or(0),
     })?;
   }
+  Commands::Subs(cmd) => {
+    let configured: Vec<u32> = orchestrator.config.screens.iter().map(|s| s.screen).collect();
+    match &cmd.action {
+      SubsAction::Delay { all, by, reset, screen, value } => {
+        let line = if *reset {
+          serde_json::json!({"cmd": "sub-delay-reset"})
+        } else {
+          let raw = value.as_deref().ok_or("delay needs a value or --reset")?;
+          let secs = crate::core::subtitles::parse_signed_seconds(raw)
+            .ok_or_else(|| format!("invalid seconds: {}", raw))?;
+          if *by {
+            serde_json::json!({"cmd": "sub-delay-by", "value": secs})
+          } else {
+            serde_json::json!({"cmd": "sub-delay", "value": secs})
+          }
+        };
+        for screen in subs_target_screens(&configured, *screen, *all)? {
+          send_subtitle_command(screen, line.clone()).await?;
+        }
+      }
+      SubsAction::Mode { all, screen, mode } => {
+        if crate::core::subtitles::SubtitleMode::parse(mode).is_none() {
+          return Err(format!(
+            "unknown subtitle mode: {} (valid: {})",
+            mode,
+            crate::core::subtitles::SubtitleMode::names()
+          ));
+        }
+        let line = serde_json::json!({"cmd": "sub-mode", "text": mode});
+        for screen in subs_target_screens(&configured, *screen, *all)? {
+          send_subtitle_command(screen, line.clone()).await?;
+        }
+      }
+      SubsAction::ToggleSecondary { screen } => {
+        send_subtitle_command(*screen, serde_json::json!({"cmd": "sub-toggle-secondary"})).await?;
+      }
+    }
+  }
   Commands::Config(cmd) => {
     if cmd.get {
       let config = orchestrator.get_favorite_channels();
@@ -971,5 +1083,79 @@ mod tests {
             }
             _ => panic!("Expected PlayerUi"),
         }
+    }
+
+    #[test]
+    fn test_parse_subs_commands() {
+        let cli = Cli::try_parse_from(["livelink", "subs", "delay", "1", "+2.5", "--by"])
+            .unwrap_or_else(|e| panic!("parse failed: {e}"));
+        match cli.command {
+            Commands::Subs(cmd) => match cmd.action {
+                SubsAction::Delay {
+                    screen,
+                    value,
+                    by,
+                    reset,
+                    all,
+                } => {
+                    assert_eq!(screen, Some(1));
+                    assert_eq!(value.as_deref(), Some("+2.5"));
+                    assert!(by);
+                    assert!(!reset);
+                    assert!(!all);
+                }
+                _ => panic!("Expected SubsAction::Delay"),
+            },
+            _ => panic!("Expected Subs"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "livelink",
+            "subs",
+            "mode",
+            "--all",
+            "stacked",
+        ])
+            .unwrap_or_else(|e| panic!("parse failed: {e}"));
+        match cli.command {
+            Commands::Subs(cmd) => match cmd.action {
+                SubsAction::Mode { screen, mode, all } => {
+                    assert_eq!(screen, None);
+                    assert_eq!(mode, "stacked");
+                    assert!(all);
+                }
+                _ => panic!("Expected SubsAction::Mode"),
+            },
+            _ => panic!("Expected Subs"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "livelink",
+            "subs",
+            "toggle-secondary",
+            "2",
+        ])
+        .unwrap_or_else(|e| panic!("parse failed: {e}"));
+        match cli.command {
+            Commands::Subs(cmd) => match cmd.action {
+                SubsAction::ToggleSecondary { screen } => assert_eq!(screen, 2),
+                _ => panic!("Expected SubsAction::ToggleSecondary"),
+            },
+            _ => panic!("Expected Subs"),
+        }
+    }
+
+    #[test]
+    fn subs_target_screens_resolution() {
+        assert_eq!(
+            subs_target_screens(&[0, 1], Some(1), false).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            subs_target_screens(&[0, 1], None, true).unwrap(),
+            vec![0, 1]
+        );
+        assert_eq!(subs_target_screens(&[], None, true).unwrap(), vec![0, 1]);
+        assert!(subs_target_screens(&[0], None, false).is_err());
     }
 }

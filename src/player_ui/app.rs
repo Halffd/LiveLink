@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 
+use crate::core::subtitles::{resolve_delay, SubtitleMode, MAX_SUB_DELAY};
 use crate::player_ui::control::PlayerCommand;
 use crate::player_ui::settings::{
     PlayerUiSettings, CONTROLS_ALWAYS, CONTROLS_AUTO, CONTROLS_NEVER,
@@ -17,6 +18,16 @@ use crate::player_ui::PlayerWindowConfig;
 use crate::services::libmpv::{MpvVideo, PlayerEvent};
 
 const OVERLAY_HIDE_AFTER: Duration = Duration::from_secs(3);
+
+/// Pending subtitle action collected from the settings window, applied after
+/// the window closes (the window borrows `self.settings` while open).
+#[derive(Debug, Clone, Copy)]
+enum SubUiAction {
+    CycleMode,
+    ToggleSecondary,
+    Nudge { secondary: bool, delta: f64 },
+    Reset(bool),
+}
 
 /// Memento's pause-on-subtitle-end tolerance window in seconds.
 const PAUSE_DELTA: f64 = 0.04;
@@ -54,6 +65,12 @@ pub struct PlayerApp {
     paused_for_subtitle: bool,
     /// Index of the primary subtitle line active at the last frame.
     last_sub_index: Option<usize>,
+    /// Ephemeral secondary-lane toggle flag (ToggleSecondary mode).
+    secondary_on: bool,
+    /// Session-only primary delay override (cleared per media / on reset).
+    delay_primary_ephemeral: Option<f64>,
+    /// Session-only secondary delay override.
+    delay_secondary_ephemeral: Option<f64>,
 }
 
 impl PlayerApp {
@@ -108,21 +125,136 @@ impl PlayerApp {
             tracked_secondary_sid: -1,
             paused_for_subtitle: false,
             last_sub_index: None,
+            secondary_on: false,
+            delay_primary_ephemeral: None,
+            delay_secondary_ephemeral: None,
         };
         app.apply_sub_settings();
         app
+    }
+
+    /// Current visibility mode (persisted setting, validated).
+    fn sub_mode(&self) -> SubtitleMode {
+        SubtitleMode::parse(&self.settings.sub_mode).unwrap_or_default()
+    }
+
+    /// Effective delays: ephemeral session override wins over the global
+    /// default (resolution order ephemeral > global).
+    fn effective_delay_primary(&self) -> f64 {
+        resolve_delay(
+            self.delay_primary_ephemeral,
+            self.settings.sub_delay_primary,
+        )
+    }
+
+    fn effective_delay_secondary(&self) -> f64 {
+        resolve_delay(
+            self.delay_secondary_ephemeral,
+            self.settings.sub_delay_secondary,
+        )
+    }
+
+    /// Push subtitle mode (derived visibility) and resolved delays to mpv.
+    fn apply_subtitle_state(&mut self) {
+        let (primary, secondary) = self.sub_mode().resolve(self.secondary_on);
+        let primary_delay = self.effective_delay_primary();
+        let secondary_delay = self.effective_delay_secondary();
+        if let Some(mpv) = &mut self.mpv {
+            mpv.set_sub_visible(primary);
+            mpv.set_secondary_sub_visible(secondary);
+            mpv.set_sub_delay(primary_delay);
+            mpv.set_secondary_sub_delay(secondary_delay);
+        }
+    }
+
+    /// Nudge one delay lane by `delta` seconds (ephemeral override).
+    fn nudge_delay(&mut self, secondary: bool, delta: f64) {
+        let current = if secondary {
+            self.effective_delay_secondary()
+        } else {
+            self.effective_delay_primary()
+        };
+        let next = resolve_delay(Some(current + delta), 0.0);
+        if secondary {
+            self.delay_secondary_ephemeral = Some(next);
+        } else {
+            self.delay_primary_ephemeral = Some(next);
+        }
+        self.apply_subtitle_state();
+    }
+
+    /// Set one delay lane to an absolute value (ephemeral override).
+    fn set_delay(&mut self, secondary: bool, seconds: f64) {
+        let clamped = resolve_delay(Some(seconds), 0.0);
+        if secondary {
+            self.delay_secondary_ephemeral = Some(clamped);
+        } else {
+            self.delay_primary_ephemeral = Some(clamped);
+        }
+        self.apply_subtitle_state();
+    }
+
+    /// Drop the ephemeral delay override for one lane (back to the default).
+    fn reset_delay(&mut self, secondary: bool) {
+        if secondary {
+            self.delay_secondary_ephemeral = None;
+        } else {
+            self.delay_primary_ephemeral = None;
+        }
+        self.apply_subtitle_state();
+    }
+
+    /// Switch to the next visibility mode (cycle hotkey/command).
+    fn cycle_sub_mode(&mut self) {
+        let next = self.sub_mode().next();
+        self.settings.sub_mode = next.as_str().to_string();
+        self.apply_subtitle_state();
+    }
+
+    /// Set an explicit visibility mode; unknown names are ignored with a warn.
+    fn set_sub_mode(&mut self, name: &str) {
+        match SubtitleMode::parse(name) {
+            Some(mode) => {
+                self.settings.sub_mode = mode.as_str().to_string();
+                self.apply_subtitle_state();
+            }
+            None => tracing::warn!(
+                mode = %name,
+                valid = %SubtitleMode::names(),
+                "unknown subtitle mode"
+            ),
+        }
+    }
+
+    /// Toggle the secondary lane. Outside ToggleSecondary the flag has no
+    /// effect, so the mode switches as well to make the toggle observable.
+    fn toggle_secondary(&mut self) {
+        self.secondary_on = !self.secondary_on;
+        if self.settings.sub_mode != SubtitleMode::ToggleSecondary.as_str() {
+            self.settings.sub_mode = SubtitleMode::ToggleSecondary.as_str().to_string();
+        }
+        self.apply_subtitle_state();
+    }
+
+    /// Toggle the primary lane: hide everything when it is on, otherwise show
+    /// the primary track alone (primary is derived from the mode).
+    fn toggle_primary_lane(&mut self) {
+        let (primary, _) = self.sub_mode().resolve(self.secondary_on);
+        self.settings.sub_mode = if primary {
+            SubtitleMode::Hidden.as_str()
+        } else {
+            SubtitleMode::PrimaryOnly.as_str()
+        }
+        .to_string();
+        self.apply_subtitle_state();
     }
 
     /// Push subtitle and video framing settings to mpv (init + Apply).
     fn apply_sub_settings(&mut self) {
         if let Some(mpv) = &mut self.mpv {
             let s = &self.settings;
-            mpv.set_sub_visible(s.sub_visible);
             mpv.set_sub_pos(s.sub_pos);
             mpv.set_secondary_sub_track(s.sub_secondary_id);
-            mpv.set_secondary_sub_visible(s.sub_secondary_visible);
-            mpv.set_sub_delay(s.sub_delay);
-            mpv.set_secondary_sub_delay(s.sub_secondary_delay);
             if !s.sub_font.is_empty() {
                 mpv.set_sub_font(&s.sub_font);
             }
@@ -133,6 +265,7 @@ impl PlayerApp {
             mpv.set_video_pan(s.video_pan_x, s.video_pan_y);
             mpv.set_video_zoom(s.video_zoom);
         }
+        self.apply_subtitle_state();
     }
 
     /// Parse (and cache) the subtitle lines of an external track, mirroring
@@ -391,6 +524,21 @@ impl PlayerApp {
                         self.subtitles.push(url);
                     }
                 }
+                "sub-delay" => self.set_delay(false, cmd.value.unwrap_or(0.0)),
+                "sub-delay-by" => self.nudge_delay(false, cmd.value.unwrap_or(0.0)),
+                "sub-delay-reset" => self.reset_delay(false),
+                "sec-sub-delay" => self.set_delay(true, cmd.value.unwrap_or(0.0)),
+                "sec-sub-delay-by" => self.nudge_delay(true, cmd.value.unwrap_or(0.0)),
+                "sec-sub-delay-reset" => self.reset_delay(true),
+                "sub-mode" => {
+                    if let Some(name) = cmd.text.as_deref() {
+                        self.set_sub_mode(name);
+                    } else {
+                        tracing::warn!(command = %cmd.cmd, "sub-mode needs a text argument");
+                    }
+                }
+                "sub-mode-cycle" => self.cycle_sub_mode(),
+                "sub-toggle-secondary" => self.toggle_secondary(),
                 "next" => self.advance(1),
                 "prev" => self.advance(-1),
                 "reload" => {
@@ -421,6 +569,11 @@ impl PlayerApp {
                             }
                         }
                     }
+                    // New media: drop session delay overrides (ephemeral) and
+                    // re-assert mode visibility, which mpv resets per file.
+                    self.delay_primary_ephemeral = None;
+                    self.delay_secondary_ephemeral = None;
+                    self.apply_subtitle_state();
                 }
                 PlayerEvent::Eof => self.advance(1),
                 PlayerEvent::Stopped => {}
@@ -752,6 +905,12 @@ impl PlayerApp {
             .unwrap_or_default();
         let current_sub = self.mpv.as_ref().map(|m| m.current_sub_id()).unwrap_or(0);
         let mut sub_pick: Option<i64> = None;
+        let mode_label = self.sub_mode().as_str();
+        let primary_delay = self.effective_delay_primary();
+        let secondary_delay = self.effective_delay_secondary();
+        let primary_override = self.delay_primary_ephemeral.is_some();
+        let secondary_override = self.delay_secondary_ephemeral.is_some();
+        let mut sub_action: Option<SubUiAction> = None;
         egui::Window::new("Player settings")
             .open(&mut open)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -816,17 +975,74 @@ impl PlayerApp {
                 });
                 ui.separator();
                 ui.heading("Subtitles");
-                ui.checkbox(&mut s.sub_visible, "Show subtitles");
-                ui.checkbox(&mut s.sub_secondary_visible, "Show stacked subtitle");
+                ui.horizontal(|ui| {
+                    ui.label("Mode:");
+                    egui::ComboBox::from_id_salt("sub_mode")
+                        .selected_text(mode_label)
+                        .show_ui(ui, |ui| {
+                            for mode in SubtitleMode::ALL {
+                                ui.selectable_value(
+                                    &mut s.sub_mode,
+                                    mode.as_str().to_string(),
+                                    mode.as_str(),
+                                );
+                            }
+                        });
+                    if ui.button("Cycle (ctrl+m)").clicked() {
+                        sub_action = Some(SubUiAction::CycleMode);
+                    }
+                    if ui.button("Toggle stack (ctrl+s)").clicked() {
+                        sub_action = Some(SubUiAction::ToggleSecondary);
+                    }
+                });
                 ui.checkbox(&mut s.sub_pause_end, "Pause when a subtitle ends");
+                ui.label("Sync (nudge with ctrl+[ / ctrl+], shift for the stack):");
                 ui.horizontal(|ui| {
-                    ui.label("Delay (s):");
-                    ui.add(egui::Slider::new(&mut s.sub_delay, -10.0..=10.0));
+                    ui.label(format!("Primary: {:+.2}s", primary_delay));
+                    if ui.button("-0.1").clicked() {
+                        sub_action = Some(SubUiAction::Nudge {
+                            secondary: false,
+                            delta: -0.1,
+                        });
+                    }
+                    if ui.button("+0.1").clicked() {
+                        sub_action = Some(SubUiAction::Nudge {
+                            secondary: false,
+                            delta: 0.1,
+                        });
+                    }
+                    if ui.button("reset").clicked() {
+                        sub_action = Some(SubUiAction::Reset(false));
+                    }
+                    if primary_override {
+                        ui.label("(session override)");
+                    }
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Stack delay (s):");
-                    ui.add(egui::Slider::new(&mut s.sub_secondary_delay, -10.0..=10.0));
+                    ui.label(format!("Stack: {:+.2}s", secondary_delay));
+                    if ui.button("-0.1").clicked() {
+                        sub_action = Some(SubUiAction::Nudge {
+                            secondary: true,
+                            delta: -0.1,
+                        });
+                    }
+                    if ui.button("+0.1").clicked() {
+                        sub_action = Some(SubUiAction::Nudge {
+                            secondary: true,
+                            delta: 0.1,
+                        });
+                    }
+                    if ui.button("reset").clicked() {
+                        sub_action = Some(SubUiAction::Reset(true));
+                    }
+                    if secondary_override {
+                        ui.label("(session override)");
+                    }
                 });
+                ui.label(format!(
+                    "Global defaults: {:+.2}s / {:+.2}s (max ±{:.0}s)",
+                    s.sub_delay_primary, s.sub_delay_secondary, MAX_SUB_DELAY
+                ));
                 if !sub_tracks.is_empty() {
                     ui.horizontal(|ui| {
                         ui.label("Track:");
@@ -948,12 +1164,19 @@ impl PlayerApp {
                     PlayerUiSettings::path(&self.config_dir).display()
                 ));
                 ui.separator();
-                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · v subs · j next sub · [ ] sub size · l sub list · f fullscreen · , . frame step");
+                ui.label("shortcuts: space pause · ←/→ seek ±10s · ↑/↓ volume · m mute · f fullscreen · , . frame step · v primary lane · j next track · ctrl+m sub mode · ctrl+s stack lane · ctrl+[ ] sub delay (shift = stack) · [ ] sub size · l sub list");
             });
         if let Some(id) = sub_pick {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_sub_track(id);
             }
+        }
+        match sub_action {
+            Some(SubUiAction::CycleMode) => self.cycle_sub_mode(),
+            Some(SubUiAction::ToggleSecondary) => self.toggle_secondary(),
+            Some(SubUiAction::Nudge { secondary, delta }) => self.nudge_delay(secondary, delta),
+            Some(SubUiAction::Reset(secondary)) => self.reset_delay(secondary),
+            None => {}
         }
         self.settings_open = open;
     }
@@ -989,6 +1212,9 @@ impl eframe::App for PlayerApp {
             list_toggle,
             sub_bigger,
             sub_smaller,
+            sec_toggle,
+            ctrl,
+            shift,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -1005,6 +1231,9 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::L),
                 i.key_pressed(egui::Key::OpenBracket),
                 i.key_pressed(egui::Key::CloseBracket),
+                i.key_pressed(egui::Key::S),
+                i.modifiers.ctrl,
+                i.modifiers.shift,
             )
         });
         let space = space && !typing;
@@ -1019,8 +1248,8 @@ impl eframe::App for PlayerApp {
         let subs_toggle = subs_toggle && !typing;
         let sub_next = sub_next && !typing;
         let list_toggle = list_toggle && !typing;
-        let sub_bigger = sub_bigger && !typing;
-        let sub_smaller = sub_smaller && !typing;
+        let sub_bigger = sub_bigger && !typing && !ctrl;
+        let sub_smaller = sub_smaller && !typing && !ctrl;
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -1043,12 +1272,20 @@ impl eframe::App for PlayerApp {
                 self.settings.volume = v;
             }
         }
-        if mute_key {
+        if mute_key && !ctrl {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_mute(!mpv.muted());
             }
         }
-        if full {
+        if mute_key && ctrl {
+            // ctrl+m: cycle subtitle visibility modes.
+            self.cycle_sub_mode();
+        }
+        if sec_toggle && ctrl {
+            // ctrl+s: toggle the stacked secondary lane.
+            self.toggle_secondary();
+        }
+        if full && !ctrl {
             self.settings.fullscreen = !self.settings.fullscreen;
             self.apply_viewport_settings(ctx);
             self.save_settings();
@@ -1064,9 +1301,8 @@ impl eframe::App for PlayerApp {
             }
         }
         if subs_toggle {
-            if let Some(mpv) = &mut self.mpv {
-                mpv.set_sub_visible(!mpv.sub_visible());
-            }
+            // v: toggle the primary lane (mode-derived visibility).
+            self.toggle_primary_lane();
         }
         if sub_next {
             if let Some(mpv) = &mut self.mpv {
@@ -1082,6 +1318,16 @@ impl eframe::App for PlayerApp {
             self.settings.sub_scale = (self.settings.sub_scale * factor).clamp(0.1, 5.0);
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_sub_scale(self.settings.sub_scale);
+            }
+        }
+        // Subtitle sync: ctrl+[ ] nudges the primary delay, ctrl+shift+[ ]
+        // the secondary lane. Plain [ ] stays subtitle size (above).
+        if ctrl && !typing {
+            if sub_smaller {
+                self.nudge_delay(shift, -0.1);
+            }
+            if sub_bigger {
+                self.nudge_delay(shift, 0.1);
             }
         }
 
