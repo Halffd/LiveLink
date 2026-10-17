@@ -21,6 +21,47 @@ pub enum PlayerEvent {
     Failed,
 }
 
+/// The subtitle cue currently displayed by mpv, mirrored out of its
+/// properties. This is the input layer for anything drawn on top of the
+/// video (annotations, ruby text, search) — mpv itself renders the visible
+/// subtitles.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SubtitleCue {
+    /// Plain text of the current cue (empty when nothing is shown).
+    pub text: String,
+    /// Raw ASS dialogue text with formatting tags, when the cue is ASS.
+    pub ass_text: String,
+    /// Cue start in seconds (negative when mpv has no timing yet).
+    pub start: f64,
+    /// Cue end in seconds (negative when unknown).
+    pub end: f64,
+}
+
+impl SubtitleCue {
+    /// Whether mpv is currently showing a cue.
+    pub fn is_active(&self) -> bool {
+        !self.text.is_empty() && self.start >= 0.0 && self.end >= 0.0
+    }
+
+    /// Whether `time` (seconds) falls inside this cue.
+    pub fn covers(&self, time: f64) -> bool {
+        self.is_active() && time >= self.start && time <= self.end
+    }
+}
+
+/// Read the current subtitle cue from an mpv handle. Works headlessly
+/// (`vo=null`), which is what makes the mirror testable without GL.
+pub fn subtitle_cue(mpv: &Mpv) -> SubtitleCue {
+    SubtitleCue {
+        text: mpv.get_property::<String>("sub-text").unwrap_or_default(),
+        ass_text: mpv
+            .get_property::<String>("sub-text-ass")
+            .unwrap_or_default(),
+        start: mpv.get_property::<f64>("sub-start").unwrap_or(-1.0),
+        end: mpv.get_property::<f64>("sub-end").unwrap_or(-1.0),
+    }
+}
+
 /// One subtitle track of the current file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubTrackInfo {
@@ -332,6 +373,15 @@ impl MpvVideo {
         }
     }
 
+    /// Re-read the current external subtitle track from disk (mpv
+    /// sub-reload). Used for streaming subtitles whose file keeps
+    /// growing while transcription runs.
+    pub fn sub_reload(&mut self) {
+        if let Err(e) = self.mpv.command("sub-reload", &["keep-files"]) {
+            tracing::warn!(error = %e, "mpv sub-reload failed");
+        }
+    }
+
     /// Subtitle tracks of the current file (empty before a file loads).
     pub fn sub_tracks(&self) -> Vec<SubTrackInfo> {
         let count = match self.mpv.get_property::<i64>("track-list/count") {
@@ -464,6 +514,11 @@ impl MpvVideo {
         self.mpv
             .get_property::<String>("sub-text")
             .unwrap_or_default()
+    }
+
+    /// The cue currently displayed by mpv (text plus timing).
+    pub fn subtitle_cue(&self) -> SubtitleCue {
+        subtitle_cue(&self.mpv)
     }
 
     /// Subtitle vertical position, 0 = top .. 100 = bottom (default 100).
@@ -663,5 +718,70 @@ mod tests {
             .expect("secondary-sid must be settable");
         assert_eq!(mpv.get_property::<i64>("secondary-sid").unwrap(), 0);
         let _ = mpv.get_property::<i64>("track-list/count");
+    }
+
+    /// The cue mirror must work without GL: mpv updates sub-text/sub-start/
+    /// sub-end even with vo=null, which is how the annotation layer gets its
+    /// input. Loads a generated ASS cue over a lavfi source and polls.
+    #[test]
+    fn subtitle_cue_mirrors_ass_without_gl() {
+        let ass = std::env::temp_dir().join("livelink-cue-probe.ass");
+        std::fs::write(
+            &ass,
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n\n\
+             [V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour\n\
+             Style: Default,Sans,32,&H00FFFFFF\n\n\
+             [Events]\nFormat: Layer, Start, End, Style, Text\n\
+             Dialogue: 0,0:00:00.00,0:00:10.00,Default,\u{65e5}\u{672c}\u{8a9e}\u{3092}\u{5b66}\u{3073}\u{3057}\u{3066}\u{3044}\u{307e}\u{3059}\n",
+        )
+        .unwrap();
+
+        let mpv = Mpv::with_initializer(|init| {
+            init.set_option("vo", "null")?;
+            init.set_option("idle", "yes")?;
+            Ok(())
+        })
+        .expect("mpv handle");
+
+        let path = ass.to_string_lossy().to_string();
+        mpv.command(
+            "loadfile",
+            &["av://lavfi:testsrc=size=160x120:rate=5", "replace"],
+        )
+        .unwrap();
+
+        // sub-add only works once a file is loaded.
+        let mut loaded = false;
+        for _ in 0..200 {
+            if let Some(Ok(Event::FileLoaded)) = mpv.wait_event(0.05) {
+                loaded = true;
+                break;
+            }
+        }
+        assert!(loaded, "lavfi source should load");
+        mpv.command("sub-add", &[&path, "select"]).unwrap();
+
+        // sub-text appears once the first frame is decoded.
+        let mut cue = SubtitleCue::default();
+        for _ in 0..100 {
+            cue = subtitle_cue(&mpv);
+            if cue.is_active() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(cue.text, "\u{65e5}\u{672c}\u{8a9e}\u{3092}\u{5b66}\u{3073}\u{3057}\u{3066}\u{3044}\u{307e}\u{3059}");
+        assert!(cue.is_active());
+        assert!(cue.start <= 0.1, "cue start {:?}", cue.start);
+        assert!(cue.end > 9.0, "cue end {:?}", cue.end);
+        assert!(
+            cue.covers(1.0) && !cue.covers(11.0),
+            "cue should cover its own window"
+        );
+        assert!(
+            cue.ass_text == cue.text,
+            "raw ass text should carry the unstyled cue: {:?}",
+            cue.ass_text
+        );
     }
 }
