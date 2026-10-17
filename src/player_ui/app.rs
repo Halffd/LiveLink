@@ -213,11 +213,7 @@ impl PlayerApp {
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
         ctx.set_pixels_per_point(self.settings.font_scale);
-        ctx.set_visuals(if self.settings.theme == "light" {
-            egui::Visuals::light()
-        } else {
-            egui::Visuals::dark()
-        });
+        ctx.set_visuals(self.settings.build_visuals());
         self.theme_applied = true;
     }
 
@@ -508,9 +504,22 @@ impl PlayerApp {
                     egui::ComboBox::from_id_salt("theme")
                         .selected_text(&s.theme)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut s.theme, "dark".to_string(), "dark");
-                            ui.selectable_value(&mut s.theme, "light".to_string(), "light");
+                            for t in crate::player_ui::settings::THEMES {
+                                ui.selectable_value(
+                                    &mut s.theme,
+                                    t.to_string(),
+                                    *t,
+                                );
+                            }
                         });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Accent (hex, empty = theme default):");
+                    ui.text_edit_singleline(&mut s.accent);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Rounding:");
+                    ui.add(egui::Slider::new(&mut s.rounding, 0.0..=24.0));
                 });
                 ui.separator();
                 ui.horizontal(|ui| {
