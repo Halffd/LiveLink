@@ -373,6 +373,13 @@ impl MpvVideo {
         }
     }
 
+    /// Capture the current frame (with subtitles rendered) to `path`.
+    pub fn screenshot_to_file(&mut self, path: &str) {
+        if let Err(e) = self.mpv.command("screenshot-to-file", &[path, "subtitles"]) {
+            tracing::warn!(error = %e, path, "mpv screenshot-to-file failed");
+        }
+    }
+
     /// Re-read the current external subtitle track from disk (mpv
     /// sub-reload). Used for streaming subtitles whose file keeps
     /// growing while transcription runs.

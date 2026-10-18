@@ -6,6 +6,7 @@
 pub mod app;
 pub mod control;
 pub mod settings;
+pub mod srs;
 pub mod subtitle;
 pub mod whisper_subs;
 
@@ -39,6 +40,8 @@ pub struct PlayerWindowConfig {
     pub server_url: Option<String>,
     /// All configured screen numbers, for the move-to-screen buttons.
     pub screens: Vec<u32>,
+    /// mpv binary used for SRS audio-clip encoding.
+    pub mpv_path: String,
 }
 
 /// Sensible window defaults for a screen that has no config entry.

@@ -83,6 +83,16 @@ pub struct PlayerApp {
     channels_error: Option<String>,
     /// Receiver for background channel snapshots.
     channels_rx: Option<std::sync::mpsc::Receiver<ChannelsSnapshot>>,
+    /// mpv binary for SRS audio encoding.
+    mpv_path: String,
+    /// Source URL of the current media (for SRS mining context).
+    current_source: String,
+    /// Status message from the last SRS mining job, with its timestamp.
+    srs_status: Option<(String, Instant)>,
+    /// Receiver for SRS mining results from the worker thread.
+    srs_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// True while a mining job is running.
+    srs_busy: bool,
     /// Whether the WhisperSubs panel is visible.
     ws_open: bool,
     /// Panel section: 0 library, 1 channels, 2 live, 3 subs.
@@ -195,6 +205,11 @@ impl PlayerApp {
             channels: None,
             channels_error: None,
             channels_rx: None,
+            mpv_path: window.mpv_path.clone(),
+            current_source: String::new(),
+            srs_status: None,
+            srs_rx: None,
+            srs_busy: false,
             ws_open: false,
             ws_section: 0,
             ws_channel: None,
@@ -392,6 +407,16 @@ impl PlayerApp {
         }
     }
 
+    /// The primary subtitle line at the current playback position, from the
+    /// parsed external track. None without a parsed track.
+    fn current_line(&self) -> Option<SubtitleInfo> {
+        let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
+        let list = self.subs_parsed.get(&self.tracked_primary_sid)?;
+        let idx = list.partition_point(|s| s.start <= t).checked_sub(1)?;
+        let line = list.get(idx)?;
+        (t < line.end).then(|| line.clone())
+    }
+
     /// Memento's pause-on-subtitle-end: pause once when the current primary
     /// subtitle line reaches its end (within PAUSE_DELTA). No-op without a
     /// parsed track (e.g. embedded youtube subs).
@@ -404,22 +429,18 @@ impl PlayerApp {
         if !playing || paused {
             return;
         }
-        let Some(list) = self.subs_parsed.get(&self.tracked_primary_sid) else {
+        let Some(line) = self.current_line() else {
             return;
         };
         let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
-        // Find the line covering t: last line with start <= t.
-        let idx = list.partition_point(|s| s.start <= t).checked_sub(1);
-        let Some(idx) = idx else {
-            return;
-        };
-        let line = &list[idx];
-        if t >= line.end {
-            return;
+        if self.last_sub_index.is_none() {
+            // Seed the index on the first line so the end check works.
+            self.last_sub_index = Some(usize::MAX);
         }
-        if self.last_sub_index != Some(idx) {
+        let idx_changed = self.last_sub_index != self.current_line_index();
+        if idx_changed {
             // New subtitle: allow pausing at its end again.
-            self.last_sub_index = Some(idx);
+            self.last_sub_index = self.current_line_index();
             self.paused_for_subtitle = false;
             return;
         }
@@ -429,6 +450,66 @@ impl PlayerApp {
                 mpv.set_paused(true);
             }
             self.paused_for_subtitle = true;
+        }
+    }
+
+    /// Index of the current primary subtitle line (None when between lines).
+    fn current_line_index(&self) -> Option<usize> {
+        let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
+        let list = self.subs_parsed.get(&self.tracked_primary_sid)?;
+        let idx = list.partition_point(|s| s.start <= t).checked_sub(1)?;
+        (t < list[idx].end).then_some(idx)
+    }
+
+    /// Mine the current subtitle line into Anki (screenshot + audio clip +
+    /// text) on a background thread.
+    fn mine_current_line(&mut self) {
+        if self.srs_busy {
+            self.srs_status = Some(("already mining".to_string(), Instant::now()));
+            return;
+        }
+        let Some(line) = self.current_line() else {
+            self.srs_status = Some((
+                "no current subtitle line (external subs needed)".to_string(),
+                Instant::now(),
+            ));
+            return;
+        };
+        if self.mpv.is_none() || self.current_source.is_empty() {
+            self.srs_status = Some(("nothing playing to mine".to_string(), Instant::now()));
+            return;
+        }
+
+        let dir = std::env::temp_dir().join("livelink-srs");
+        let _ = std::fs::create_dir_all(&dir);
+        let screenshot_path = dir.join(format!("{}.png", crate::player_ui::srs::artifact_stem()));
+        if let Some(mpv) = &mut self.mpv {
+            mpv.screenshot_to_file(&screenshot_path.to_string_lossy());
+        }
+
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        crate::player_ui::srs::spawn_mine(
+            self.settings.clone(),
+            line,
+            self.current_source.clone(),
+            self.mpv_path.clone(),
+            screenshot_path,
+            tx,
+        );
+        self.srs_rx = Some(rx);
+        self.srs_busy = true;
+        self.srs_status = Some(("mining…".to_string(), Instant::now()));
+    }
+
+    /// Drain SRS results from the mining thread and clear busy state.
+    fn drain_srs(&mut self) {
+        let Some(rx) = &self.srs_rx else {
+            return;
+        };
+        if let Ok(message) = rx.try_recv() {
+            self.srs_status = Some((message, Instant::now()));
+            self.srs_busy = false;
+            self.srs_rx = None;
         }
     }
 
@@ -464,8 +545,20 @@ impl PlayerApp {
                                 .hint_text("Search...")
                                 .desired_width(160.0),
                         );
+                        if ui
+                            .button("＋ Anki")
+                            .on_hover_text("Mine current line (a)")
+                            .clicked()
+                        {
+                            self.mine_current_line();
+                        }
                     });
                 });
+                if let Some((message, at)) = &self.srs_status {
+                    if at.elapsed() < Duration::from_secs(8) || self.srs_busy {
+                        ui.label(egui::RichText::new(message).weak());
+                    }
+                }
                 ui.separator();
 
                 let show_secondary = self.tracked_secondary_sid > 0 && !secondary.is_empty();
@@ -1084,6 +1177,7 @@ impl PlayerApp {
 
     fn load_current(&mut self) {
         if let Some(url) = self.playlist.get(self.index).cloned() {
+            self.current_source = url.clone();
             if let Some(mpv) = &mut self.mpv {
                 mpv.load(&url);
             }
@@ -1172,6 +1266,7 @@ impl PlayerApp {
                         self.subtitles.push(url);
                     }
                 }
+                "mine" => self.mine_current_line(),
                 "sub-delay" => self.set_delay(false, cmd.value.unwrap_or(0.0)),
                 "sub-delay-by" => self.nudge_delay(false, cmd.value.unwrap_or(0.0)),
                 "sub-delay-reset" => self.reset_delay(false),
@@ -1798,6 +1893,28 @@ impl PlayerApp {
                     ui.add(egui::Slider::new(&mut s.video_zoom, 0.5..=4.0));
                 });
                 ui.separator();
+                ui.heading("SRS / Anki");
+                ui.horizontal(|ui| {
+                    ui.label("AnkiConnect URL:");
+                    ui.text_edit_singleline(&mut s.srs_url);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Deck:");
+                    ui.text_edit_singleline(&mut s.srs_deck);
+                    ui.label("Model:");
+                    ui.text_edit_singleline(&mut s.srs_model);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Tags:");
+                    ui.text_edit_singleline(&mut s.srs_tags);
+                });
+                ui.checkbox(&mut s.srs_screenshot, "Attach screenshot");
+                ui.checkbox(&mut s.srs_audio, "Attach audio clip");
+                ui.horizontal(|ui| {
+                    ui.label("Audio padding (s):");
+                    ui.add(egui::Slider::new(&mut s.srs_audio_pad, 0.0..=2.0));
+                });
+                ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Apply").clicked() {
                         self.apply_viewport_settings(ctx);
@@ -1872,6 +1989,7 @@ impl eframe::App for PlayerApp {
             ch_next,
             ch_prev,
             ch_panel,
+            srs_mine,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -1894,6 +2012,7 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::N),
                 i.key_pressed(egui::Key::B),
                 i.key_pressed(egui::Key::C),
+                i.key_pressed(egui::Key::A),
             )
         });
         let space = space && !typing;
@@ -1913,6 +2032,7 @@ impl eframe::App for PlayerApp {
         let ch_next = ch_next && !typing;
         let ch_prev = ch_prev && !typing;
         let ch_panel = ch_panel && !typing;
+        let srs_mine = srs_mine && !typing;
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -2003,7 +2123,12 @@ impl eframe::App for PlayerApp {
         if ch_panel {
             self.channels_open = !self.channels_open;
         }
+        if srs_mine {
+            // a: mine the current subtitle line into Anki.
+            self.mine_current_line();
+        }
 
+        self.drain_srs();
         self.drain_channels();
         self.drain_ws();
         self.handle_events();

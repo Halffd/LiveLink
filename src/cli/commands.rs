@@ -891,6 +891,11 @@ Commands::Diagnostics => {
         .iter()
         .map(|s| s.screen)
         .collect(),
+      mpv_path: if orchestrator.config.mpv_path.is_empty() {
+        "mpv".to_string()
+      } else {
+        orchestrator.config.mpv_path.clone()
+      },
     })?;
   }
   Commands::Subs(cmd) => {

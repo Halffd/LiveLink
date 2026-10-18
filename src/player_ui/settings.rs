@@ -52,6 +52,20 @@ pub struct PlayerUiSettings {
     pub respawn: bool,
     /// Initial playback volume (mpv scale, 0-130)
     pub volume: i64,
+    /// AnkiConnect base URL for SRS mining
+    pub srs_url: String,
+    /// Target deck for mined cards
+    pub srs_deck: String,
+    /// Note type (model) for mined cards
+    pub srs_model: String,
+    /// Comma-separated tags for mined cards
+    pub srs_tags: String,
+    /// Attach an audio clip of the subtitle line
+    pub srs_audio: bool,
+    /// Attach a screenshot with subtitles visible
+    pub srs_screenshot: bool,
+    /// Seconds of padding around the mined audio clip
+    pub srs_audio_pad: f64,
     /// Subtitle vertical position: 0 = top .. 100 = bottom
     pub sub_pos: i64,
     /// Visibility mode: primary-only | secondary-only | stacked | hidden |
@@ -110,6 +124,13 @@ impl Default for PlayerUiSettings {
             loop_playlist: true,
             respawn: true,
             volume: 100,
+            srs_url: "http://localhost:8765".to_string(),
+            srs_deck: "LiveLink".to_string(),
+            srs_model: "Basic".to_string(),
+            srs_tags: "livelink".to_string(),
+            srs_audio: true,
+            srs_screenshot: true,
+            srs_audio_pad: 0.35,
             sub_pos: 100,
             sub_mode: SubtitleMode::PrimaryOnly.as_str().to_string(),
             sub_delay_primary: 0.0,
