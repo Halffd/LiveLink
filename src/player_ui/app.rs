@@ -34,6 +34,38 @@ const PAUSE_DELTA: f64 = 0.04;
 /// Memento's seek epsilon when jumping to a subtitle line.
 const SEEK_ERROR: f64 = 0.028;
 
+/// One ruby-annotated line: each annotated segment is a centered stack
+/// (reading above, base below) laid out horizontally with wrapping. The
+/// whole line is clickable.
+fn paint_ruby_line(
+    ui: &mut egui::Ui,
+    segments: &[crate::player_ui::reading::RubySegment],
+    base_size: f32,
+    reading_size: f32,
+) -> egui::Response {
+    use crate::player_ui::reading::RubySegment;
+
+    let inner = ui.horizontal_wrapped(|ui| {
+        for segment in segments {
+            match segment {
+                RubySegment::Plain(text) => {
+                    ui.label(egui::RichText::new(text).size(base_size));
+                }
+                RubySegment::Ruby { base, reading } => {
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                        if !reading.is_empty() {
+                            ui.label(egui::RichText::new(reading).size(reading_size).weak());
+                        }
+                        ui.label(egui::RichText::new(base).size(base_size).strong());
+                    });
+                }
+            }
+        }
+    });
+    let id = ui.id().with("ruby_line");
+    ui.interact(inner.response.rect, id, egui::Sense::click())
+}
+
 pub struct PlayerApp {
     mpv: Option<MpvVideo>,
     playlist: Vec<String>,
@@ -93,6 +125,8 @@ pub struct PlayerApp {
     srs_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// True while a mining job is running.
     srs_busy: bool,
+    /// Whether the reading panel is visible.
+    reading_open: bool,
     /// Whether the WhisperSubs panel is visible.
     ws_open: bool,
     /// Panel section: 0 library, 1 channels, 2 live, 3 subs.
@@ -210,6 +244,7 @@ impl PlayerApp {
             srs_status: None,
             srs_rx: None,
             srs_busy: false,
+            reading_open: false,
             ws_open: false,
             ws_section: 0,
             ws_channel: None,
@@ -1621,6 +1656,9 @@ impl PlayerApp {
                                 self.save_settings();
                             }
 
+                            if ui.button("📖").on_hover_text("Reading (r)").clicked() {
+                                self.reading_open = !self.reading_open;
+                            }
                             if ui.button("📺").on_hover_text("Channels (c)").clicked() {
                                 self.channels_open = !self.channels_open;
                             }
@@ -1643,6 +1681,84 @@ impl PlayerApp {
         if self.settings_open {
             self.paint_settings_window(ctx);
         }
+    }
+
+    /// The reading panel: a teleprompter strip at the bottom with the current
+    /// line large and ruby-annotated (furigana/pinyin), recent lines above,
+    /// and click-to-seek. Falls back to the live mpv sub-text when no parsed
+    /// external track exists.
+    fn paint_reading(&mut self, ctx: &egui::Context) {
+        let t = self.mpv.as_ref().map(|m| m.time_pos()).unwrap_or(0.0);
+        let (list, current) = match self.current_line_index() {
+            Some(idx) => {
+                let list = self
+                    .subs_parsed
+                    .get(&self.tracked_primary_sid)
+                    .cloned()
+                    .unwrap_or_default();
+                (list, Some(idx))
+            }
+            None => (Vec::new(), None),
+        };
+
+        egui::TopBottomPanel::bottom("reading_panel")
+            .resizable(true)
+            .default_height(220.0)
+            .show(ctx, |ui| {
+                let heading_font = egui::TextStyle::Heading.resolve(ui.style());
+                let big = heading_font.size * 0.9;
+                let big_reading = heading_font.size * 0.5;
+                let body_font = egui::TextStyle::Body.resolve(ui.style());
+                let small = body_font.size;
+                let small_reading = body_font.size * 0.65;
+
+                // Scrollback of recent lines, oldest on top.
+                let history_start = current
+                    .map(|idx| idx.saturating_sub(15))
+                    .unwrap_or(list.len().saturating_sub(15));
+                let history_end = current.unwrap_or(list.len());
+                if history_end > history_start {
+                    egui::ScrollArea::vertical()
+                        .max_height(ui.available_height() * 0.55)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            for line in &list[history_start..history_end] {
+                                let annotated = crate::player_ui::reading::annotate(&line.text);
+                                let response = paint_ruby_line(
+                                    ui,
+                                    &crate::player_ui::reading::parse_ruby(&annotated),
+                                    small,
+                                    small_reading,
+                                );
+                                if response.clicked() {
+                                    let pos = (line.start + SEEK_ERROR).max(0.0);
+                                    if let Some(mpv) = &mut self.mpv {
+                                        mpv.seek_absolute(pos);
+                                    }
+                                }
+                            }
+                        });
+                    ui.separator();
+                }
+
+                // The current line, large.
+                let current_text = match current.and_then(|idx| list.get(idx)) {
+                    Some(line) => line.text.clone(),
+                    None => self.mpv.as_ref().map(|m| m.sub_text()).unwrap_or_default(),
+                };
+                if current_text.trim().is_empty() {
+                    ui.weak("(no subtitle line showing)");
+                } else {
+                    let annotated = crate::player_ui::reading::annotate(&current_text);
+                    paint_ruby_line(
+                        ui,
+                        &crate::player_ui::reading::parse_ruby(&annotated),
+                        big,
+                        big_reading,
+                    );
+                }
+            });
+        let _ = t;
     }
 
     fn paint_settings_window(&mut self, ctx: &egui::Context) {
@@ -1990,6 +2106,7 @@ impl eframe::App for PlayerApp {
             ch_prev,
             ch_panel,
             srs_mine,
+            reading_toggle,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -2013,6 +2130,7 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::B),
                 i.key_pressed(egui::Key::C),
                 i.key_pressed(egui::Key::A),
+                i.key_pressed(egui::Key::R),
             )
         });
         let space = space && !typing;
@@ -2033,6 +2151,7 @@ impl eframe::App for PlayerApp {
         let ch_prev = ch_prev && !typing;
         let ch_panel = ch_panel && !typing;
         let srs_mine = srs_mine && !typing;
+        let reading_toggle = reading_toggle && !typing;
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -2127,14 +2246,18 @@ impl eframe::App for PlayerApp {
             // a: mine the current subtitle line into Anki.
             self.mine_current_line();
         }
+        if reading_toggle {
+            // r: reading panel with furigana/pinyin.
+            self.reading_open = !self.reading_open;
+        }
 
         self.drain_srs();
         self.drain_channels();
         self.drain_ws();
         self.handle_events();
         self.render_mpv(frame);
-        self.paint_video(ctx);
-        self.paint_overlays(ctx);
+        // Panels first, then the central video area (egui gives panels the
+        // space they claim; the video takes what remains).
         if self.channels_open {
             self.paint_channels(ctx);
         }
@@ -2144,6 +2267,11 @@ impl eframe::App for PlayerApp {
         if self.sub_list_open {
             self.paint_subtitle_list(ctx);
         }
+        if self.reading_open {
+            self.paint_reading(ctx);
+        }
+        self.paint_video(ctx);
+        self.paint_overlays(ctx);
 
         let playing = self.mpv.as_ref().map(|m| m.playing).unwrap_or(false);
         if playing {
