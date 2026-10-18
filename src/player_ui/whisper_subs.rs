@@ -216,6 +216,7 @@ pub enum WsEvent {
 pub fn monitor_task(client: WhisperSubs, task_id: String, tx: std::sync::mpsc::Sender<WsEvent>) {
     std::thread::spawn(move || {
         let mut seen_any = false;
+        let mut last_sent: Option<String> = None;
         loop {
             std::thread::sleep(Duration::from_secs(3));
             match client.task_status(&task_id) {
@@ -230,9 +231,17 @@ pub fn monitor_task(client: WhisperSubs, task_id: String, tx: std::sync::mpsc::S
                     }
                     match client.task_subtitles(&task_id) {
                         Ok(Some(text)) => {
-                            seen_any = true;
-                            if tx.send(WsEvent::Srt(text)).is_err() {
-                                return;
+                            // The file exists as soon as the run starts but
+                            // stays empty for a while; only forward content
+                            // that actually changed.
+                            if text.is_empty() || last_sent.as_deref() == Some(text.as_str()) {
+                                // nothing new
+                            } else {
+                                seen_any = true;
+                                last_sent = Some(text.clone());
+                                if tx.send(WsEvent::Srt(text)).is_err() {
+                                    return;
+                                }
                             }
                         }
                         Ok(None) => {}
