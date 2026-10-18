@@ -7,6 +7,7 @@ pub mod app;
 pub mod control;
 pub mod settings;
 pub mod subtitle;
+pub mod whisper_subs;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;

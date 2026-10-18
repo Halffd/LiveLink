@@ -8,5 +8,6 @@ pub mod mpv;
 pub mod niconico;
 pub mod network;
 pub mod player;
+pub mod transcript;
 pub mod twitch;
 pub mod youtube;

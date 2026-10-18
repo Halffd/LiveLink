@@ -148,6 +148,27 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
 
+    // Automatic subtitle generation: submit streams to the .whisper-subs API
+    // and attach the generated subs to the player windows. Disabled by config
+    // or silently idle when the transcription API is not running.
+    let (transcribe_tx, transcribe_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(u32, String)>();
+    {
+        let transcript_worker = livelink::services::transcript::TranscriptWorker::new(
+            config.transcript.clone(),
+            std::path::Path::new(&config_dir),
+        );
+        if transcript_worker.config.enabled {
+            let worker = transcript_worker.clone();
+            let orchestrator_for_transcription = orchestrator.clone();
+            tokio::spawn(async move {
+                worker
+                    .run(&orchestrator_for_transcription, transcribe_rx)
+                    .await;
+            });
+        }
+    }
+
     // Forward stream changes to standalone player windows listening on the
     // control port convention (DEFAULT_BASE_PORT + screen). Best-effort: no
     // listener on a screen just means there is no player window for it.
@@ -322,7 +343,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
     }
 
     let orchestrator_for_api = orchestrator.clone();
-    let app = livelink::api::routes::create_router(orchestrator_for_api);
+    let app = livelink::api::routes::create_router(orchestrator_for_api, Some(transcribe_tx));
 
     let addr = format!("0.0.0.0:{}", port);
     info!("Starting API server on {}", addr);

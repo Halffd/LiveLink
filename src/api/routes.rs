@@ -16,6 +16,8 @@ use crate::services::holodex::QueryOptions;
 #[derive(Clone)]
 struct AppState {
     orchestrator: Arc<Orchestrator>,
+    /// Sends (screen, url) pairs to the transcription worker.
+    transcribe_trigger: Option<tokio::sync::mpsc::UnboundedSender<(u32, String)>>,
 }
 
 #[derive(Serialize)]
@@ -43,6 +45,12 @@ pub struct ChannelPlayRequest {
 pub struct ChannelMoveRequest {
     from: u32,
     to: u32,
+}
+
+#[derive(Deserialize)]
+pub struct TranscribeRequest {
+    screen: u32,
+    url: String,
 }
 
 #[derive(Deserialize)]
@@ -167,6 +175,27 @@ async fn channel_move(
         .map_err(|e| (StatusCode::CONFLICT, e))?;
     Ok(Json(
         serde_json::json!({ "success": true, "from": req.from, "to": req.to }),
+    ))
+}
+
+/// Queue a stream for transcription now.
+async fn transcribe(
+    State(state): State<AppState>,
+    Json(req): Json<TranscribeRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    match &state.transcribe_trigger {
+        Some(trigger) => trigger
+            .send((req.screen, req.url.clone()))
+            .map_err(|_| (StatusCode::SERVICE_UNAVAILABLE, "transcription worker stopped".to_string()))?,
+        None => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "transcription not configured".to_string(),
+            ))
+        }
+    }
+    Ok(Json(
+        serde_json::json!({ "success": true, "screen": req.screen, "url": req.url }),
     ))
 }
 
@@ -509,8 +538,11 @@ async fn query_streams(
   }
 }
 
-pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
-  let app_state = AppState { orchestrator };
+pub fn create_router(
+    orchestrator: Arc<Orchestrator>,
+    transcribe_trigger: Option<tokio::sync::mpsc::UnboundedSender<(u32, String)>>,
+) -> Router {
+  let app_state = AppState { orchestrator, transcribe_trigger };
 
   Router::new()
     .route("/status", get(get_status))
@@ -529,6 +561,7 @@ pub fn create_router(orchestrator: Arc<Orchestrator>) -> Router {
     .route("/channel/play", post(channel_play))
     .route("/channel/move", post(channel_move))
     .route("/channels/:screen", get(get_channels))
+    .route("/transcribe", post(transcribe))
     .route("/queue/add", post(queue_add))
     .route("/queue/clear", post(queue_clear))
     .route("/queue/clear-watched", post(clear_watched))

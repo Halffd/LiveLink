@@ -36,6 +36,9 @@ egui_extras = { version = "0.29", features = ["image"] }
 libmpv2 = { version = "6", features = ["render"] }
 libmpv2-sys = "4"
 regex = "1"
+lindera = "6"
+lindera-dictionary = "6"
+lindera-ipadic = "6"
 
 [dev-dependencies]
 tokio-test = "0.4"

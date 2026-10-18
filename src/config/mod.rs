@@ -26,6 +26,41 @@ pub struct Config {
     pub streamlink: StreamlinkConfig,
     pub vlc: VlcConfig,
     pub filters: FiltersConfig,
+    pub transcript: TranscriptConfig,
+}
+
+/// Automatic subtitle generation through the .whisper-subs transcription API.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct TranscriptConfig {
+    /// Submit streams for transcription when they start
+    pub enabled: bool,
+    /// Base URL of the .whisper-subs API server
+    pub api_url: String,
+    /// API key for the transcription server; when unset, the first key is
+    /// read from `api_key_file`
+    pub api_key: Option<String>,
+    /// A .whisper-subs api_config.json to read an API key from when `api_key`
+    /// is not set
+    pub api_key_file: String,
+    /// Whisper model passed to the transcription request
+    pub model: String,
+    /// Where generated .srt files are cached; defaults to
+    /// `<config_dir>/transcripts` when empty
+    pub transcript_dir: String,
+}
+
+impl Default for TranscriptConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            api_url: "http://localhost:8000".to_string(),
+            api_key: None,
+            api_key_file: "/host/.whisper-subs/api/api_config.json".to_string(),
+            model: "small".to_string(),
+            transcript_dir: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -698,6 +733,10 @@ impl ConfigLoader {
             .try_load_json_file("filters.json")
             .unwrap_or_else(|| FiltersConfig::default());
 
+        let transcript: TranscriptConfig = self
+            .try_load_json_file("transcript.json")
+            .unwrap_or_else(|| TranscriptConfig::default());
+
         let main_config: Option<MainConfig> = self.try_load_json_file("config.json");
 
         Config {
@@ -774,6 +813,7 @@ impl ConfigLoader {
             streamlink,
             vlc,
             filters,
+            transcript,
         }
     }
 

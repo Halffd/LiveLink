@@ -83,6 +83,29 @@ pub struct PlayerApp {
     channels_error: Option<String>,
     /// Receiver for background channel snapshots.
     channels_rx: Option<std::sync::mpsc::Receiver<ChannelsSnapshot>>,
+    /// Whether the WhisperSubs panel is visible.
+    ws_open: bool,
+    /// Panel section: 0 library, 1 channels, 2 live, 3 subs.
+    ws_section: u8,
+    /// Drill-down channel in the channels section.
+    ws_channel: Option<String>,
+    /// Browse lists fetched on demand (None = not loaded).
+    ws_library: Option<Vec<serde_json::Value>>,
+    ws_channels: Option<Vec<serde_json::Value>>,
+    ws_channel_videos: Option<Vec<serde_json::Value>>,
+    ws_live: Option<Vec<serde_json::Value>>,
+    ws_subs: Option<Vec<serde_json::Value>>,
+    /// Panel-wide error/status line.
+    ws_error: Option<String>,
+    /// Receiver for the transcription monitor thread.
+    ws_rx: Option<std::sync::mpsc::Receiver<super::whisper_subs::WsEvent>>,
+    /// Task status line while transcription runs.
+    ws_task_status: Option<String>,
+    /// Local temp file the growing subtitles stream into.
+    ws_live_sub_path: Option<std::path::PathBuf>,
+    /// Whether the live subtitle file was already attached to mpv
+    /// (sub-add once, sub-reload for every further update).
+    ws_live_sub_added: bool,
 }
 
 /// One channel row in the panel.
@@ -172,6 +195,19 @@ impl PlayerApp {
             channels: None,
             channels_error: None,
             channels_rx: None,
+            ws_open: false,
+            ws_section: 0,
+            ws_channel: None,
+            ws_library: None,
+            ws_channels: None,
+            ws_channel_videos: None,
+            ws_live: None,
+            ws_subs: None,
+            ws_error: None,
+            ws_rx: None,
+            ws_task_status: None,
+            ws_live_sub_path: None,
+            ws_live_sub_added: false,
         };
         if let Some(server_url) = window.server_url.clone() {
             let (tx, rx) = std::sync::mpsc::channel::<ChannelsSnapshot>();
@@ -558,6 +594,388 @@ impl PlayerApp {
                 std::thread::sleep(std::time::Duration::from_secs(4));
             }
         });
+    }
+
+    /// Consume events from the transcription monitor: status line, the
+    /// growing subtitle file (written to a temp path, sub-add'ed once,
+    /// sub-reloaded afterwards), and completion.
+    fn drain_ws(&mut self) {
+        let Some(rx) = &self.ws_rx else {
+            return;
+        };
+        while let Ok(event) = rx.try_recv() {
+            use super::whisper_subs::WsEvent;
+            match event {
+                WsEvent::Status(line) => self.ws_task_status = Some(line),
+                WsEvent::Srt(text) => {
+                    let path = self.ws_live_sub_path.clone().unwrap_or_else(|| {
+                        std::env::temp_dir()
+                            .join(format!("livelink-ws-live-{}.srt", std::process::id()))
+                    });
+                    if std::fs::write(&path, &text).is_ok() {
+                        let path_str = path.to_string_lossy().to_string();
+                        if let Some(mpv) = &mut self.mpv {
+                            if self.ws_live_sub_added {
+                                mpv.sub_reload();
+                            } else {
+                                mpv.sub_add(&path_str);
+                                self.subtitles.push(path_str);
+                                self.ws_live_sub_added = true;
+                            }
+                        }
+                        self.ws_live_sub_path = Some(path);
+                    }
+                }
+                WsEvent::Completed => {
+                    self.ws_task_status = Some("completed".to_string());
+                }
+                WsEvent::Failed(err) => {
+                    self.ws_error = Some(format!("transcription failed: {err}"));
+                    self.ws_task_status = None;
+                }
+            }
+        }
+    }
+
+    /// Kick off transcription of the currently loaded media on the
+    /// configured whisper-subs server, then stream the growing subtitles
+    /// into the player.
+    fn ws_transcribe_current(&mut self) {
+        let Some(source) = self.playlist.get(self.index).cloned() else {
+            self.ws_error = Some("nothing is loaded".to_string());
+            return;
+        };
+        let client = super::whisper_subs::WhisperSubs::new(
+            self.settings.whisper_subs_url.clone(),
+            self.settings.whisper_subs_key.clone(),
+        );
+        match client.start_transcription(&source, "large-v3") {
+            Ok(task_id) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                super::whisper_subs::monitor_task(client, task_id, tx);
+                self.ws_rx = Some(rx);
+                self.ws_task_status = Some("queued".to_string());
+                self.ws_error = None;
+            }
+            Err(e) => self.ws_error = Some(e),
+        }
+    }
+
+    /// The WhisperSubs panel: server browse (library, channels, live,
+    /// the subtitle directory) plus transcribe-current with streaming
+    /// subtitles.
+    fn paint_whisper_subs(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("whisper_subs")
+            .resizable(true)
+            .default_width(340.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("WhisperSubs");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("↻").on_hover_text("Reload section").clicked() {
+                            self.ws_reload_section();
+                        }
+                    });
+                });
+                ui.separator();
+
+                if self.settings.whisper_subs_url.trim().is_empty() {
+                    ui.weak("configure the server URL in settings");
+                    return;
+                }
+                if let Some(err) = &self.ws_error {
+                    ui.colored_label(ui.visuals().error_fg_color, err);
+                    ui.separator();
+                }
+
+                ui.horizontal(|ui| {
+                    for (i, label) in ["Library", "Channels", "Live", "Subs"]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        if ui
+                            .selectable_label(self.ws_section == i as u8, label)
+                            .clicked()
+                        {
+                            self.ws_section = i as u8;
+                            self.ws_channel = None;
+                        }
+                    }
+                });
+                ui.separator();
+
+                if let Some(status) = &self.ws_task_status.clone() {
+                    ui.weak(format!("task: {status}"));
+                    ui.separator();
+                }
+
+                let client = super::whisper_subs::WhisperSubs::new(
+                    self.settings.whisper_subs_url.clone(),
+                    self.settings.whisper_subs_key.clone(),
+                );
+                match self.ws_section {
+                    0 => self.paint_ws_library(ui, &client),
+                    1 => self.paint_ws_channels(ui, &client),
+                    2 => self.paint_ws_live(ui, &client),
+                    _ => self.paint_ws_subs(ui, &client),
+                }
+            });
+    }
+
+    /// Fetch a section list on demand (first view and the reload button).
+    fn ws_reload_section(&mut self) {
+        self.ws_error = None;
+        let client = super::whisper_subs::WhisperSubs::new(
+            self.settings.whisper_subs_url.clone(),
+            self.settings.whisper_subs_key.clone(),
+        );
+        match self.ws_section {
+            0 => match client.library() {
+                Ok(items) => self.ws_library = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            1 => {
+                let target = self.ws_channel.clone();
+                match target {
+                    Some(name) => match client.channel_videos(&name) {
+                        Ok(items) => self.ws_channel_videos = Some(items),
+                        Err(e) => self.ws_error = Some(e),
+                    },
+                    None => match client.channels() {
+                        Ok(items) => self.ws_channels = Some(items),
+                        Err(e) => self.ws_error = Some(e),
+                    },
+                }
+            }
+            2 => match client.live_tasks() {
+                Ok(items) => self.ws_live = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            _ => match client.subtitle_list() {
+                Ok(items) => self.ws_subs = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+        }
+    }
+
+    fn paint_ws_library(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+        if self.ws_library.is_none() {
+            match client.library() {
+                Ok(items) => self.ws_library = Some(items),
+                Err(e) => {
+                    self.ws_error = Some(e);
+                    return;
+                }
+            }
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .button("Transcribe current")
+                .on_hover_text("Send the loaded media to the server and stream its subtitles")
+                .clicked()
+            {
+                self.ws_transcribe_current();
+            }
+        });
+        ui.separator();
+        let items = self.ws_library.clone().unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for item in &items {
+                    let title = item["title"].as_str().unwrap_or("untitled");
+                    let channel = item["channel"].as_str().unwrap_or_default();
+                    let media = item["urls"]["media"]
+                        .as_array()
+                        .map(|a| !a.is_empty())
+                        .unwrap_or(false);
+                    let srt = item["urls"]["srt"].as_str().unwrap_or_default();
+                    let source = item["source_url"].as_str().unwrap_or_default();
+                    let playable = (media && !srt.is_empty()) || !source.is_empty();
+                    let response = ui.add(egui::Label::new(format!("{title}\n{channel}")).wrap());
+                    if playable && response.clicked() {
+                        // Play in this window: media URL via the server, with
+                        // its SRT attached; otherwise fall back to the source.
+                        if let Some(first) =
+                            item["urls"]["media"].as_array().and_then(|a| a.first())
+                        {
+                            let url = client.resolve(first["url"].as_str().unwrap_or_default());
+                            let sub = client.resolve(srt);
+                            self.playlist = vec![url];
+                            self.index = 0;
+                            self.subtitles = vec![sub];
+                            self.load_current();
+                            self.ws_open = false;
+                        } else if !source.is_empty() {
+                            self.playlist = vec![source.to_string()];
+                            self.index = 0;
+                            self.subtitles.clear();
+                            self.load_current();
+                            self.ws_open = false;
+                        }
+                    }
+                    ui.separator();
+                }
+                if items.is_empty() {
+                    ui.weak("no transcriptions on the server");
+                }
+            });
+    }
+
+    fn paint_ws_channels(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+        if let Some(name) = self.ws_channel.clone() {
+            ui.horizontal(|ui| {
+                if ui.button("←").clicked() {
+                    self.ws_channel = None;
+                    self.ws_channel_videos = None;
+                }
+                ui.label(&name);
+            });
+            ui.separator();
+            if self.ws_channel_videos.is_none() {
+                match client.channel_videos(&name) {
+                    Ok(items) => self.ws_channel_videos = Some(items),
+                    Err(e) => {
+                        self.ws_error = Some(e);
+                        return;
+                    }
+                }
+            }
+            let items = self.ws_channel_videos.clone().unwrap_or_default();
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for v in &items {
+                        let title = v["title"].as_str().unwrap_or("untitled");
+                        let transcribed = v["transcribed"].as_bool().unwrap_or(false);
+                        let source = v["source_url"].as_str().unwrap_or_default();
+                        let response = ui.add(
+                            egui::Label::new(format!(
+                                "{title}\n{}",
+                                if transcribed {
+                                    "transcribed"
+                                } else {
+                                    "not transcribed"
+                                }
+                            ))
+                            .wrap(),
+                        );
+                        if response.clicked() && !source.is_empty() {
+                            self.playlist = vec![source.to_string()];
+                            self.index = 0;
+                            self.subtitles.clear();
+                            self.load_current();
+                            self.ws_open = false;
+                        }
+                        ui.separator();
+                    }
+                    if items.is_empty() {
+                        ui.weak("no videos listed for this channel");
+                    }
+                });
+            return;
+        }
+        if self.ws_channels.is_none() {
+            match client.channels() {
+                Ok(items) => self.ws_channels = Some(items),
+                Err(e) => {
+                    self.ws_error = Some(e);
+                    return;
+                }
+            }
+        }
+        let items = self.ws_channels.clone().unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for c in &items {
+                    let name = c["name"].as_str().unwrap_or("?");
+                    let transcribed = c["transcribed"].as_i64().unwrap_or(0);
+                    if ui
+                        .add(egui::Label::new(format!("{name} ({transcribed})")).wrap())
+                        .clicked()
+                    {
+                        self.ws_channel = Some(name.to_string());
+                        self.ws_channel_videos = None;
+                    }
+                    ui.separator();
+                }
+                if items.is_empty() {
+                    ui.weak("no channels on the server");
+                }
+            });
+    }
+
+    fn paint_ws_live(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+        if self.ws_live.is_none() {
+            match client.live_tasks() {
+                Ok(items) => self.ws_live = Some(items),
+                Err(e) => {
+                    self.ws_error = Some(e);
+                    return;
+                }
+            }
+        }
+        let items = self.ws_live.clone().unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for t in &items {
+                    let source = t["source"].as_str().unwrap_or("?");
+                    let status = t["status"].as_str().unwrap_or_default();
+                    let model = t["model_name"].as_str().unwrap_or_default();
+                    ui.add(egui::Label::new(format!("{source}\n{status} · {model}")).wrap());
+                    ui.separator();
+                }
+                if items.is_empty() {
+                    ui.weak("no live or running transcription tasks");
+                }
+            });
+    }
+
+    fn paint_ws_subs(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+        if self.ws_subs.is_none() {
+            match client.subtitle_list() {
+                Ok(items) => self.ws_subs = Some(items),
+                Err(e) => {
+                    self.ws_error = Some(e);
+                    return;
+                }
+            }
+        }
+        let items = self.ws_subs.clone().unwrap_or_default();
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for s in &items {
+                    let name = s["filename"].as_str().unwrap_or("?");
+                    let created = s["created"].as_str().unwrap_or_default();
+                    let path = s["path"].as_str().unwrap_or_default().to_string();
+                    let response = ui.add(egui::Label::new(format!("{name}\n{created}")).wrap());
+                    if response.clicked() && !path.is_empty() {
+                        match client.subtitle_text(&path) {
+                            Ok(text) => {
+                                let local = std::env::temp_dir().join(format!(
+                                    "livelink-ws-{}.srt",
+                                    urlencoding::encode(&path)
+                                ));
+                                if std::fs::write(&local, text).is_ok() {
+                                    if let Some(mpv) = &mut self.mpv {
+                                        let path_str = local.to_string_lossy().to_string();
+                                        mpv.sub_add(&path_str);
+                                        self.subtitles.push(path_str);
+                                    }
+                                }
+                            }
+                            Err(e) => self.ws_error = Some(e),
+                        }
+                    }
+                    ui.separator();
+                }
+                if items.is_empty() {
+                    ui.weak("no subtitle files on the server");
+                }
+            });
     }
 
     /// The channel panel: current channel, queue with click-to-switch, and
@@ -1114,6 +1532,9 @@ impl PlayerApp {
                             if ui.button("☰").on_hover_text("Subtitle list (l)").clicked() {
                                 self.sub_list_open = !self.sub_list_open;
                             }
+                            if ui.button("💬").on_hover_text("WhisperSubs").clicked() {
+                                self.ws_open = !self.ws_open;
+                            }
                             if ui.button("⚙").clicked() {
                                 self.settings_open = !self.settings_open;
                             }
@@ -1584,12 +2005,16 @@ impl eframe::App for PlayerApp {
         }
 
         self.drain_channels();
+        self.drain_ws();
         self.handle_events();
         self.render_mpv(frame);
         self.paint_video(ctx);
         self.paint_overlays(ctx);
         if self.channels_open {
             self.paint_channels(ctx);
+        }
+        if self.ws_open {
+            self.paint_whisper_subs(ctx);
         }
         if self.sub_list_open {
             self.paint_subtitle_list(ctx);

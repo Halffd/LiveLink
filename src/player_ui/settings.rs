@@ -85,6 +85,12 @@ pub struct PlayerUiSettings {
     pub video_pan_y: f64,
     /// Video zoom (1.0 = fit)
     pub video_zoom: f64,
+    /// whisper-subs transcription server URL (empty = panel disabled)
+    #[serde(default)]
+    pub whisper_subs_url: String,
+    /// whisper-subs API key (server: POST /auth/api-keys)
+    #[serde(default)]
+    pub whisper_subs_key: String,
 }
 
 impl Default for PlayerUiSettings {
@@ -120,6 +126,8 @@ impl Default for PlayerUiSettings {
             video_pan_x: 0.0,
             video_pan_y: 0.0,
             video_zoom: 1.0,
+            whisper_subs_url: String::new(),
+            whisper_subs_key: String::new(),
         }
     }
 }
