@@ -1665,9 +1665,35 @@ impl PlayerApp {
                             if ui.button("☰").on_hover_text("Subtitle list (l)").clicked() {
                                 self.sub_list_open = !self.sub_list_open;
                             }
-                            if ui.button("💬").on_hover_text("WhisperSubs").clicked() {
-                                self.ws_open = !self.ws_open;
-                            }
+                            ui.menu_button("💬", |ui| {
+                                ui.label("WhisperSubs (F1)");
+                                ui.separator();
+                                for (i, label) in
+                                    ["Library", "Channels", "Live", "Subs"].into_iter().enumerate()
+                                {
+                                    if ui
+                                        .selectable_label(self.ws_section == i as u8, label)
+                                        .clicked()
+                                    {
+                                        self.ws_section = i as u8;
+                                        self.ws_channel = None;
+                                        self.ws_error = None;
+                                        self.ws_open = true;
+                                        ui.close_menu();
+                                    }
+                                }
+                                ui.separator();
+                                if ui
+                                    .button("Transcribe current")
+                                    .on_hover_text("Send the loaded media to the whisper-subs server and stream its subtitles")
+                                    .clicked()
+                                {
+                                    self.ws_section = 0;
+                                    self.ws_open = true;
+                                    self.ws_transcribe_current();
+                                    ui.close_menu();
+                                }
+                            });
                             if ui.button("⚙").clicked() {
                                 self.settings_open = !self.settings_open;
                             }
@@ -2107,6 +2133,7 @@ impl eframe::App for PlayerApp {
             ch_panel,
             srs_mine,
             reading_toggle,
+            f1,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -2131,6 +2158,7 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::C),
                 i.key_pressed(egui::Key::A),
                 i.key_pressed(egui::Key::R),
+                i.key_pressed(egui::Key::F1),
             )
         });
         let space = space && !typing;
@@ -2241,6 +2269,13 @@ impl eframe::App for PlayerApp {
         }
         if ch_panel {
             self.channels_open = !self.channels_open;
+        }
+        if f1 {
+            // F1: whisper-subs browse panel (library/channels/live/subs).
+            self.ws_open = !self.ws_open;
+            if self.ws_open {
+                self.ws_error = None;
+            }
         }
         if srs_mine {
             // a: mine the current subtitle line into Anki.
