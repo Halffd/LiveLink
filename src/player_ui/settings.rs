@@ -52,6 +52,11 @@ pub struct PlayerUiSettings {
     pub respawn: bool,
     /// Initial playback volume (mpv scale, 0-130)
     pub volume: i64,
+    /// Directory of imported mecab-format reading dictionaries (*.csv
+    /// merged, or one *.bin). Empty means `<config dir>/dictionaries`.
+    pub reading_dictionary_dir: String,
+    /// mecab binary used for furigana when the embedded dictionary fails.
+    pub reading_mecab_path: String,
     /// AnkiConnect base URL for SRS mining
     pub srs_url: String,
     /// Target deck for mined cards
@@ -124,6 +129,8 @@ impl Default for PlayerUiSettings {
             loop_playlist: true,
             respawn: true,
             volume: 100,
+            reading_dictionary_dir: String::new(),
+            reading_mecab_path: "mecab".to_string(),
             srs_url: "http://localhost:8765".to_string(),
             srs_deck: "LiveLink".to_string(),
             srs_model: "Basic".to_string(),

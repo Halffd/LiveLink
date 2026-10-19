@@ -208,6 +208,18 @@ impl PlayerApp {
             }
         }
 
+        // Reading layer: imported dictionaries live beside the config unless
+        // an explicit directory is configured; mecab is the fallback.
+        let dictionary_dir = if settings.reading_dictionary_dir.trim().is_empty() {
+            window.config_dir.join("dictionaries")
+        } else {
+            std::path::PathBuf::from(settings.reading_dictionary_dir.trim())
+        };
+        crate::player_ui::reading::init(crate::player_ui::reading::ReadingConfig {
+            dictionary_dir: Some(dictionary_dir),
+            mecab_path: settings.reading_mecab_path.clone(),
+        });
+
         let mut app = Self {
             mpv,
             playlist: window.playlist.clone(),
