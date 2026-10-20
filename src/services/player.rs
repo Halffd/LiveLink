@@ -196,12 +196,14 @@ pub async fn start_mpv_process(
 
         if self.config.debug {
             let ipc_dir = std::env::temp_dir();
-            let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}", std::process::id()));
+            // The real socket path is per-instance (see MpvInstance::new);
+            // this debug string only shows the shape.
+            let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}_<seq>", std::process::id()));
             let mut cmd_args = vec![url.to_string()];
             cmd_args.push(format!("--input-ipc-server={}", ipc_path.display()));
             cmd_args.push(format!("--geometry={}x{}+{}+{}", screen_config.width, screen_config.height, screen_config.x, screen_config.y));
             cmd_args.push(format!("--volume={}", screen_config.volume));
-            cmd_args.push("--idle".to_string());
+            cmd_args.push("--force-window=immediate".to_string());
             cmd_args.extend(extra_args.iter().cloned());
             debug!(screen, url = %url, mpv_path = %self.config.mpv_path, cmd = %format!("{} {}", self.config.mpv_path, cmd_args.join(" ")), "MPV command");
         }

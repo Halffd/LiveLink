@@ -38,8 +38,12 @@ pub struct MpvInstance {
 
 impl MpvInstance {
     pub fn new() -> Result<Self, MpvError> {
+        static INSTANCE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = INSTANCE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let ipc_dir = std::env::temp_dir();
-        let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}", std::process::id()));
+        // Unique per instance: the pid alone collided across screens, and the
+        // second mpv could not create its socket.
+        let ipc_path = ipc_dir.join(format!("livelink_mpv_ipc_{}_{}", std::process::id(), seq));
 
         Ok(Self {
             child_pid: None,
@@ -90,7 +94,12 @@ impl MpvInstance {
             self.width, self.height, self.x, self.y
         ));
         args.push(format!("--volume={}", self.volume));
-        args.push("--idle".to_string());
+        // Show the window immediately, even while yt-dlp resolves the stream
+        // or the load fails: the monitor must never sit empty.
+        args.push("--force-window=immediate".to_string());
+        // No --idle: mpv exits at end-of-file or on load failure so the
+        // orchestrator's exit listener advances to the next channel instead
+        // of a windowless idle process lingering forever.
         args.extend(extra_args.iter().cloned());
 
         if let Some(config_dir) = &self.config_dir {
