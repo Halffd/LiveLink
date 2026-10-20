@@ -13,7 +13,6 @@ struct HelixResponse {
 }
 
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 #[allow(unused)]
 struct TwitchStream {
     id: String,
@@ -29,6 +28,34 @@ struct TwitchStream {
     started_at: String,
     language: String,
     thumbnail_url: String,
+}
+
+/// One entry of Helix search/channels (snake_case fields). Module-level so
+/// the parse behavior is regression-testable. Unread fields mirror the API
+/// shape so parse failures surface real schema drift.
+#[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
+struct TwitchSearchChannel {
+    broadcaster_login: Option<String>,
+    display_name: Option<String>,
+    game_id: Option<String>,
+    game_name: Option<String>,
+    is_live: Option<bool>,
+    tags: Option<Vec<String>>,
+    thumbnail_url: Option<String>,
+    title: Option<String>,
+    started_at: Option<String>,
+}
+
+/// One entry of Helix /streams as get_top_streams consumes it.
+#[derive(serde::Deserialize)]
+#[allow(unused)]
+struct TopStream {
+    user_id: Option<String>,
+    user_login: Option<String>,
+    title: Option<String>,
+    viewer_count: Option<u64>,
+    started_at: Option<String>,
 }
 
 #[derive(Error, Debug)]
@@ -156,7 +183,6 @@ impl TwitchService {
         }
 
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct TwitchStream {
     user_id: Option<String>,
     user_login: Option<String>,
@@ -254,7 +280,6 @@ Ok(sources)
 }
  
     #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
     #[allow(unused)]
     struct TwitchSearchChannel {
         broadcaster_login: Option<String>,
@@ -428,21 +453,6 @@ let helix_response: HelixResponse = serde_json::from_str(&text)
       data: Vec<TwitchSearchChannel>,
     }
 
-#[derive(serde::Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-#[allow(unused)]
-struct TwitchSearchChannel {
-    broadcaster_login: Option<String>,
-    display_name: Option<String>,
-    game_id: Option<String>,
-    game_name: Option<String>,
-    is_live: Option<bool>,
-    tags: Option<Vec<String>>,
-    thumbnail_url: Option<String>,
-    title: Option<String>,
-    started_at: Option<String>,
-}
-
 let helix_response: HelixResponse = serde_json::from_str(&text)
       .map_err(|e| TwitchError::Api(format!("Failed to parse: {} - body: {}", e, safe_substring(&text, 500))))?;
 
@@ -526,17 +536,7 @@ let sources: Vec<StreamSource> = helix_response
 
     #[derive(serde::Deserialize)]
     struct HelixResponse {
-      data: Vec<TwitchStream>,
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TwitchStream {
-      user_id: Option<String>,
-      user_login: Option<String>,
-      title: Option<String>,
-      viewer_count: Option<u64>,
-      started_at: Option<String>,
+      data: Vec<TopStream>,
     }
 
     let sources: Vec<StreamSource> = helix_response
@@ -569,4 +569,63 @@ let sources: Vec<StreamSource> = helix_response
     info!(count = sources.len(), "Fetched top streams from Twitch");
     Ok(sources)
   }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helix responses are snake_case; these regression-test the camelCase
+    /// rename bug that deserialized every field to None and dropped every
+    /// stream (both fetch paths logged count=0 on a real run).
+    #[test]
+    fn helix_streams_parse_snake_case() {
+        let json = r#"{
+            "data": [{
+                "id": "40865579783",
+                "user_id": "123",
+                "user_login": "shxru",
+                "user_name": "shxru",
+                "game_id": "509658",
+                "game_name": "Just Chatting",
+                "type": "live",
+                "title": "chatting",
+                "viewer_count": 42,
+                "started_at": "2026-01-01T00:00:00Z",
+                "language": "en",
+                "thumbnail_url": "https://example/t.jpg"
+            }],
+            "pagination": {}
+        }"#;
+        let parsed: HelixResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.data.len(), 1);
+        assert_eq!(parsed.data[0].user_login, "shxru");
+        assert_eq!(parsed.data[0].viewer_count, 42);
+    }
+
+    #[test]
+    fn helix_search_channels_parse_snake_case() {
+        #[derive(serde::Deserialize)]
+        struct SearchResponse {
+            data: Vec<TwitchSearchChannel>,
+        }
+        let json = r#"{
+            "data": [{
+                "broadcaster_login": "shxru",
+                "display_name": "shxru",
+                "game_id": "509658",
+                "game_name": "Just Chatting",
+                "is_live": true,
+                "tags": ["VTuber"],
+                "title": "chatting",
+                "started_at": "2026-01-01T00:00:00Z",
+                "thumbnail_url": "https://example/t.jpg"
+            }]
+        }"#;
+        let parsed: SearchResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.data.len(), 1);
+        let channel = &parsed.data[0];
+        assert_eq!(channel.broadcaster_login.as_deref(), Some("shxru"));
+        assert_eq!(channel.is_live, Some(true));
+        assert!(channel.tags.as_ref().unwrap().iter().any(|t| t == "VTuber"));
+    }
 }

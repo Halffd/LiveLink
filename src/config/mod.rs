@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 mod env;
 mod favorites;
@@ -677,8 +677,24 @@ impl ConfigLoader {
     fn load_json_file<T: for<'de> Deserialize<'de>>(&self, filename: &str) -> Result<T, String> {
         let path = self.config_dir.join(filename);
         info!("Loading config file: {}", path.display());
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            // A missing optional config file is the normal state: defaults
+            // apply. Only report it at debug so a sparse config dir doesn't
+            // look like a wall of warnings.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("{} not present, using defaults", filename);
+                return Err(format!(
+                    "Failed to read {}: {} (file not present, defaults apply)",
+                    path.display(),
+                    e
+                ));
+            }
+            Err(e) => {
+                warn!("Failed to read {}: {}", path.display(), e);
+                return Err(format!("Failed to read {}: {}", path.display(), e));
+            }
+        };
         serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse {}: {}", path.display(), e))
     }
@@ -687,7 +703,9 @@ impl ConfigLoader {
         match self.load_json_file(filename) {
             Ok(data) => Some(data),
             Err(e) => {
-                warn!("Could not load {}: {}", filename, e);
+                if !e.contains("file not present") {
+                    warn!("Could not load {}: {}", filename, e);
+                }
                 None
             }
         }
@@ -729,13 +747,11 @@ impl ConfigLoader {
             .try_load_json_file("vlc.json")
             .unwrap_or_else(|| self.default_vlc_config());
 
-        let filters: FiltersConfig = self
-            .try_load_json_file("filters.json")
-            .unwrap_or_else(|| FiltersConfig::default());
+        let filters: FiltersConfig = self.try_load_json_file("filters.json").unwrap_or_default();
 
         let transcript: TranscriptConfig = self
             .try_load_json_file("transcript.json")
-            .unwrap_or_else(|| TranscriptConfig::default());
+            .unwrap_or_default();
 
         let main_config: Option<MainConfig> = self.try_load_json_file("config.json");
 
