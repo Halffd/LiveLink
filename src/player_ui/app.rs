@@ -82,6 +82,13 @@ fn end_action(server_driven: bool, has_server: bool) -> EndAction {
     }
 }
 
+/// Whether an incoming stop command should stop the window's playback. A
+/// server-driven window that already finished its media ignores the redundant
+/// transition stop; a stop while playing is always a real stop.
+fn apply_stop(server_driven: bool, playing: bool) -> bool {
+    !server_driven || playing
+}
+
 pub struct PlayerApp {
     mpv: Option<MpvVideo>,
     playlist: Vec<String>,
@@ -1309,8 +1316,15 @@ impl PlayerApp {
                     }
                 }
                 "stop" => {
-                    if let Some(mpv) = &mut self.mpv {
-                        mpv.stop();
+                    // A server-driven window receives transition stops after
+                    // end-of-file (the server stops the old stream before
+                    // starting the next); applying them would flash the idle
+                    // screen between channels. Only stop real, playing media.
+                    let playing = self.mpv.as_ref().map(|m| m.playing).unwrap_or(false);
+                    if apply_stop(self.server_driven, playing) {
+                        if let Some(mpv) = &mut self.mpv {
+                            mpv.stop();
+                        }
                     }
                 }
                 "pause" => {
@@ -2384,5 +2398,16 @@ mod tests {
         assert_eq!(end_action(true, false), EndAction::AdvanceLocal);
         assert_eq!(end_action(false, true), EndAction::AdvanceLocal);
         assert_eq!(end_action(false, false), EndAction::AdvanceLocal);
+    }
+
+    #[test]
+    fn redundant_transition_stops_are_ignored_when_server_driven() {
+        // Server-driven window, media already ended: transition stop ignored.
+        assert!(!apply_stop(true, false));
+        // Server-driven window mid-playback: a real stop.
+        assert!(apply_stop(true, true));
+        // Local window: every stop applies.
+        assert!(apply_stop(false, false));
+        assert!(apply_stop(false, true));
     }
 }

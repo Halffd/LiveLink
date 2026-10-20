@@ -185,7 +185,7 @@ impl MpvVideo {
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "libmpv")?;
             init.set_option("hwdec", "auto-safe")?;
-            init.set_option("keep-open", "no")?;
+            init.set_option("keep-open", "yes")?;
             init.set_option("osc", "no")?;
             init.set_option("input-default-bindings", "no")?;
             init.set_option("input-vo-keyboard", "no")?;
@@ -687,7 +687,7 @@ mod tests {
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "libmpv")?;
             init.set_option("hwdec", "auto-safe")?;
-            init.set_option("keep-open", "no")?;
+            init.set_option("keep-open", "yes")?;
             init.set_option("osc", "no")?;
             init.set_option("input-default-bindings", "no")?;
             init.set_option("input-vo-keyboard", "no")?;
