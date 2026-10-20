@@ -82,6 +82,13 @@ impl Orchestrator {
         }
     }
 
+    /// True when playback happens inside the standalone player windows
+    /// (player_type "embedded"): the orchestrator owns state, queues, and
+    /// events, and no subprocess player is spawned.
+    pub fn window_playback(&self) -> bool {
+        self.config.player_type == "embedded"
+    }
+
     pub fn new(
         config: OrchestratorConfig,
         exit_receiver: mpsc::Receiver<ProcessExit>,
@@ -95,6 +102,7 @@ impl Orchestrator {
             player_type: match config.player_type.as_str() {
                 "streamlink" => crate::services::player::PlayerType::Streamlink,
                 "vlc" => crate::services::player::PlayerType::VlcProcess,
+                "embedded" => crate::services::player::PlayerType::Embedded,
                 _ => crate::services::player::PlayerType::MpvProcess,
             },
             mpv_path: if config.mpv_path.is_empty() {
@@ -365,6 +373,13 @@ pub async fn refresh_queue(&self, screen: u32) -> Result<(), String> {
     }
 
     pub async fn stop_all_players(&self) -> Result<(), String> {
+        if self.window_playback() {
+            // Windows stop via their control ports.
+            for s in 0..10 {
+                self.emit_stream_change(s, "", StreamChangeKind::Stopped);
+            }
+            return Ok(());
+        }
         for s in 0..10 {
             if let Err(e) = self.player.lock().await.stop_all(s).await {
                 warn!(screen = s, error = %e, "Error stopping all players");

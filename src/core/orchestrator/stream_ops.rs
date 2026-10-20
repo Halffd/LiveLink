@@ -133,13 +133,15 @@ impl Orchestrator {
 
         self.emit_stream_change(screen, "", StreamChangeKind::Stopped);
 
-        let player = self.player.clone();
-        tokio::spawn(async move {
-            let player_guard = player.lock().await;
-            if let Err(e) = player_guard.stop(screen, 0).await {
-                warn!(screen, error = %e, "Failed to stop process");
-            }
-        });
+        if !self.window_playback() {
+            let player = self.player.clone();
+            tokio::spawn(async move {
+                let player_guard = player.lock().await;
+                if let Err(e) = player_guard.stop(screen, 0).await {
+                    warn!(screen, error = %e, "Failed to stop process");
+                }
+            });
+        }
 
         if let Some(url) = url {
             let mut queue = self.queue.lock().await;

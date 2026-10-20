@@ -183,6 +183,38 @@ mod failure_tests {
     }
 
     #[tokio::test]
+    async fn test_window_playback_lifecycle_is_state_and_events_only() {
+        let mut config = create_test_config(2);
+        config.player_type = "embedded".to_string();
+        let orch = create_orchestrator_with_screens(config, 1).await;
+        assert!(orch.window_playback());
+
+        let mut events = orch.subscribe_stream_changes();
+        orch.set_queue(
+            0,
+            vec![make_stream_source("http://stream1.com", 0)],
+        )
+        .await;
+
+        // Start: no subprocess player is spawned, but state transitions and
+        // the stream-change event fires (windows load from it).
+        orch.start_stream(0).await.unwrap();
+        assert_eq!(orch.get_state(0).await, Some(StreamState::Starting));
+        let event = events.try_recv().expect("started event");
+        assert_eq!(event.screen, 0);
+        assert_eq!(event.url, "http://stream1.com");
+
+        // Pause is a window-side action now, not a server IPC call.
+        assert!(orch.player_pause(0).await.is_err());
+
+        // Stop: clean state without touching any player process.
+        orch.stop_stream(0).await.unwrap();
+        assert_eq!(orch.get_state(0).await, Some(StreamState::Idle));
+        let event = events.try_recv().expect("stopped event");
+        assert_eq!(event.screen, 0);
+    }
+
+    #[tokio::test]
     async fn test_per_screen_locking_prevents_race() {
         let config = create_test_config(10);
         let orch = create_orchestrator_with_screens(config, 2).await;

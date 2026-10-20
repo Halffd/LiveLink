@@ -66,6 +66,22 @@ fn paint_ruby_line(
     ui.interact(inner.response.rect, id, egui::Sense::click())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EndAction {
+    /// Move within the window's own playlist
+    AdvanceLocal,
+    /// Ask the LiveLink server for the next channel
+    NotifyServer,
+}
+
+fn end_action(server_driven: bool, has_server: bool) -> EndAction {
+    if server_driven && has_server {
+        EndAction::NotifyServer
+    } else {
+        EndAction::AdvanceLocal
+    }
+}
+
 pub struct PlayerApp {
     mpv: Option<MpvVideo>,
     playlist: Vec<String>,
@@ -127,6 +143,9 @@ pub struct PlayerApp {
     srs_busy: bool,
     /// Whether the reading panel is visible.
     reading_open: bool,
+    /// True once the LiveLink server loaded this window's media: end-of-media
+    /// then means "tell the server to advance the channel", not local skips.
+    server_driven: bool,
     /// Whether the WhisperSubs panel is visible.
     ws_open: bool,
     /// Panel section: 0 library, 1 channels, 2 live, 3 subs.
@@ -257,6 +276,7 @@ impl PlayerApp {
             srs_rx: None,
             srs_busy: false,
             reading_open: false,
+            server_driven: false,
             ws_open: false,
             ws_section: 0,
             ws_channel: None,
@@ -1231,6 +1251,28 @@ impl PlayerApp {
         }
     }
 
+    /// What to do when the loaded media ends or fails: a server-driven window
+    /// asks the orchestrator for the next channel (it decides queue rules,
+    /// watched marking, and history); a local playlist advances itself.
+    /// What to do when the loaded media ends or fails: a server-driven window
+    /// asks the orchestrator for the next channel; a local playlist advances
+    /// itself.
+    fn handle_media_end(&mut self) {
+        self.navigate(1);
+    }
+
+    /// Playlist/channel navigation shared by the overlay buttons and the
+    /// control-port next/prev commands: server-driven windows navigate the
+    /// orchestrator queue, local playlists advance themselves.
+    fn navigate(&mut self, dir: i32) {
+        if end_action(self.server_driven, self.server_url.is_some()) == EndAction::NotifyServer {
+            let command = if dir > 0 { "next" } else { "prev" };
+            self.post_channel_command(command, &serde_json::json!({ "screen": self.screen }));
+        } else {
+            self.advance(dir);
+        }
+    }
+
     fn advance(&mut self, dir: i32) {
         if self.playlist.is_empty() {
             return;
@@ -1260,6 +1302,9 @@ impl PlayerApp {
                     if let Some(url) = cmd.url {
                         self.playlist = vec![url];
                         self.index = 0;
+                        // The server drives this window now: media ends go
+                        // back to it as channel-next, not local advances.
+                        self.server_driven = true;
                         self.load_current();
                     }
                 }
@@ -1329,8 +1374,8 @@ impl PlayerApp {
                 }
                 "sub-mode-cycle" => self.cycle_sub_mode(),
                 "sub-toggle-secondary" => self.toggle_secondary(),
-                "next" => self.advance(1),
-                "prev" => self.advance(-1),
+                "next" => self.navigate(1),
+                "prev" => self.navigate(-1),
                 "reload" => {
                     self.settings = PlayerUiSettings::load(&self.config_dir);
                     self.apply_viewport_settings(ctx);
@@ -1365,7 +1410,7 @@ impl PlayerApp {
                     self.delay_secondary_ephemeral = None;
                     self.apply_subtitle_state();
                 }
-                PlayerEvent::Eof => self.advance(1),
+                PlayerEvent::Eof => self.handle_media_end(),
                 PlayerEvent::Stopped => {}
                 PlayerEvent::Failed => {
                     tracing::warn!(
@@ -1377,7 +1422,7 @@ impl PlayerApp {
                             .unwrap_or(""),
                         "playback failed, advancing"
                     );
-                    self.advance(1);
+                    self.handle_media_end();
                 }
             }
         }
@@ -1528,7 +1573,7 @@ impl PlayerApp {
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if ui.button("⏮").clicked() {
-                                self.advance(-1);
+                                self.navigate(-1);
                             }
                             if ui.button("⏪").clicked() {
                                 if let Some(mpv) = &mut self.mpv {
@@ -1557,7 +1602,7 @@ impl PlayerApp {
                                 }
                             }
                             if ui.button("⏭").clicked() {
-                                self.advance(1);
+                                self.navigate(1);
                             }
 
                             if self.settings.show_progress && playing {
@@ -2326,5 +2371,18 @@ impl eframe::App for PlayerApp {
         } else {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_end_routing_prefers_the_server_when_it_drives_the_window() {
+        assert_eq!(end_action(true, true), EndAction::NotifyServer);
+        assert_eq!(end_action(true, false), EndAction::AdvanceLocal);
+        assert_eq!(end_action(false, true), EndAction::AdvanceLocal);
+        assert_eq!(end_action(false, false), EndAction::AdvanceLocal);
     }
 }

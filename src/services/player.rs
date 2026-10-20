@@ -392,7 +392,11 @@ pub async fn start_mpv_process(
     ) -> Result<u32, PlayerError> {
         match self.config.player_type {
             PlayerType::Embedded => {
-                self.start_mpv_process(screen, instance_id, url).await
+                // Window playback: streams play inside the standalone player
+                // windows, driven by the control-port forwarder. No
+                // subprocess to spawn; the orchestrator only owns state.
+                debug!(screen, instance_id, "window playback: no subprocess spawned");
+                Ok(0)
             }
             PlayerType::MpvProcess => {
                 self.start_mpv_process(screen, instance_id, url).await
