@@ -147,6 +147,14 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
     };
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
+    // Every enabled screen needs its state entry from the start: screen
+    // registration used to happen only inside populate (skipped when
+    // auto_start is off), so a manual start on a fresh instance failed with
+    // "Screen not found". This runs before the API binds, so no request can
+    // observe the map before registration finishes.
+    for screen_cfg in orchestrator.config.screens.iter().filter(|s| s.enabled) {
+        orchestrator.register_screen(screen_cfg.screen).await;
+    }
 
     // Automatic subtitle generation: submit streams to the .whisper-subs API
     // and attach the generated subs to the player windows. Disabled by config
@@ -166,26 +174,6 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
                     .run(&orchestrator_for_transcription, transcribe_rx)
                     .await;
             });
-        }
-    }
-
-    // Window playback: launch and supervise one player window per enabled
-    // screen, so a single `livelink start` boots the whole desktop TV. A
-    // closed or crashed window comes back unless the player-ui respawn
-    // setting is off.
-    if orchestrator.window_playback() {
-        for screen in orchestrator
-            .config
-            .screens
-            .iter()
-            .filter(|s| s.enabled)
-            .map(|s| s.screen)
-        {
-            tokio::spawn(supervise_player_window(
-                screen,
-                config_dir.clone(),
-                port,
-            ));
         }
     }
 
@@ -271,6 +259,32 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         }
         None => (true, true, false),
     };
+
+    // Window playback: a `livelink start` that owns window mode launches and
+    // supervises one player window per enabled screen, so a single command
+    // boots the whole desktop TV. A closed or crashed window comes back
+    // unless the player-ui respawn setting is off. Only `start` spawns: the
+    // windows themselves run the player-ui command and must never
+    // re-supervise, or every window would launch another set.
+    if let Some(cli) = &cli {
+        if matches!(cli.command, cli::commands::Commands::Start(_))
+            && orchestrator.window_playback()
+        {
+            for screen in orchestrator
+                .config
+                .screens
+                .iter()
+                .filter(|s| s.enabled)
+                .map(|s| s.screen)
+            {
+                tokio::spawn(supervise_player_window(
+                    screen,
+                    config_dir.clone(),
+                    port,
+                ));
+            }
+        }
+    }
 
     // Handle read-only CLI commands that connect to existing server
     if let Some(ref cli) = cli {
@@ -432,6 +446,10 @@ async fn supervise_player_window(screen: u32, config_dir: String, server_port: u
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
+            // Windows must not outlive their server: without this, a
+            // shutdown or failed second `start` leaves orphan windows
+            // fighting over the control ports.
+            .kill_on_drop(true)
             .spawn()
         {
             Ok(child) => child,

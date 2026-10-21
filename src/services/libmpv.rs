@@ -104,8 +104,10 @@ pub struct MpvVideo {
     // drop in declaration order, so `rc` must stay before `mpv`.
     rc: RenderContext<'static>,
     mpv: Mpv,
+    // The framebuffer wrapping the video texture; dropped (deleted) before
+    // the texture it points at.
+    fbo: glow::Framebuffer,
     texture: Option<glow::Texture>,
-    texture_name: u32,
     texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
@@ -130,7 +132,15 @@ fn clamp_delay(seconds: f64) -> f64 {
     )
 }
 
-fn create_video_texture(gl: &glow::Context, width: u32, height: u32) -> glow::Texture {
+/// Allocate the RGBA target mpv renders into plus the framebuffer object
+/// that wraps it. mpv's OpenGL render API draws into an FBO id, never a
+/// texture id directly (binding a texture name as a framebuffer is
+/// GL_INVALID_OPERATION and leaves the texture black).
+fn create_video_target(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+) -> (glow::Texture, glow::Framebuffer) {
     use glow::HasContext as _;
     let zero = vec![0u8; (width as usize) * (height as usize) * 4];
     unsafe {
@@ -168,7 +178,25 @@ fn create_video_texture(gl: &glow::Context, width: u32, height: u32) -> glow::Te
             glow::CLAMP_TO_EDGE as i32,
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
-        tex
+
+        let fbo = gl
+            .create_framebuffer()
+            .expect("failed to create GL framebuffer");
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(tex),
+            0,
+        );
+        debug_assert_eq!(
+            gl.check_framebuffer_status(glow::FRAMEBUFFER),
+            glow::FRAMEBUFFER_COMPLETE,
+            "video render target FBO must be complete"
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        (tex, fbo)
     }
 }
 
@@ -185,7 +213,11 @@ impl MpvVideo {
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "libmpv")?;
             init.set_option("hwdec", "auto-safe")?;
-            init.set_option("keep-open", "yes")?;
+            // No keep-open: it holds the file at EOF so end-file never fires,
+            // which starves PlayerEvent::Eof and the window's media-end
+            // advance (observed: a 6s file never advanced to the next
+            // channel). The embedded handle survives loadfile replace by
+            // itself, so windows still never close on channel changes.
             init.set_option("osc", "no")?;
             init.set_option("input-default-bindings", "no")?;
             init.set_option("input-vo-keyboard", "no")?;
@@ -214,14 +246,13 @@ impl MpvVideo {
         // order (`rc` before `mpv`) guarantees.
         let rc: RenderContext<'static> = unsafe { std::mem::transmute(rc) };
 
-        let texture = create_video_texture(gl, width, height);
-        let texture_name = texture.0.get();
+        let (texture, fbo) = create_video_target(gl, width, height);
 
         Ok(Self {
             rc,
             mpv,
+            fbo,
             texture: Some(texture),
-            texture_name,
             texture_id: None,
             width,
             height,
@@ -662,12 +693,14 @@ impl MpvVideo {
         }
         // flip=true: mpv writes the video top row first, which is what egui
         // expects. Set to false if the picture appears upside down.
-        let _ = self.rc.render::<()>(
-            self.texture_name as i32,
+        if let Err(e) = self.rc.render::<()>(
+            self.fbo.0.get() as i32,
             self.width as i32,
             self.height as i32,
             true,
-        );
+        ) {
+            tracing::warn!(error = %e, "mpv render failed");
+        }
     }
 
     /// The egui texture id once registered.
@@ -687,7 +720,6 @@ mod tests {
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "libmpv")?;
             init.set_option("hwdec", "auto-safe")?;
-            init.set_option("keep-open", "yes")?;
             init.set_option("osc", "no")?;
             init.set_option("input-default-bindings", "no")?;
             init.set_option("input-vo-keyboard", "no")?;

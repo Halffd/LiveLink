@@ -113,12 +113,15 @@ async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
 async fn start_stream(
     State(state): State<AppState>,
     Json(req): Json<StartRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     state
         .orchestrator
         .start_stream(req.screen)
         .await
-        .map_err(|_e| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            tracing::error!(screen = req.screen, error = %e, "start stream failed");
+            (StatusCode::INTERNAL_SERVER_ERROR, e)
+        })?;
 
     Ok(Json(serde_json::json!({
         "success": true,
@@ -134,7 +137,10 @@ async fn channel_next(
         .orchestrator
         .next_channel(req.screen)
         .await
-        .map_err(|e| (StatusCode::CONFLICT, e))?;
+        .map_err(|e| {
+            tracing::warn!(screen = req.screen, error = %e, "next channel failed");
+            (StatusCode::CONFLICT, e)
+        })?;
     Ok(Json(serde_json::json!({ "success": true, "screen": req.screen })))
 }
 
@@ -146,7 +152,10 @@ async fn channel_prev(
         .orchestrator
         .prev_channel(req.screen)
         .await
-        .map_err(|e| (StatusCode::CONFLICT, e))?;
+        .map_err(|e| {
+            tracing::warn!(screen = req.screen, error = %e, "prev channel failed");
+            (StatusCode::CONFLICT, e)
+        })?;
     Ok(Json(serde_json::json!({ "success": true, "screen": req.screen })))
 }
 

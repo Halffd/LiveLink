@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -136,6 +136,12 @@ pub struct PlayerApp {
     channels: Option<ChannelsSnapshot>,
     /// Failed server contact message, shown in the panel.
     channels_error: Option<String>,
+    /// Server POST results from the request worker thread. reqwest::blocking
+    /// panics when its runtime is dropped on the eframe main thread (that
+    /// thread runs inside tokio's runtime via #[tokio::main]), so every
+    /// blocking request goes through a spawned thread.
+    post_rx: Receiver<Result<(), String>>,
+    post_tx: Sender<Result<(), String>>,
     /// Receiver for background channel snapshots.
     channels_rx: Option<std::sync::mpsc::Receiver<ChannelsSnapshot>>,
     /// mpv binary for SRS audio encoding.
@@ -246,6 +252,8 @@ impl PlayerApp {
             mecab_path: settings.reading_mecab_path.clone(),
         });
 
+        let (post_tx, post_rx) = std::sync::mpsc::channel();
+
         let mut app = Self {
             mpv,
             playlist: window.playlist.clone(),
@@ -276,6 +284,8 @@ impl PlayerApp {
             channels_open: false,
             channels: None,
             channels_error: None,
+            post_rx,
+            post_tx,
             channels_rx: None,
             mpv_path: window.mpv_path.clone(),
             current_source: String::new(),
@@ -696,38 +706,40 @@ impl PlayerApp {
         }
     }
 
-    /// POST a channel command to the LiveLink server. Errors surface in the
-    /// channel panel; they are not fatal.
+    /// POST a channel command to the LiveLink server from a worker thread.
+    /// Errors surface in the channel panel; they are not fatal. Blocking
+    /// reqwest must not run on the eframe main thread (tokio runtime
+    /// context), so the result comes back over `post_rx` and is drained in
+    /// `update`.
     fn post_channel_command(&mut self, path: &str, body: &serde_json::Value) {
-        let Some(server) = &self.server_url else {
+        let Some(server) = self.server_url.clone() else {
             self.channels_error = Some("no server configured".to_string());
             return;
         };
-        let client = match reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                self.channels_error = Some(format!("http client: {e}"));
-                return;
-            }
-        };
-        match client
-            .post(format!("{}/api/channel/{}", server, path))
-            .json(body)
-            .send()
-        {
-            Ok(resp) if resp.status().is_success() => {
-                self.channels_error = None;
-            }
-            Ok(resp) => {
-                self.channels_error = Some(format!("server: {}", resp.status()));
-            }
-            Err(e) => {
-                self.channels_error = Some(format!("server unreachable: {e}"));
-            }
-        }
+        // The orchestrator API is mounted at the root (see create_router):
+        // /channel/next, /channel/prev, /channel/play.
+        let url = format!("{}/channel/{}", server, path);
+        let body = body.clone();
+        let tx = self.post_tx.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(3))
+                    .build()
+                    .map_err(|e| format!("http client: {e}"))?;
+                let resp = client
+                    .post(&url)
+                    .json(&body)
+                    .send()
+                    .map_err(|e| format!("server unreachable: {e}"))?;
+                if resp.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(format!("server: {}", resp.status()))
+                }
+            })();
+            let _ = tx.send(result);
+        });
     }
 
     /// Poll the server for this screen's channels in the background; sends
@@ -747,7 +759,7 @@ impl PlayerApp {
             };
             loop {
                 if let Ok(resp) = client
-                    .get(format!("{}/api/channels/{}", server_url, screen))
+                    .get(format!("{}/channels/{}", server_url, screen))
                     .send()
                 {
                     if resp.status().is_success() {
@@ -1261,10 +1273,8 @@ impl PlayerApp {
     /// What to do when the loaded media ends or fails: a server-driven window
     /// asks the orchestrator for the next channel (it decides queue rules,
     /// watched marking, and history); a local playlist advances itself.
-    /// What to do when the loaded media ends or fails: a server-driven window
-    /// asks the orchestrator for the next channel; a local playlist advances
-    /// itself.
     fn handle_media_end(&mut self) {
+        tracing::info!("media end; advancing");
         self.navigate(1);
     }
 
@@ -1307,6 +1317,7 @@ impl PlayerApp {
             match cmd.cmd.as_str() {
                 "play" => {
                     if let Some(url) = cmd.url {
+                        tracing::info!(url = %url, "window play command");
                         self.playlist = vec![url];
                         self.index = 0;
                         // The server drives this window now: media ends go
@@ -1408,6 +1419,7 @@ impl PlayerApp {
             Vec::new()
         };
         for ev in events {
+            tracing::debug!(?ev, "player event");
             match ev {
                 PlayerEvent::Loaded => {
                     let subs = self.subtitles.clone();
@@ -2174,6 +2186,9 @@ impl eframe::App for PlayerApp {
         }
 
         self.drain_commands(ctx);
+        while let Ok(result) = self.post_rx.try_recv() {
+            self.channels_error = result.err();
+        }
 
         self.refresh_subtitle_lists();
         self.handle_pause_on_subtitle_end();

@@ -99,9 +99,21 @@ pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>) {
                             Err(_) => break,
                         }
                     }
-                    if let Some(cmd) = parse_line(&String::from_utf8_lossy(&buf)) {
-                        if tx.send(cmd).is_err() {
-                            return; // UI gone
+                    let line = String::from_utf8_lossy(&buf);
+                    match parse_line(&line) {
+                        Some(cmd) => {
+                            if tx.send(cmd).is_err() {
+                                return; // UI gone
+                            }
+                        }
+                        None => {
+                            if !line.trim().is_empty() {
+                                tracing::warn!(
+                                    port,
+                                    line = %line.trim(),
+                                    "unparsable control command dropped"
+                                );
+                            }
                         }
                     }
                 }
