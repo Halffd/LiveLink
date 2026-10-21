@@ -2,6 +2,7 @@ use crate::config::FavoriteChannels;
 use crate::queue::queue::StreamSource;
 use tracing::warn;
 
+#[derive(Default)]
 pub struct FallbackService {
     favorite_channels: FavoriteChannels,
 }
@@ -112,13 +113,6 @@ impl FallbackService {
     }
 }
 
-impl Default for FallbackService {
-    fn default() -> Self {
-        Self {
-            favorite_channels: FavoriteChannels::default(),
-        }
-    }
-}
 
 impl From<FavoriteChannels> for FallbackService {
     fn from(channels: FavoriteChannels) -> Self {

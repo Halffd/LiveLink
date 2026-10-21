@@ -130,12 +130,8 @@ fn parse_srt(content: &str) -> Vec<SubtitleInfo> {
     let mut subs: Vec<(String, f64, f64, u32)> = Vec::new();
     let mut lines = content.lines().peekable();
 
-    'blocks: loop {
+    'blocks: while let Some(mut line) = lines.next() {
         // Skip all empty lines.
-        let mut line = match lines.next() {
-            Some(l) => l,
-            None => break,
-        };
         while line.is_empty() {
             line = match lines.next() {
                 Some(l) => l,

@@ -290,13 +290,10 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
             let addr = format!("http://localhost:{}/api/queues", port);
             match reqwest::get(&addr).await {
                 Ok(resp) if resp.status() == 200 => {
-                    match resp.text().await {
-                        Ok(body) => {
-                            println!("Connected to running server on port {}", port);
-                            println!("{}", body);
-                            return;
-                        }
-                        Err(_) => {}
+                    if let Ok(body) = resp.text().await {
+                        println!("Connected to running server on port {}", port);
+                        println!("{}", body);
+                        return;
                     }
                 }
                 _ => {}

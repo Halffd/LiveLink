@@ -155,6 +155,6 @@ async fn test_check_channel_returns_bool() {
         let result = service.check_channel("6").await;
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         let is_live = result.unwrap();
-        assert!(is_live == true || is_live == false);
+        assert!(is_live || !is_live);
     }
 }

@@ -125,21 +125,19 @@ impl WhisperSubs {
         let decoded = self.get_json("/api/v1/live")?;
         Ok(list_of(
             &decoded,
-            decoded
+            if decoded
                 .get("live")
-                .is_some()
-                .then_some("live")
-                .unwrap_or("tasks"),
+                .is_some() { "live" } else { "tasks" },
         ))
     }
 
     /// Every subtitle file the server kept (the subtitle directory).
     pub fn subtitle_list(&self) -> Result<Vec<serde_json::Value>, String> {
         let decoded = self.get_json("/subtitles/list")?;
-        Ok(decoded
+        decoded
             .as_array()
             .cloned()
-            .ok_or_else(|| "unexpected /subtitles/list shape".to_string())?)
+            .ok_or_else(|| "unexpected /subtitles/list shape".to_string())
     }
 
     /// Fetch one subtitle file's content by its server-relative path.

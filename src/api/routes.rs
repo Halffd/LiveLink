@@ -344,7 +344,7 @@ async fn get_organizations(
 ) -> Json<serde_json::Value> {
   let orgs = state.orchestrator.config.favorite_channels.holodex.default
     .iter()
-    .filter_map(|ch| Some(ch.name.clone()))
+    .map(|ch| ch.name.clone())
     .collect::<std::collections::HashSet<_>>()
     .into_iter()
     .collect::<Vec<_>>();
@@ -453,7 +453,7 @@ async fn refresh(
 async fn save_config(
   State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-  if let Err(_) = state.orchestrator.save_config("config") {
+  if state.orchestrator.save_config("config").is_err() {
     return Err(StatusCode::INTERNAL_SERVER_ERROR);
   }
   Ok(Json(serde_json::json!({ "success": true })))

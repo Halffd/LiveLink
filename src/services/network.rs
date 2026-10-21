@@ -5,7 +5,9 @@ use tokio::time::sleep;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum NetworkState {
+    #[default]
     Online,
     Offline,
 }
@@ -89,11 +91,6 @@ impl NetworkMonitor {
     }
 }
 
-impl Default for NetworkState {
-    fn default() -> Self {
-        NetworkState::Online
-    }
-}
 
 #[cfg(test)]
 mod tests {

@@ -35,20 +35,20 @@ impl StreamState {
     }
 
     pub fn valid_transition_to(&self, new_state: StreamState) -> bool {
-        match (self, new_state) {
-            (StreamState::Idle, StreamState::Starting) => true,
-            (StreamState::Starting, StreamState::Playing) => true,
-            (StreamState::Starting, StreamState::Idle) => true,
-            (StreamState::Starting, StreamState::Error) => true,
-            (StreamState::Playing, StreamState::Stopping) => true,
-            (StreamState::Playing, StreamState::Idle) => true,
-            (StreamState::Playing, StreamState::Error) => true,
-            (StreamState::Stopping, StreamState::Idle) => true,
-            (StreamState::Stopping, StreamState::Error) => true,
-            (StreamState::Error, StreamState::Idle) => true,
-            (StreamState::Error, StreamState::Starting) => true,
-            _ => false,
-        }
+        matches!(
+            (self, new_state),
+            (StreamState::Idle, StreamState::Starting)
+                | (StreamState::Starting, StreamState::Playing)
+                | (StreamState::Starting, StreamState::Idle)
+                | (StreamState::Starting, StreamState::Error)
+                | (StreamState::Playing, StreamState::Stopping)
+                | (StreamState::Playing, StreamState::Idle)
+                | (StreamState::Playing, StreamState::Error)
+                | (StreamState::Stopping, StreamState::Idle)
+                | (StreamState::Stopping, StreamState::Error)
+                | (StreamState::Error, StreamState::Idle)
+                | (StreamState::Error, StreamState::Starting)
+        )
     }
 }
 

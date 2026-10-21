@@ -35,12 +35,10 @@ impl Orchestrator {
                 
                 if !enabled_sources.is_empty() {
                     let before_count = filtered.len();
-                    filtered = filtered.into_iter()
-                        .filter(|s| {
+                    filtered.retain(|s| {
                             let platform = s.platform.as_deref().unwrap_or("unknown");
                             enabled_sources.contains(platform)
-                        })
-                        .collect();
+                        });
                     debug!(screen, before = before_count, after = filtered.len(), "After source filter");
                 }
             }
@@ -48,9 +46,7 @@ impl Orchestrator {
             // Skip watched streams if configured
             if screen_config.skip_watched_streams.unwrap_or(false) {
                 let queue = self.queue.lock().await;
-                filtered = filtered.into_iter()
-                    .filter(|s| !queue.is_stream_watched(screen, s))
-                    .collect();
+                filtered.retain(|s| !queue.is_stream_watched(screen, s));
             }
         }
         
@@ -64,8 +60,8 @@ impl Orchestrator {
         let has_holodex_favorites = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "holodex_favorites")
         });
-        if has_holodex_favorites {
-            if self.holodex_service.is_enabled() {
+        if has_holodex_favorites
+            && self.holodex_service.is_enabled() {
                 let holodex_favorites: Vec<String> = self.config
                     .favorite_channels
                     .holodex
@@ -85,14 +81,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from holodex organizations (priority order)
         let has_holodex_orgs_priority = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "holodex_orgs_priority")
         });
-        if has_holodex_orgs_priority {
-            if self.holodex_service.is_enabled() {
+        if has_holodex_orgs_priority
+            && self.holodex_service.is_enabled() {
                 let orgs: Vec<String> = vec![
                     "Hololive".to_string(),
                     "Phase Connect".to_string(),
@@ -117,7 +112,6 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from holodex organizations (original)
 
@@ -125,8 +119,8 @@ impl Orchestrator {
         let has_holodex_favs = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "holodex_favorites")
         });
-        if has_holodex_favs {
-            if self.holodex_service.is_enabled() {
+        if has_holodex_favs
+            && self.holodex_service.is_enabled() {
                 let holodex_favorites: Vec<String> = self.config
                     .favorite_channels
                     .holodex
@@ -146,14 +140,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from holodex twitch independents
         let has_twitch_independents = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "holodex_twitch_independents")
         });
-        if has_twitch_independents {
-            if self.holodex_service.is_enabled() {
+        if has_twitch_independents
+            && self.holodex_service.is_enabled() {
                 match self.holodex_service.get_live_streams_twitch_independents(200).await {
                     Ok(streams) => {
                         debug!(count = streams.len(), "Fetched streams from Holodex twitch independents");
@@ -164,14 +157,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from YouTube favorites
         let has_yt_favorites = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "youtube_favorites")
         });
-        if has_yt_favorites {
-            if self.youtube_service.lock().await.is_enabled() {
+        if has_yt_favorites
+            && self.youtube_service.lock().await.is_enabled() {
                 let yt_favorites: Vec<String> = self.config
                     .favorite_channels
                     .youtube
@@ -192,14 +184,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from Twitch favorites
         let has_twitch_favorites = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch_favorites")
         });
-        if has_twitch_favorites {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch_favorites
+            && self.twitch_service.lock().await.is_enabled() {
                 let twitch_favorites: Vec<String> = self.config
                     .favorite_channels
                     .twitch
@@ -222,25 +213,23 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from Twitch followed channels
         let has_twitch_followed = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch_followed")
         });
-        if has_twitch_followed {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch_followed
+            && self.twitch_service.lock().await.is_enabled() {
                 // This would require user OAuth token, for now skip
                 debug!("Twitch followed channels requires user OAuth, skipping");
             }
-        }
 
         // Try to get streams from Twitch by tag (vtuber)
         let has_twitch_vtuber_tag = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch_vtuber_tag")
         });
-        if has_twitch_vtuber_tag {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch_vtuber_tag
+            && self.twitch_service.lock().await.is_enabled() {
                 let mut twitch = self.twitch_service.lock().await;
                 if twitch.authenticate().await.is_ok() {
                     match twitch.get_live_streams_by_tag("vtuber", 200).await {
@@ -254,14 +243,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from Twitch anime tag
         let has_twitch_anime_tag = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch_anime_tag")
         });
-        if has_twitch_anime_tag {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch_anime_tag
+            && self.twitch_service.lock().await.is_enabled() {
                 let mut twitch = self.twitch_service.lock().await;
                 if twitch.authenticate().await.is_ok() {
                     match twitch.get_live_streams_by_tag("anime", 200).await {
@@ -275,14 +263,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from Holodex twitch independents
         let has_holodex_twitch_ind = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "holodex_twitch_independents")
         });
-        if has_holodex_twitch_ind {
-            if self.holodex_service.is_enabled() {
+        if has_holodex_twitch_ind
+            && self.holodex_service.is_enabled() {
                 match self.holodex_service.get_live_streams_twitch_independents(200).await {
                     Ok(streams) => {
                         debug!(count = streams.len(), "Fetched streams from Holodex twitch independents");
@@ -293,14 +280,13 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get top Twitch streams
         let has_twitch_top = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch_top")
         });
-        if has_twitch_top {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch_top
+            && self.twitch_service.lock().await.is_enabled() {
                 let mut twitch = self.twitch_service.lock().await;
                 if twitch.authenticate().await.is_ok() {
                     match twitch.get_top_streams(200).await {
@@ -314,7 +300,6 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from YouTube favorites (fallback to old method)
         let has_youtube = self.config.screens.iter().any(|s| {
@@ -350,8 +335,8 @@ impl Orchestrator {
         let has_twitch = self.config.screens.iter().any(|s| {
             s.sources.iter().any(|src| src.enabled && src.type_ == "twitch")
         });
-        if has_twitch {
-            if self.twitch_service.lock().await.is_enabled() {
+        if has_twitch
+            && self.twitch_service.lock().await.is_enabled() {
                 let twitch_channels: Vec<String> = self.config
                     .favorite_channels
                     .twitch
@@ -376,7 +361,6 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         // Try to get streams from Kick favorites
         let has_kick = self.config.screens.iter().any(|s| {

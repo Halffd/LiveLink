@@ -15,15 +15,9 @@ pub struct FavoriteChannels {
     pub facebook: PlatformFavorites,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct PlatformFavorites {
     pub default: Vec<FavoriteChannel>,
-}
-
-impl Default for PlatformFavorites {
-    fn default() -> Self {
-        Self { default: vec![] }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,7 +79,7 @@ impl From<PlatformFavoritesRaw> for PlatformFavorites {
             }
         }
 
-        all_channels.sort_by(|a, b| b.score.cmp(&a.score));
+        all_channels.sort_by_key(|ch| std::cmp::Reverse(ch.score));
         Self {
             default: all_channels,
         }

@@ -189,7 +189,7 @@ impl MpvInstance {
         if let Some(pid) = self.child_pid {
             let status =
                 unsafe { libc::waitpid(pid as libc::pid_t, std::ptr::null_mut(), libc::WNOHANG) };
-            if status == pid as i32 {
+            if status == pid {
                 self.child_pid = None;
                 let _ = std::fs::remove_file(&self.ipc_path);
                 info!("MPV subprocess exited");
@@ -207,7 +207,7 @@ impl MpvInstance {
         let ipc_socket = self.ipc_path.to_str().unwrap();
         let full_cmd = format!("echo '{}' | socat - UNIX-CONNECT:{}", command, ipc_socket);
 
-        match Command::new("sh").args(&["-c", &full_cmd]).output() {
+        match Command::new("sh").args(["-c", &full_cmd]).output() {
             Ok(_) => Ok(()),
             Err(e) => Err(MpvError::Ipc(e.to_string())),
         }
@@ -219,13 +219,16 @@ pub enum MpvEvent {
     EndFile,
 }
 
+/// Shared exit-callback slot of an mpv controller process.
+type ExitCallback = Arc<std::sync::Mutex<Option<Box<dyn Send + Sync + Fn() + 'static>>>>;
+
 #[derive(Clone)]
 pub struct MpvController {
     inner: Arc<Mutex<MpvInstance>>,
     mpv_path: String,
     extra_args: Vec<String>,
     config_dir: Option<String>,
-    exit_callback: Arc<std::sync::Mutex<Option<Box<dyn Send + Sync + Fn() + 'static>>>>,
+    exit_callback: ExitCallback,
 }
 
 impl MpvController {

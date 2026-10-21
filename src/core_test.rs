@@ -942,52 +942,53 @@ mod mpv_spawn_tests {
 
     /// Build a minimal PlayerConfig with two screens (1 and 2)
     fn test_config() -> PlayerConfig {
-        let mut config = PlayerConfig::default();
-        config.mpv_extra_args = vec![
-            "--vo=null".to_string(),
-            "--ao=null".to_string(),
-            "--force-window=no".to_string(),
-            "--really-quiet".to_string(),
-        ];
-        config.screens = vec![
-            ScreenConfig {
-                id: 1,
-                screen: 1,
-                enabled: true,
-                width: 160,
-                height: 120,
-                x: 0,
-                y: 0,
-                volume: 0,
-                quality: "worst".to_string(),
-                window_maximized: false,
-                primary: true,
-                sources: vec![],
-                sorting: None,
-                refresh: 300,
-                auto_start: true,
-                skip_watched_streams: None,
-            },
-            ScreenConfig {
-                id: 2,
-                screen: 2,
-                enabled: true,
-                width: 160,
-                height: 120,
-                x: 200,
-                y: 0,
-                volume: 0,
-                quality: "worst".to_string(),
-                window_maximized: false,
-                primary: false,
-                sources: vec![],
-                sorting: None,
-                refresh: 300,
-                auto_start: true,
-                skip_watched_streams: None,
-            },
-        ];
-        config
+        PlayerConfig {
+            mpv_extra_args: vec![
+                "--vo=null".to_string(),
+                "--ao=null".to_string(),
+                "--force-window=no".to_string(),
+                "--really-quiet".to_string(),
+            ],
+            screens: vec![
+                ScreenConfig {
+                    id: 1,
+                    screen: 1,
+                    enabled: true,
+                    width: 160,
+                    height: 120,
+                    x: 0,
+                    y: 0,
+                    volume: 0,
+                    quality: "worst".to_string(),
+                    window_maximized: false,
+                    primary: true,
+                    sources: vec![],
+                    sorting: None,
+                    refresh: 300,
+                    auto_start: true,
+                    skip_watched_streams: None,
+                },
+                ScreenConfig {
+                    id: 2,
+                    screen: 2,
+                    enabled: true,
+                    width: 160,
+                    height: 120,
+                    x: 200,
+                    y: 0,
+                    volume: 0,
+                    quality: "worst".to_string(),
+                    window_maximized: false,
+                    primary: false,
+                    sources: vec![],
+                    sorting: None,
+                    refresh: 300,
+                    auto_start: true,
+                    skip_watched_streams: None,
+                },
+            ],
+            ..Default::default()
+        }
     }
 
     /// Verify that starting on 2 screens spawns 2 distinct live mpv subprocesses.

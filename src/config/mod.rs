@@ -545,7 +545,7 @@ impl FiltersConfig {
         }
 
         for pattern in &self.channel_names_regex {
-            if let Ok(re) = regex::Regex::new(&pattern) {
+            if let Ok(re) = regex::Regex::new(pattern) {
                 if re.is_match(channel_name) {
                     return is_exclude_mode;
                 }

@@ -11,8 +11,8 @@ impl Orchestrator {
         let mut all_sources = Vec::new();
         let platform_filter = options.platform.as_deref();
 
-        if platform_filter.is_none() || platform_filter == Some("holodex") {
-            if self.holodex_service.is_enabled() {
+        if (platform_filter.is_none() || platform_filter == Some("holodex"))
+            && self.holodex_service.is_enabled() {
                 match self.holodex_service.query(&options).await {
                     Ok(sources) => {
                         info!(count = sources.len(), source = "holodex", "Queried streams from Holodex");
@@ -23,10 +23,9 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
-        if platform_filter.is_none() || platform_filter == Some("twitch") {
-            if self.twitch_service.lock().await.is_enabled() {
+        if (platform_filter.is_none() || platform_filter == Some("twitch"))
+            && self.twitch_service.lock().await.is_enabled() {
                 let mut twitch = self.twitch_service.lock().await;
                 if twitch.authenticate().await.is_ok() {
                     match twitch.query(&options).await {
@@ -40,7 +39,6 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
         if platform_filter.is_none() || platform_filter == Some("youtube") {
             let mut youtube = self.youtube_service.lock().await;
@@ -57,8 +55,8 @@ impl Orchestrator {
             }
         }
 
-        if platform_filter.is_none() || platform_filter == Some("kick") {
-            if self.kick_service.is_enabled() {
+        if (platform_filter.is_none() || platform_filter == Some("kick"))
+            && self.kick_service.is_enabled() {
                 match self.kick_service.query(&options).await {
                     Ok(sources) => {
                         info!(count = sources.len(), source = "kick", "Queried streams from Kick");
@@ -69,10 +67,9 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
-        if platform_filter.is_none() || platform_filter == Some("niconico") {
-            if self.niconico_service.is_enabled() {
+        if (platform_filter.is_none() || platform_filter == Some("niconico"))
+            && self.niconico_service.is_enabled() {
                 match self.niconico_service.query(&options).await {
                     Ok(sources) => {
                         info!(count = sources.len(), source = "niconico", "Queried streams from Niconico");
@@ -83,10 +80,9 @@ impl Orchestrator {
                     }
                 }
             }
-        }
 
-if platform_filter.is_none() || platform_filter == Some("bilibili") {
-    if self.bilibili_service.is_enabled() {
+if (platform_filter.is_none() || platform_filter == Some("bilibili"))
+    && self.bilibili_service.is_enabled() {
       match self.bilibili_service.query(&options).await {
         Ok(sources) => {
           info!(count = sources.len(), source = "bilibili", "Queried streams from Bilibili");
@@ -97,10 +93,9 @@ if platform_filter.is_none() || platform_filter == Some("bilibili") {
         }
       }
     }
-  }
 
-  if platform_filter.is_none() || platform_filter == Some("facebook") || platform_filter == Some("fb") {
-    if self.facebook_service.is_enabled() {
+  if (platform_filter.is_none() || platform_filter == Some("facebook") || platform_filter == Some("fb"))
+    && self.facebook_service.is_enabled() {
       match self.facebook_service.query(&options).await {
         Ok(sources) => {
           info!(count = sources.len(), source = "facebook", "Queried streams from Facebook");
@@ -111,7 +106,6 @@ if platform_filter.is_none() || platform_filter == Some("bilibili") {
         }
       }
     }
-  }
 
   if all_sources.is_empty() {
             return Err("No streams found for the given query".to_string());

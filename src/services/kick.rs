@@ -115,7 +115,7 @@ mod tests {
         assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         let is_live = result.unwrap();
         // Just verify it's a boolean
-        assert!(is_live == true || is_live == false);
+        assert!(is_live || !is_live);
     }
 
     #[tokio::test]

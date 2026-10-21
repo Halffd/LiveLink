@@ -161,7 +161,7 @@ impl Queue {
     }
 
     pub fn sort_by_is_live(&mut self) {
-        self.sources.sort_by(|a, b| b.is_live.cmp(&a.is_live));
+        self.sources.sort_by_key(|s| std::cmp::Reverse(s.is_live));
     }
 
     pub fn apply_sorting(&mut self, sorting: &SortingConfig) {

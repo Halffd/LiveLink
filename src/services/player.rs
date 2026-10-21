@@ -33,18 +33,15 @@ pub enum PlayerError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
+#[derive(Default)]
 pub enum PlayerType {
     Embedded,
+    #[default]
     MpvProcess,
     Streamlink,
     VlcProcess,
 }
 
-impl Default for PlayerType {
-    fn default() -> Self {
-        PlayerType::MpvProcess
-    }
-}
 
 #[derive(Debug, Clone)]
 #[allow(unused)]
@@ -175,7 +172,7 @@ pub async fn start_mpv_process(
         let screen_config = self.config.screens
             .iter()
             .find(|s| s.screen == screen)
-            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayer(screen))?;
 
         let mut extra_args = vec![
             format!("--gpu-context={}", self.config.mpv_gpu_context),
@@ -262,7 +259,7 @@ pub async fn start_mpv_process(
 
         let controller_clone = controller.clone();
         let url_owned = url.to_string();
-        let _play_result = tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             controller_clone.play(&url_owned)
                 .map_err(|e| PlayerError::Mpv(e.to_string()))
         }).await
@@ -295,15 +292,13 @@ pub async fn start_mpv_process(
         let screen_config = self.config.screens
             .iter()
             .find(|s| s.screen == screen)
-            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayer(screen))?;
 
         let ipc_path = format!("{}/streamlink-ipc-{}-{}", self.config.ipc_dir, screen, instance_id);
 
-        let mpv_args = vec![
-            format!("--input-ipc-server={}", ipc_path),
+        let mpv_args = [format!("--input-ipc-server={}", ipc_path),
             format!("--geometry={}x{}+{}+{}", screen_config.width, screen_config.height, screen_config.x, screen_config.y),
-            format!("--volume={}", self.config.default_volume),
-        ];
+            format!("--volume={}", self.config.default_volume)];
 
         let streamlink_args = vec![
             url.to_string(),
@@ -348,7 +343,7 @@ pub async fn start_mpv_process(
         let screen_config = self.config.screens
             .iter()
             .find(|s| s.screen == screen)
-            .ok_or_else(|| PlayerError::NoPlayer(screen))?;
+            .ok_or(PlayerError::NoPlayer(screen))?;
 
         let mut args = vec![
             "--no-video-title".to_string(),
@@ -600,10 +595,10 @@ pub async fn start_mpv_process(
             );
 
             tokio::process::Command::new("sh")
-                .args(&["-c", &script])
+                .args(["-c", &script])
                 .output()
                 .await
-                .map_err(|e| PlayerError::Io(e))?;
+                .map_err(PlayerError::Io)?;
         }
         Ok(())
     }
@@ -632,10 +627,10 @@ pub async fn start_mpv_process(
             );
 
             tokio::process::Command::new("sh")
-                .args(&["-c", &script])
+                .args(["-c", &script])
                 .output()
                 .await
-                .map_err(|e| PlayerError::Io(e))?;
+                .map_err(PlayerError::Io)?;
         }
         Ok(())
     }
@@ -663,10 +658,10 @@ pub async fn start_mpv_process(
             );
 
             tokio::process::Command::new("sh")
-                .args(&["-c", &script])
+                .args(["-c", &script])
                 .output()
                 .await
-                .map_err(|e| PlayerError::Io(e))?;
+                .map_err(PlayerError::Io)?;
         }
         Ok(())
     }

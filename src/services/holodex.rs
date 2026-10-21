@@ -123,7 +123,7 @@ impl HolodexService {
             let url = format!("https://www.youtube.com/watch?v={}", video.id);
             let live_info = video.live_info;
             let viewer_count = live_info.live_viewers.map(|v| v as u64);
-            let start_time = live_info.start_scheduled.map(|s| s.timestamp() as i64);
+            let start_time = live_info.start_scheduled.map(|s| s.timestamp());
 
             StreamSource {
                 url,
@@ -185,7 +185,7 @@ let sources: Vec<StreamSource> = videos
               let url = format!("https://www.youtube.com/watch?v={}", video.id);
               let live_info = video.live_info;
               let viewer_count = live_info.live_viewers.map(|v| v as u64);
-              let start_time = live_info.start_scheduled.map(|s| s.timestamp() as i64);
+              let start_time = live_info.start_scheduled.map(|s| s.timestamp());
 
               StreamSource {
                   url,
@@ -304,7 +304,7 @@ let sources: Vec<StreamSource> = videos
                 let viewer_count = live_info.live_viewers.map(|v| v as u64);
                 let start_time = live_info
                     .start_scheduled
-                    .map(|s| s.timestamp() as i64);
+                    .map(|s| s.timestamp());
 
 StreamSource {
                 url,
