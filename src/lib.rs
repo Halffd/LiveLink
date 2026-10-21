@@ -4,6 +4,7 @@ pub mod api;
 pub mod cli;
 pub mod config;
 pub mod core;
+pub mod cueloop;
 pub mod player_ui;
 pub mod queue;
 pub mod services;
