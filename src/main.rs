@@ -169,6 +169,26 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         }
     }
 
+    // Window playback: launch and supervise one player window per enabled
+    // screen, so a single `livelink start` boots the whole desktop TV. A
+    // closed or crashed window comes back unless the player-ui respawn
+    // setting is off.
+    if orchestrator.window_playback() {
+        for screen in orchestrator
+            .config
+            .screens
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.screen)
+        {
+            tokio::spawn(supervise_player_window(
+                screen,
+                config_dir.clone(),
+                port,
+            ));
+        }
+    }
+
     // Forward stream changes to standalone player windows listening on the
     // control port convention (DEFAULT_BASE_PORT + screen). Best-effort: no
     // listener on a screen just means there is no player window for it.
@@ -379,4 +399,83 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         .unwrap();
 
     info!("LiveLink shutting down");
+}
+
+/// Command line for one supervised player window subprocess.
+fn player_window_args(screen: u32, config_dir: &str, server_port: u16) -> Vec<String> {
+    vec![
+        "player-ui".to_string(),
+        "--screen".to_string(),
+        screen.to_string(),
+        "--config-dir".to_string(),
+        config_dir.to_string(),
+        "-P".to_string(),
+        server_port.to_string(),
+    ]
+}
+
+/// Keep a screen's player window alive: spawn it, and when it exits respawn it
+/// after a short backoff unless the player-ui respawn setting is off.
+async fn supervise_player_window(screen: u32, config_dir: String, server_port: u16) {
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => {
+            warn!(screen, error = %e, "cannot locate livelink binary for player window");
+            return;
+        }
+    };
+
+    loop {
+        let args = player_window_args(screen, &config_dir, server_port);
+        let mut child = match tokio::process::Command::new(&exe)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(e) => {
+                warn!(screen, error = %e, "failed to launch player window");
+                return;
+            }
+        };
+
+        let status = child.wait().await;
+        debug!(screen, status = ?status, "player window exited");
+
+        let respawn = livelink::player_ui::settings::PlayerUiSettings::load(
+            std::path::Path::new(&config_dir),
+        )
+        .respawn;
+        if !respawn {
+            info!(screen, "player window gone; respawn disabled in settings");
+            return;
+        }
+
+        warn!(screen, "player window exited; respawning in 2s");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::player_window_args;
+
+    #[test]
+    fn player_window_command_targets_the_screen_and_server() {
+        let args = player_window_args(2, "/tmp/livelink-cfg", 8789);
+        assert_eq!(
+            args,
+            vec![
+                "player-ui".to_string(),
+                "--screen".to_string(),
+                "2".to_string(),
+                "--config-dir".to_string(),
+                "/tmp/livelink-cfg".to_string(),
+                "-P".to_string(),
+                "8789".to_string(),
+            ]
+        );
+    }
 }
