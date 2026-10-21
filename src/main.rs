@@ -398,16 +398,19 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
     info!("LiveLink shutting down");
 }
 
-/// Command line for one supervised player window subprocess.
+/// Command line for one supervised player window subprocess. Global flags
+/// (`-P`, `--config-dir`) must come before the subcommand: `player-ui`
+/// declares its own `--port` (the control port), which shadows the global
+/// `-P` anywhere after the subcommand.
 fn player_window_args(screen: u32, config_dir: &str, server_port: u16) -> Vec<String> {
     vec![
+        "-P".to_string(),
+        server_port.to_string(),
+        "--config-dir".to_string(),
+        config_dir.to_string(),
         "player-ui".to_string(),
         "--screen".to_string(),
         screen.to_string(),
-        "--config-dir".to_string(),
-        config_dir.to_string(),
-        "-P".to_string(),
-        server_port.to_string(),
     ]
 }
 
@@ -465,13 +468,13 @@ mod tests {
         assert_eq!(
             args,
             vec![
+                "-P".to_string(),
+                "8789".to_string(),
+                "--config-dir".to_string(),
+                "/tmp/livelink-cfg".to_string(),
                 "player-ui".to_string(),
                 "--screen".to_string(),
                 "2".to_string(),
-                "--config-dir".to_string(),
-                "/tmp/livelink-cfg".to_string(),
-                "-P".to_string(),
-                "8789".to_string(),
             ]
         );
     }

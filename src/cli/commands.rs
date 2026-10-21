@@ -250,8 +250,8 @@ pub struct PlayerUiCommand {
   pub sub: Vec<String>,
   #[arg(long, help = "Disable the JSON control port")]
   pub no_control: bool,
-  #[arg(long, help = "Control port (default 3100 + screen)")]
-  pub port: Option<u16>,
+  #[arg(long = "control-port", help = "Control port (default 3100 + screen)")]
+  pub control_port: Option<u16>,
 }
 
 #[derive(Parser)]
@@ -770,22 +770,19 @@ Commands::Diagnostics => {
   Commands::Ui => {
     println!("Launching UI...");
     let orch = orchestrator.clone();
-    let handle = std::thread::spawn(move || {
-      let rt = tokio::runtime::Runtime::new().unwrap();
-      rt.block_on(async {
-        let options = eframe::NativeOptions {
-          viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
-          ..Default::default()
-        };
-        eframe::run_native(
-          "LiveLink",
-          options,
-          Box::new(|cc| Ok(Box::new(crate::ui::LiveLinkApp::new(orch, cc)))),
-        ).unwrap();
-      });
-    });
-    println!("UI launched (close the window to exit)");
-    handle.join().map_err(|_| "UI thread panicked".to_string())?;
+    // winit refuses to create an event loop outside the main thread on
+    // Linux, so eframe runs inline: the dispatch is already on the main
+    // thread and no server runs after a UI session.
+    let options = eframe::NativeOptions {
+      viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1600.0, 900.0]),
+      ..Default::default()
+    };
+    eframe::run_native(
+      "LiveLink",
+      options,
+      Box::new(|cc| Ok(Box::new(crate::ui::LiveLinkApp::new(orch, cc)))),
+    )
+    .map_err(|e| format!("UI failed: {e}"))?;
   }
   Commands::PlayerUi(cmd) => {
     if let Some(deg) = cmd.rotate {
@@ -862,7 +859,7 @@ Commands::Diagnostics => {
     let control_port = if cmd.no_control {
       None
     } else {
-      Some(cmd.port.unwrap_or(
+      Some(cmd.control_port.unwrap_or(
         crate::player_ui::control::DEFAULT_BASE_PORT + u16::try_from(cmd.screen).unwrap_or(0),
       ))
     };
@@ -1111,7 +1108,7 @@ mod tests {
             "--sub",
             "/tmp/subs.srt",
             "--no-control",
-            "--port",
+            "--control-port",
             "3105",
         ])
         .unwrap_or_else(|e| panic!("parse failed: {e}"));
@@ -1130,7 +1127,7 @@ mod tests {
                 assert_eq!(cmd.rotate, Some(90));
                 assert_eq!(cmd.sub, vec!["/tmp/subs.srt".to_string()]);
                 assert!(cmd.no_control);
-                assert_eq!(cmd.port, Some(3105));
+                assert_eq!(cmd.control_port, Some(3105));
             }
             _ => panic!("Expected PlayerUi"),
         }

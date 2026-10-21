@@ -138,11 +138,12 @@ pub async fn resolve_with_streamlink(
 /// Launch a player window for one screen and block until it closes.
 ///
 /// Starts the control listener (unless disabled) before the window opens so
-/// commands sent during startup are queued, then runs the eframe event loop on
-/// a dedicated thread (eframe must not run on a tokio worker). Settings are
-/// loaded from `<config_dir>/player-ui.json` inside the app creator; saved
-/// settings are overridden by `borderless` and the window geometry from
-/// `screen_cfg`.
+/// commands sent during startup are queued, then runs the eframe event loop
+/// on the current thread: winit refuses to create an event loop anywhere but
+/// the main thread on Linux, and the CLI dispatch already runs there.
+/// Settings are loaded from `<config_dir>/player-ui.json` inside the app
+/// creator; saved settings are overridden by `borderless` and the window
+/// geometry from `screen_cfg`.
 pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
     match window.control_port {
@@ -155,29 +156,20 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let height = window.screen_cfg.height;
     let position = window.position;
 
-    // NativeOptions holds non-Send event-loop hooks, so it must be built on
-    // the thread that calls run_native.
-    let handle = std::thread::spawn(move || {
-        let mut viewport = eframe::egui::ViewportBuilder::default()
-            .with_title(title)
-            .with_inner_size([width as f32, height as f32]);
-        if let Some([x, y]) = position {
-            viewport = viewport.with_position([x, y]);
-        }
-        let options = eframe::NativeOptions {
-            viewport,
-            ..Default::default()
-        };
-        eframe::run_native(
-            "LiveLink Player",
-            options,
-            Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx)))),
-        )
-        .map_err(|e| format!("player window failed: {e}"))
-    });
-
-    match handle.join() {
-        Ok(result) => result,
-        Err(_) => Err("player window thread panicked".to_string()),
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size([width as f32, height as f32]);
+    if let Some([x, y]) = position {
+        viewport = viewport.with_position([x, y]);
     }
+    let options = eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    };
+    eframe::run_native(
+        "LiveLink Player",
+        options,
+        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx)))),
+    )
+    .map_err(|e| format!("player window failed: {e}"))
 }
