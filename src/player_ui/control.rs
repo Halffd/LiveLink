@@ -71,6 +71,47 @@ pub fn parse_line(line: &str) -> Option<PlayerCommand> {
     serde_json::from_str(line.trim()).ok()
 }
 
+/// Read one newline-terminated JSON command from an established connection
+/// (one connection per command batch). Shared by the TCP and Unix listeners.
+fn read_command_line(stream: &mut impl std::io::Read) -> Option<String> {
+    let mut buf = Vec::new();
+    loop {
+        let mut byte = [0u8; 1];
+        match stream.read(&mut byte) {
+            Ok(0) => break,
+            Ok(_) => {
+                buf.push(byte[0]);
+                if byte[0] == b'\n' {
+                    break;
+                }
+                if buf.len() > 64 * 1024 {
+                    break; // absurd line, drop it
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Dispatch one parsed line to `tx`; returns `false` when the receiver is
+/// gone (window closed) and the listener thread should exit.
+fn dispatch_line(line: &str, tx: &Sender<PlayerCommand>, source: &str) -> bool {
+    match parse_line(line) {
+        Some(cmd) => {
+            if tx.send(cmd).is_err() {
+                return false; // UI gone
+            }
+        }
+        None => {
+            if !line.trim().is_empty() {
+                tracing::warn!(source, line = %line.trim(), "unparsable control command dropped");
+            }
+        }
+    }
+    true
+}
+
 /// Bind `127.0.0.1:port` and forward parsed commands to `tx`. On bind failure
 /// (e.g. TIME_WAIT after a respawn) the thread retries every 5 seconds so a
 /// supervised player eventually owns its port. Never returns.
@@ -80,46 +121,43 @@ pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>) {
             Ok(listener) => {
                 for stream in listener.incoming() {
                     let Ok(mut stream) = stream else { continue };
-                    let mut buf = Vec::new();
-                    // Read until newline or EOF (one connection per command batch).
-                    loop {
-                        use std::io::Read;
-                        let mut byte = [0u8; 1];
-                        match stream.read(&mut byte) {
-                            Ok(0) => break,
-                            Ok(_) => {
-                                buf.push(byte[0]);
-                                if byte[0] == b'\n' {
-                                    break;
-                                }
-                                if buf.len() > 64 * 1024 {
-                                    break; // absurd line, drop it
-                                }
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    let line = String::from_utf8_lossy(&buf);
-                    match parse_line(&line) {
-                        Some(cmd) => {
-                            if tx.send(cmd).is_err() {
-                                return; // UI gone
-                            }
-                        }
-                        None => {
-                            if !line.trim().is_empty() {
-                                tracing::warn!(
-                                    port,
-                                    line = %line.trim(),
-                                    "unparsable control command dropped"
-                                );
-                            }
-                        }
+                    let Some(line) = read_command_line(&mut stream) else { continue };
+                    if !dispatch_line(&line, &tx, "tcp") {
+                        return; // UI gone
                     }
                 }
             }
             Err(e) => {
                 tracing::warn!(port, error = %e, "player control port unavailable, retrying");
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        }
+    });
+}
+
+/// Bind a Unix-domain socket at `path` and forward parsed commands to `tx`,
+/// same line-delimited JSON protocol as [`spawn_listener`]. Retries every 5
+/// seconds on bind failure (e.g. another window still owns the socket).
+/// Never returns.
+pub fn spawn_unix_listener(path: std::path::PathBuf, tx: Sender<PlayerCommand>) {
+    std::thread::spawn(move || loop {
+        // A leftover socket file from a previous run makes bind fail; only a
+        // live listener would keep accept from succeeding, and remove at
+        // startup is standard for this kind of single-owner socket.
+        let _ = std::fs::remove_file(&path);
+        match std::os::unix::net::UnixListener::bind(&path) {
+            Ok(listener) => {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    let Some(line) = read_command_line(&mut stream) else { continue };
+                    if !dispatch_line(&line, &tx, "unix") {
+                        let _ = std::fs::remove_file(&path);
+                        return; // UI gone
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "player IPC socket unavailable, retrying");
                 std::thread::sleep(std::time::Duration::from_secs(5));
             }
         }

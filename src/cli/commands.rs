@@ -228,6 +228,12 @@ pub struct PlayerUiCommand {
   pub screen: u32,
   #[arg(long, help = "URL to play (repeatable)")]
   pub url: Vec<String>,
+  #[arg(help = "Media URL or file to play first")]
+  pub media: Option<String>,
+  #[arg(help = "Subtitle file/URL attached to every media")]
+  pub subs: Option<String>,
+  #[arg(trailing_var_arg = true, allow_hyphen_values = true, help = "More media files/URLs appended to the playlist (options must come before these)")]
+  pub extra: Vec<String>,
   #[arg(long, help = "Playlist file: one URL per line, '#' starts a comment")]
   pub playlist: Option<String>,
   #[arg(long, help = "Play media files from this directory (sorted by name, not recursive)")]
@@ -252,6 +258,10 @@ pub struct PlayerUiCommand {
   pub no_control: bool,
   #[arg(long = "control-port", help = "Control port (default 3100 + screen)")]
   pub control_port: Option<u16>,
+  #[arg(long = "ipc-socket", help = "Unix socket path for JSON commands (default /tmp/livelink-player-<screen>.sock; empty string disables)")]
+  pub ipc_socket: Option<String>,
+  #[arg(long = "no-ipc", help = "Disable the Unix-socket IPC listener")]
+  pub no_ipc: bool,
 }
 
 #[derive(Parser)]
@@ -322,6 +332,152 @@ async fn send_subtitle_command(screen: u32, line: serde_json::Value) -> Result<(
         })?;
     println!("screen {}: {}", screen, line);
     Ok(())
+}
+
+/// Body of the `player-ui` command, shared with the standalone
+/// `livelink-player` binary. `screens`/`streamlink_path`/`mpv_path` come from
+/// the loaded config; `server_port` is the LiveLink server port.
+pub async fn run_player_window(
+  cmd: &PlayerUiCommand,
+  screens: &[crate::config::ScreenConfig],
+  streamlink_path: &str,
+  mpv_path: &str,
+  config_dir: &str,
+  server_port: u16,
+) -> Result<(), String> {
+  if let Some(deg) = cmd.rotate {
+    if deg % 90 != 0 || deg > 270 {
+      return Err(format!("invalid --rotate {deg}: use 0, 90, 180, or 270"));
+    }
+  }
+
+  let mut screen_cfg = screens
+    .iter()
+    .find(|s| s.screen == cmd.screen)
+    .cloned()
+    .unwrap_or_else(|| crate::player_ui::default_screen_config(cmd.screen));
+  if let Some(x) = cmd.x {
+    screen_cfg.x = x;
+  }
+  if let Some(y) = cmd.y {
+    screen_cfg.y = y;
+  }
+  if let Some(w) = cmd.width {
+    screen_cfg.width = w;
+  }
+  if let Some(h) = cmd.height {
+    screen_cfg.height = h;
+  }
+
+  let mut urls = cmd.url.clone();
+  // Positional args: first = media, second = subtitle file, rest = playlist.
+  let mut positional = cmd.extra.clone();
+  if let Some(media) = &cmd.media {
+    positional.insert(0, media.clone());
+  }
+  let subtitles = match &cmd.subs {
+    Some(sub) => {
+      let mut subs = cmd.sub.clone();
+      subs.push(sub.clone());
+      subs
+    }
+    None => cmd.sub.clone(),
+  };
+  urls.extend(positional);
+
+  if let Some(ref path) = cmd.playlist {
+    let content = std::fs::read_to_string(path)
+      .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
+    for line in content.lines() {
+      let line = line.trim();
+      if !line.is_empty() && !line.starts_with('#') {
+        urls.push(line.to_string());
+      }
+    }
+  }
+  if let Some(ref dir) = cmd.dir {
+    let files = crate::player_ui::playlist_from_dir(std::path::Path::new(dir))?;
+    if files.is_empty() {
+      return Err(format!("no media files found in {}", dir));
+    }
+    urls.extend(files);
+  }
+  if urls.is_empty() {
+    println!("No URLs given — the window will wait for a {{\"cmd\":\"play\"}} command");
+  }
+
+  let urls = match (cmd.quality.as_deref(), streamlink_path) {
+    (Some(quality), path) if !path.is_empty() => {
+      let path = path.to_string();
+      let quality = quality.to_string();
+      futures::future::join_all(urls.iter().map(|url| {
+        crate::player_ui::resolve_with_streamlink(&path, url, &quality)
+      }))
+      .await
+    }
+    (Some(_), _) => {
+      println!("streamlink path not configured — playing URLs directly");
+      urls
+    }
+    (None, _) => urls,
+  };
+
+  let position = match (cmd.x, cmd.y) {
+    (Some(x), Some(y)) => Some([x as f32, y as f32]),
+    (Some(x), None) => Some([x as f32, screen_cfg.y as f32]),
+    (None, Some(y)) => Some([screen_cfg.x as f32, y as f32]),
+    (None, None) => None,
+  };
+
+  let control_port = if cmd.no_control {
+    None
+  } else {
+    Some(cmd.control_port.unwrap_or(
+      crate::player_ui::control::DEFAULT_BASE_PORT + u16::try_from(cmd.screen).unwrap_or(0),
+    ))
+  };
+  let ipc_socket = if cmd.no_ipc {
+    None
+  } else {
+    Some(match &cmd.ipc_socket {
+      Some(path) if !path.is_empty() => std::path::PathBuf::from(path),
+      _ => std::path::PathBuf::from(format!(
+        "/tmp/livelink-player-{}.sock",
+        cmd.screen
+      )),
+    })
+  };
+
+  println!(
+    "Launching player for screen {} (close the window to exit){}{}",
+    cmd.screen,
+    match control_port {
+      Some(port) => format!(" on control port {}", port),
+      None => " (control disabled)".to_string(),
+    },
+    match &ipc_socket {
+      Some(path) => format!(" on IPC socket {}", path.display()),
+      None => " (IPC disabled)".to_string(),
+    }
+  );
+  crate::player_ui::run(crate::player_ui::PlayerWindowConfig {
+    screen_cfg,
+    playlist: urls,
+    subtitles,
+    config_dir: std::path::PathBuf::from(config_dir),
+    control_port,
+    ipc_socket,
+    borderless: cmd.borderless,
+    position,
+    rotate: cmd.rotate.unwrap_or(0),
+    server_url: Some(format!("http://localhost:{}", server_port)),
+    screens: screens.iter().map(|s| s.screen).collect(),
+    mpv_path: if mpv_path.is_empty() {
+      "mpv".to_string()
+    } else {
+      mpv_path.to_string()
+    },
+  })
 }
 
 pub async fn run_cli(orchestrator: Arc<Orchestrator>, cli: Cli) -> Result<(), String> {
@@ -785,115 +941,15 @@ Commands::Diagnostics => {
     .map_err(|e| format!("UI failed: {e}"))?;
   }
   Commands::PlayerUi(cmd) => {
-    if let Some(deg) = cmd.rotate {
-      if deg % 90 != 0 || deg > 270 {
-        return Err(format!("invalid --rotate {deg}: use 0, 90, 180, or 270"));
-      }
-    }
-
-    let mut screen_cfg = orchestrator
-      .config
-      .screens
-      .iter()
-      .find(|s| s.screen == cmd.screen)
-      .cloned()
-      .unwrap_or_else(|| crate::player_ui::default_screen_config(cmd.screen));
-    if let Some(x) = cmd.x {
-      screen_cfg.x = x;
-    }
-    if let Some(y) = cmd.y {
-      screen_cfg.y = y;
-    }
-    if let Some(w) = cmd.width {
-      screen_cfg.width = w;
-    }
-    if let Some(h) = cmd.height {
-      screen_cfg.height = h;
-    }
-
-    let mut urls = cmd.url.clone();
-    if let Some(ref path) = cmd.playlist {
-      let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
-      for line in content.lines() {
-        let line = line.trim();
-        if !line.is_empty() && !line.starts_with('#') {
-          urls.push(line.to_string());
-        }
-      }
-    }
-    if let Some(ref dir) = cmd.dir {
-      let files = crate::player_ui::playlist_from_dir(std::path::Path::new(dir))?;
-      if files.is_empty() {
-        return Err(format!("no media files found in {}", dir));
-      }
-      urls.extend(files);
-    }
-    if urls.is_empty() {
-      println!("No URLs given — the window will wait for a {{\"cmd\":\"play\"}} command");
-    }
-
-    let urls = match (&cmd.quality, &orchestrator.config.streamlink_path) {
-      (Some(quality), path) if !path.is_empty() => {
-        let path = path.clone();
-        let quality = quality.clone();
-        futures::future::join_all(urls.iter().map(|url| {
-          crate::player_ui::resolve_with_streamlink(&path, url, &quality)
-        }))
-        .await
-      }
-      (Some(_), _) => {
-        println!("streamlink path not configured — playing URLs directly");
-        urls
-      }
-      (None, _) => urls,
-    };
-
-    let position = match (cmd.x, cmd.y) {
-      (Some(x), Some(y)) => Some([x as f32, y as f32]),
-      (Some(x), None) => Some([x as f32, screen_cfg.y as f32]),
-      (None, Some(y)) => Some([screen_cfg.x as f32, y as f32]),
-      (None, None) => None,
-    };
-
-    let control_port = if cmd.no_control {
-      None
-    } else {
-      Some(cmd.control_port.unwrap_or(
-        crate::player_ui::control::DEFAULT_BASE_PORT + u16::try_from(cmd.screen).unwrap_or(0),
-      ))
-    };
-
-    println!(
-      "Launching player for screen {} (close the window to exit){}",
-      cmd.screen,
-      match control_port {
-        Some(port) => format!(" on control port {}", port),
-        None => " (control disabled)".to_string(),
-      }
-    );
-    crate::player_ui::run(crate::player_ui::PlayerWindowConfig {
-      screen_cfg,
-      playlist: urls,
-      subtitles: cmd.sub.clone(),
-      config_dir: std::path::PathBuf::from(cli.config_dir.clone()),
-      control_port,
-      borderless: cmd.borderless,
-      position,
-      rotate: cmd.rotate.unwrap_or(0),
-      server_url: Some(format!("http://localhost:{}", cli.port)),
-      screens: orchestrator
-        .config
-        .screens
-        .iter()
-        .map(|s| s.screen)
-        .collect(),
-      mpv_path: if orchestrator.config.mpv_path.is_empty() {
-        "mpv".to_string()
-      } else {
-        orchestrator.config.mpv_path.clone()
-      },
-    })?;
+    run_player_window(
+      cmd,
+      &orchestrator.config.screens,
+      &orchestrator.config.streamlink_path,
+      &orchestrator.config.mpv_path,
+      &cli.config_dir,
+      cli.port,
+    )
+    .await?;
   }
   Commands::Subs(cmd) => {
     let configured: Vec<u32> = orchestrator.config.screens.iter().map(|s| s.screen).collect();

@@ -30,6 +30,8 @@ pub struct PlayerWindowConfig {
     pub config_dir: PathBuf,
     /// Control port; `None` disables the JSON listener.
     pub control_port: Option<u16>,
+    /// Unix-socket path for the same JSON protocol; `None` disables it.
+    pub ipc_socket: Option<PathBuf>,
     /// Force borderless regardless of saved settings.
     pub borderless: bool,
     /// Window position; `None` lets the window manager place it.
@@ -144,11 +146,17 @@ pub async fn resolve_with_streamlink(
 /// Settings are loaded from `<config_dir>/player-ui.json` inside the app
 /// creator; saved settings are overridden by `borderless` and the window
 /// geometry from `screen_cfg`.
+
 pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
-    match window.control_port {
-        Some(port) => control::spawn_listener(port, tx),
-        None => drop(tx), // receiver reports disconnection; app treats it as idle
+    if let Some(port) = window.control_port {
+        control::spawn_listener(port, tx.clone());
+    }
+    if let Some(path) = &window.ipc_socket {
+        control::spawn_unix_listener(path.clone(), tx.clone());
+    }
+    if window.control_port.is_none() && window.ipc_socket.is_none() {
+        drop(tx); // receiver reports disconnection; app treats it as idle
     }
 
     let title = format!("LiveLink Player — screen {}", window.screen_cfg.screen);
@@ -173,3 +181,4 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     )
     .map_err(|e| format!("player window failed: {e}"))
 }
+

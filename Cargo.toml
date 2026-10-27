@@ -46,6 +46,10 @@ lindera-ipadic = { version = "6", features = ["embed-ipadic"] }
 name = "cueloopd"
 path = "src/bin/cueloopd.rs"
 
+[[bin]]
+name = "livelink-player"
+path = "src/bin/livelink-player.rs"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
