@@ -50,6 +50,10 @@ path = "src/bin/cueloopd.rs"
 name = "livelink-player"
 path = "src/bin/livelink-player.rs"
 
+[[bin]]
+name = "lvp"
+path = "src/bin/lvp.rs"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
