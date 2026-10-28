@@ -230,12 +230,14 @@ impl PlayerApp {
                 unsafe { std::mem::transmute(proc_addr) };
             match MpvVideo::new(gl, proc_addr, screen_cfg.width, screen_cfg.height) {
                 Ok(mut m) => {
-                    m.set_volume(settings.volume);
+                    let volume = window.volume.unwrap_or(settings.volume);
+                    m.set_volume(volume);
                     if window.rotate != 0 {
                         m.set_rotation(window.rotate);
                     }
                     mpv = Some(m);
                 }
+
                 Err(e) => tracing::warn!(error = %e, "libmpv init failed; window will be idle"),
             }
         }

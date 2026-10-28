@@ -32,6 +32,10 @@ pub struct PlayerWindowConfig {
     pub control_port: Option<u16>,
     /// Unix-socket path for the same JSON protocol; `None` disables it.
     pub ipc_socket: Option<PathBuf>,
+    /// Initial playback volume (mpv scale 0-130); `None` uses saved settings.
+    pub volume: Option<i64>,
+    /// Start the window maximized.
+    pub window_maximized: bool,
     /// Force borderless regardless of saved settings.
     pub borderless: bool,
     /// Window position; `None` lets the window manager place it.
@@ -167,6 +171,9 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(title)
         .with_inner_size([width as f32, height as f32]);
+    if window.window_maximized {
+        viewport = viewport.with_maximized(true);
+    }
     if let Some([x, y]) = position {
         viewport = viewport.with_position([x, y]);
     }
