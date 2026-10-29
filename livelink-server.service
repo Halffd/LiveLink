@@ -1,0 +1,19 @@
+[Unit]
+Description=LiveLink server daemon
+Documentation=file:///usr/share/doc/livelink/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/livelink-server --config-dir /etc/livelink --port 3001
+Restart=on-failure
+RestartSec=5s
+WorkingDirectory=/var/lib/livelink
+# Do not run as root in production; adjust User/Group as needed.
+# User=livelink
+# Group=livelink
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=multi-user.target

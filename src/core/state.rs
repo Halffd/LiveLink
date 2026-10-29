@@ -222,4 +222,6 @@ pub struct OrchestratorConfig {
     pub watched_clear_hours: u64,
     pub use_locks: bool,
     pub mpv_youtube_cookies: Option<String>,
+    /// Auto-start server daemon when player cannot reach it.
+    pub daemon: bool,
 }

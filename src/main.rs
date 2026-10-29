@@ -144,6 +144,7 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         watched_clear_hours: config.player.watched_clear_hours,
         use_locks: config.player.use_locks,
         mpv_youtube_cookies: config.player.mpv_youtube_cookies,
+        daemon: config.player.daemon,
     };
 
     let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);

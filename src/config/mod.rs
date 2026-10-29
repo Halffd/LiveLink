@@ -185,7 +185,12 @@ pub struct PlayerConfig {
     pub auto_start: bool,
     #[serde(alias = "disableHeartbeat", default)]
     pub disable_heartbeat: bool,
+
+    /// Auto-start the server daemon when no server is reachable on the port.
+    #[serde(alias = "daemon", default = "default_daemon")]
+    pub daemon: bool,
     #[serde(alias = "forcePlayer", default)]
+
     pub force_player: bool,
     #[serde(
         alias = "autoRefreshInterval",
@@ -228,6 +233,11 @@ fn default_watched_clear_hours() -> u64 {
 fn default_use_locks() -> bool {
     true
 }
+
+fn default_daemon() -> bool {
+    true
+}
+
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LoggingConfig {
@@ -855,6 +865,7 @@ impl ConfigLoader {
             auto_start: true,
             disable_heartbeat: false,
             force_player: false,
+            daemon: true,
             auto_refresh_interval_seconds: 60,
             watched_clear_hours: 10,
             use_locks: true,

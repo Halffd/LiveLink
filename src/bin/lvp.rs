@@ -33,5 +33,6 @@ fn main() -> Result<(), String> {
     &config.mpv.path,
     &args.config_dir,
     args.port,
+    config.player.daemon,
   ))
 }

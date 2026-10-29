@@ -306,6 +306,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         auto_start: false,
         disable_heartbeat: false,
         force_player: false,
+        daemon: true,
         auto_refresh_interval_seconds: self.config.auto_refresh_interval_seconds,
         watched_clear_hours: self.config.watched_clear_hours,
         use_locks: true,

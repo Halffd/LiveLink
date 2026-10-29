@@ -9,6 +9,7 @@ pub mod player_ui;
 pub mod queue;
 pub mod services;
 pub mod ui;
+pub mod server;
 
 #[cfg(test)]
 mod core_test;

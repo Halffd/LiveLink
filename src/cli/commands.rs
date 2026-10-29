@@ -1,5 +1,10 @@
 use clap::{Parser, Subcommand};
+use tracing::warn;
 use std::sync::Arc;
+
+use std::process::{Command, Stdio};
+use tokio::time::{sleep, Duration};
+
 use crate::core::orchestrator::Orchestrator;
 use crate::queue::queue::{Queue, StreamSource};
 use crate::services::holodex::QueryOptions;
@@ -351,7 +356,9 @@ pub async fn run_player_window(
   mpv_path: &str,
   config_dir: &str,
   server_port: u16,
+  daemon: bool,
 ) -> Result<(), String> {
+
   if let Some(deg) = cmd.rotate {
     if deg % 90 != 0 || deg > 270 {
       return Err(format!("invalid --rotate {deg}: use 0, 90, 180, or 270"));
@@ -454,6 +461,46 @@ pub async fn run_player_window(
       )),
     })
   };
+  if daemon {
+    let server_url = format!("http://localhost:{}/status", server_port);
+    let mut server_up = false;
+    for _ in 0..5 {
+      if reqwest::get(&server_url).await.is_ok() {
+        server_up = true;
+        break;
+      }
+      sleep(Duration::from_millis(500)).await;
+    }
+    if !server_up {
+      let daemon_name = std::env::current_exe()
+        .ok()
+        .map(|mut p| {
+          p.set_file_name("livelink-server");
+          p
+        })
+        .unwrap_or_else(|| std::path::PathBuf::from("livelink-server"));
+      let _ = Command::new(&daemon_name)
+        .arg("--config-dir")
+        .arg(config_dir)
+        .arg("-P")
+        .arg(server_port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn();
+      for _ in 0..10 {
+        if reqwest::get(&server_url).await.is_ok() {
+          server_up = true;
+          break;
+        }
+        sleep(Duration::from_millis(500)).await;
+      }
+    }
+    if !server_up {
+      warn!(screen = cmd.screen, "server daemon not reachable on port {server_port}; player will run without channel surfing");
+    }
+  }
+
 
   println!(
     "Launching player for screen {} (close the window to exit){}{}",
@@ -962,6 +1009,7 @@ Commands::Diagnostics => {
       &orchestrator.config.mpv_path,
       &cli.config_dir,
       cli.port,
+      orchestrator.config.daemon,
     )
     .await?;
   }

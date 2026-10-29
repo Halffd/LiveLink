@@ -54,6 +54,10 @@ path = "src/bin/livelink-player.rs"
 name = "lvp"
 path = "src/bin/lvp.rs"
 
+[[bin]]
+name = "livelink-server"
+path = "src/bin/livelink-server.rs"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3"
