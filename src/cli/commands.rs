@@ -399,7 +399,7 @@ pub async fn run_player_window(
   };
   urls.extend(positional);
 
-  if let Some(ref path) = cmd.playlist {
+  if let Some(path) = cmd.playlist.as_ref() {
     let content = std::fs::read_to_string(path)
       .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
     for line in content.lines() {
@@ -409,32 +409,30 @@ pub async fn run_player_window(
       }
     }
   }
-  if let Some(ref dir) = cmd.dir {
+  if let Some(dir) = cmd.dir.as_ref() {
     let files = crate::player_ui::playlist_from_dir(std::path::Path::new(dir))?;
     if files.is_empty() {
       return Err(format!("no media files found in {}", dir));
     }
     urls.extend(files);
   }
+
+  // Resolve each source through the type-detection pipeline: playlists and
+  // m4u files expand to multiple entries, streams are streamlink-resolved,
+  // files/audio/torrents/magnets pass through unchanged.
+  let mut resolved_urls = Vec::new();
+  let quality = cmd.quality.as_deref();
+  for source in urls.iter() {
+    resolved_urls.extend(
+      crate::player_ui::resolve_source(streamlink_path, quality, source).await,
+    );
+  }
+  let urls = resolved_urls;
+
   if urls.is_empty() {
     println!("No URLs given — the window will wait for a {{\"cmd\":\"play\"}} command");
   }
 
-  let urls = match (cmd.quality.as_deref(), streamlink_path) {
-    (Some(quality), path) if !path.is_empty() => {
-      let path = path.to_string();
-      let quality = quality.to_string();
-      futures::future::join_all(urls.iter().map(|url| {
-        crate::player_ui::resolve_with_streamlink(&path, url, &quality)
-      }))
-      .await
-    }
-    (Some(_), _) => {
-      println!("streamlink path not configured — playing URLs directly");
-      urls
-    }
-    (None, _) => urls,
-  };
 
   let position = match (cmd.x, cmd.y) {
     (Some(x), Some(y)) => Some([x as f32, y as f32]),
