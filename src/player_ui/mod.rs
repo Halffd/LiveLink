@@ -148,7 +148,11 @@ pub fn expand_playlist(path: &Path) -> Result<Vec<String>, String> {
         if line.starts_with("#EXTINF") {
             continue;
         }
-        let resolved = if Path::new(line).is_absolute() {
+        // URI entries (http://, https://, magnet:, file://, rtmp://, ...)
+        // and absolute paths are kept as-is; only bare relative paths get
+        // the playlist directory prepended.
+        let is_uri = line.contains("://") || line.starts_with("magnet:");
+        let resolved = if is_uri || Path::new(line).is_absolute() {
             line.to_string()
         } else {
             base.join(line).to_string_lossy().to_string()
@@ -160,6 +164,61 @@ pub fn expand_playlist(path: &Path) -> Result<Vec<String>, String> {
 
 /// Resolve a single source entry, expanding playlists/m4u into multiple entries
 /// and passing other types through unchanged. Returns the expanded entries.
+/// Expand a playlist for the synchronous IPC path (play commands). Local
+/// .m3u/.m3u8/.pls/.m4u files are read and expanded; everything else is
+/// returned as-is.
+pub fn expand_source_sync(source: &str) -> Vec<String> {
+    match detect_source_type(source) {
+        SourceType::Playlist | SourceType::M4U => {
+            match expand_playlist(Path::new(source)) {
+                Ok(entries) if !entries.is_empty() => entries,
+                _ => vec![source.to_string()],
+            }
+        }
+        _ => vec![source.to_string()],
+    }
+}
+
+/// Resolve a torrent or magnet URI to a playable stream URL via a
+/// configurable helper command. `{url}` in the template is replaced with
+/// the torrent/magnet source; the helper prints the direct stream URL on
+/// stdout (e.g. `webtorrent-cli {url} --mpv --not-on-top` prints nothing
+/// but streams; prefer resolvers that print a URL such as
+/// `peerflix {url} --webtorrent` or `webtorrent-cli {url} --get-url`).
+/// Returns `None` when no helper is configured or resolution fails.
+pub fn resolve_torrent(
+    helper_template: &str,
+    source: &str,
+) -> Option<String> {
+    let template = helper_template.trim();
+    if template.is_empty() {
+        return None;
+    }
+    let command_line = template.replace("{url}", source);
+    let mut parts = command_line.split_whitespace();
+    let program = parts.next()?;
+    let args: Vec<&str> = parts.collect();
+    let output = std::process::Command::new(program)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        tracing::warn!(
+            source,
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            "torrent helper failed"
+        );
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if url.is_empty() {
+        tracing::warn!(source, "torrent helper printed no stream URL");
+        return None;
+    }
+    Some(url)
+}
+
 /// Resolve a single source entry. Playlists and m4u files expand into
 /// multiple entries; streams are streamlink-resolved when quality is set;
 /// files, audio, torrents, and magnets pass through unchanged.
@@ -215,7 +274,12 @@ pub async fn resolve_source(
 
 /// Media file extensions accepted when playing a directory.
 const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp4", "mkv", "webm", "avi", "mov", "flv", "ts", "mp3", "m4a", "ogg", "wav",
+    // video containers
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "ts", "m2ts", "mts", "m2v",
+    "mpg", "mpeg", "wmv", "ogv", "3gp", "vob", "rm", "rmvb", "asf",
+    // audio containers
+    "mp3", "m4a", "ogg", "wav", "flac", "aac", "wma", "opus", "mka",
+    "aiff", "ape", "wv", "m4b", "mid",
 ];
 
 /// Sorted playlist of media files directly inside `dir` (not recursive).
@@ -357,6 +421,23 @@ mod tests {
         std::fs::write("/tmp/test_playlist.m3u", "#comment\n#EXTINF:123,Song\nsong.mp3\nhttp://stream.example.com/live\n").unwrap();
         let entries = expand_playlist(Path::new("/tmp/test_playlist.m3u")).unwrap();
         assert_eq!(entries, vec!["/tmp/song.mp3", "http://stream.example.com/live"]);
+    }
+
+    #[test]
+    fn resolve_torrent_uses_helper_and_substitutes_url() {
+        // Echo-style helper: prints back the substituted URL
+        let result = resolve_torrent("echo {url}", "magnet:?xt=urn:btih:abc");
+        assert_eq!(result, Some("magnet:?xt=urn:btih:abc".to_string()));
+    }
+
+    #[test]
+    fn resolve_torrent_returns_none_for_empty_helper() {
+        assert_eq!(resolve_torrent("", "magnet:?xt=urn:btih:abc"), None);
+    }
+
+    #[test]
+    fn resolve_torrent_returns_none_for_failing_helper() {
+        assert_eq!(resolve_torrent("false", "magnet:?xt=urn:btih:abc"), None);
     }
 
     #[test]

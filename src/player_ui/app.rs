@@ -154,6 +154,10 @@ pub struct PlayerApp {
     srs_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// True while a mining job is running.
     srs_busy: bool,
+    /// Receiver for torrent/magnet helper results.
+    torrent_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    /// True while a torrent helper resolution is running.
+    torrent_busy: bool,
     /// Whether the reading panel is visible.
     reading_open: bool,
     /// True once the LiveLink server loaded this window's media: end-of-media
@@ -294,6 +298,8 @@ impl PlayerApp {
             srs_status: None,
             srs_rx: None,
             srs_busy: false,
+            torrent_rx: None,
+            torrent_busy: false,
             reading_open: false,
             server_driven: false,
             ws_open: false,
@@ -1264,11 +1270,52 @@ impl PlayerApp {
     }
 
     fn load_current(&mut self) {
-        if let Some(url) = self.playlist.get(self.index).cloned() {
-            self.current_source = url.clone();
-            if let Some(mpv) = &mut self.mpv {
-                mpv.load(&url);
+        let Some(source) = self.playlist.get(self.index).cloned() else {
+            return;
+        };
+        // Expand local playlist files (.m3u/.m3u8/.pls/.m4u) into entries
+        // so the window's own next/prev navigation walks the playlist.
+        let expanded = super::expand_source_sync(&source);
+        if expanded.len() > 1 || (expanded.len() == 1 && expanded[0] != source) {
+            let mut playlist = expanded;
+            let first = playlist.remove(0);
+            let rest = playlist;
+            let base_index = self.index;
+            let mut new_playlist: Vec<String> = self.playlist[..base_index].to_vec();
+            new_playlist.push(first);
+            new_playlist.extend(rest);
+            new_playlist.extend(self.playlist[base_index + 1..].to_vec());
+            self.playlist = new_playlist;
+        }
+        let source = self.playlist[self.index].clone();
+
+        // Torrent/magnet: resolve through the configured helper on a worker
+        // thread; when the helper prints a stream URL, load it.
+        if matches!(
+            super::detect_source_type(&source),
+            super::SourceType::Torrent | super::SourceType::Magnetic
+        ) {
+            let helper = self.settings.torrent_helper.trim().to_string();
+            if helper.is_empty() {
+                tracing::warn!(
+                    source,
+                    "torrent/magnet source but no torrent_helper configured; \
+                     set torrent_helper in player-ui.toml"
+                );
+                return;
             }
+            let (tx, rx) = std::sync::mpsc::channel::<Option<String>>();
+            self.torrent_rx = Some(rx);
+            self.torrent_busy = true;
+            std::thread::spawn(move || {
+                let _ = tx.send(super::resolve_torrent(&helper, &source));
+            });
+            return;
+        }
+
+        self.current_source = source;
+        if let Some(mpv) = &mut self.mpv {
+            mpv.load(&self.current_source);
         }
     }
 
@@ -1314,7 +1361,32 @@ impl PlayerApp {
         self.load_current();
     }
 
+    /// Poll the torrent helper result: when the helper produced a stream
+    /// URL, load it; on failure fall back to idle with a status line.
+    fn drain_torrent(&mut self) {
+        let Some(rx) = &self.torrent_rx else {
+            return;
+        };
+        if let Ok(result) = rx.try_recv() {
+            self.torrent_rx = None;
+            self.torrent_busy = false;
+            match result {
+                Some(url) => {
+                    tracing::info!(url = %url, "torrent helper resolved stream");
+                    self.current_source = url.clone();
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.load(&url);
+                    }
+                }
+                None => {
+                    tracing::warn!("torrent helper failed to resolve stream");
+                }
+            }
+        }
+    }
+
     fn drain_commands(&mut self, ctx: &egui::Context) {
+        self.drain_torrent();
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd.cmd.as_str() {
                 "play" => {
