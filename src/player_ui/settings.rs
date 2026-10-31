@@ -110,6 +110,12 @@ pub struct PlayerUiSettings {
     /// whisper-subs API key (server: POST /auth/api-keys)
     #[serde(default)]
     pub whisper_subs_key: String,
+    /// Torrent/magnet streaming helper. A shell command template where
+    /// {url} becomes the magnet URI or .torrent path and stdout is the
+    /// direct stream URL, e.g. `webtorrent-cli {url} --get-url`. Empty
+    /// disables torrent/magnet playback.
+    #[serde(default)]
+    pub torrent_helper: String,
 }
 
 impl Default for PlayerUiSettings {
@@ -156,6 +162,7 @@ impl Default for PlayerUiSettings {
             video_zoom: 1.0,
             whisper_subs_url: String::new(),
             whisper_subs_key: String::new(),
+            torrent_helper: String::new(),
         }
     }
 }

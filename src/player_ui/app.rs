@@ -154,6 +154,10 @@ pub struct PlayerApp {
     srs_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// True while a mining job is running.
     srs_busy: bool,
+    /// Receiver for torrent helper results (worker thread).
+    torrent_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+    /// True while the torrent helper resolves.
+    torrent_busy: bool,
     /// Whether the reading panel is visible.
     reading_open: bool,
     /// True once the LiveLink server loaded this window's media: end-of-media
@@ -294,6 +298,8 @@ impl PlayerApp {
             srs_status: None,
             srs_rx: None,
             srs_busy: false,
+            torrent_rx: None,
+            torrent_busy: false,
             reading_open: false,
             server_driven: false,
             ws_open: false,
@@ -982,7 +988,10 @@ impl PlayerApp {
                         {
                             let url = client.resolve(first["url"].as_str().unwrap_or_default());
                             let sub = client.resolve(srt);
-                            self.playlist = vec![url];
+                            // Local playlist files expand so the window's own
+                        // next/prev walks the entries; URIs and files pass
+                        // through unchanged.
+                        self.playlist = super::sources::expand_source(&url);
                             self.index = 0;
                             self.subtitles = vec![sub];
                             self.load_current();
@@ -1264,10 +1273,54 @@ impl PlayerApp {
     }
 
     fn load_current(&mut self) {
-        if let Some(url) = self.playlist.get(self.index).cloned() {
-            self.current_source = url.clone();
-            if let Some(mpv) = &mut self.mpv {
-                mpv.load(&url);
+        let Some(source) = self.playlist.get(self.index).cloned() else {
+            return;
+        };
+        // Torrents and magnets need a streaming helper; resolve on a worker
+        // thread so the UI never blocks, then load whatever URL it prints.
+        if matches!(
+            super::sources::detect(&source),
+            super::sources::SourceKind::Uri
+        ) && (source.starts_with("magnet:") || source.ends_with(".torrent"))
+        {
+            let config = super::sources::TorrentConfig {
+                helper: self.settings.torrent_helper.clone(),
+                timeout_secs: 120,
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.torrent_rx = Some(rx);
+            self.torrent_busy = true;
+            std::thread::spawn(move || {
+                let _ = tx.send(config.resolve(&source));
+            });
+            return;
+        }
+        self.current_source = source;
+        if let Some(mpv) = &mut self.mpv {
+            mpv.load(&self.current_source);
+        }
+    }
+
+    /// Poll the torrent helper result; load its stream URL on success.
+    fn drain_torrent(&mut self) {
+        let Some(rx) = &self.torrent_rx else {
+            return;
+        };
+        if let Ok(result) = rx.try_recv() {
+            self.torrent_rx = None;
+            self.torrent_busy = false;
+            match result {
+                Ok(url) => {
+                    tracing::info!(url = %url, "torrent helper resolved stream");
+                    self.current_source = url.clone();
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.load(&url);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "torrent playback unavailable");
+                    self.srs_status = Some((e, std::time::Instant::now()));
+                }
             }
         }
     }
@@ -1315,6 +1368,7 @@ impl PlayerApp {
     }
 
     fn drain_commands(&mut self, ctx: &egui::Context) {
+        self.drain_torrent();
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd.cmd.as_str() {
                 "play" => {

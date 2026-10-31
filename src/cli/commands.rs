@@ -399,13 +399,24 @@ pub async fn run_player_window(
   };
   urls.extend(positional);
 
-  if let Some(ref path) = cmd.playlist {
-    let content = std::fs::read_to_string(path)
-      .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
-    for line in content.lines() {
-      let line = line.trim();
-      if !line.is_empty() && !line.starts_with('#') {
-        urls.push(line.to_string());
+  if let Some(path) = cmd.playlist.as_ref() {
+    // Any local playlist format (.m3u/.m3u8/.pls/.m4u) expands here; plain
+    // lists pass through the same expander (it treats non-PLS content as
+    // one URL per line, the previous behavior).
+    match crate::player_ui::sources::detect(path) {
+      crate::player_ui::sources::SourceKind::Playlist => {
+        let entries = crate::player_ui::sources::expand(std::path::Path::new(path))?;
+        urls.extend(entries);
+      }
+      _ => {
+        let content = std::fs::read_to_string(path)
+          .map_err(|e| format!("failed to read playlist {}: {}", path, e))?;
+        for line in content.lines() {
+          let line = line.trim();
+          if !line.is_empty() && !line.starts_with('#') {
+            urls.push(line.to_string());
+          }
+        }
       }
     }
   }

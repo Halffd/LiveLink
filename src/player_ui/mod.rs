@@ -6,6 +6,7 @@
 pub mod app;
 pub mod control;
 pub mod reading;
+pub mod sources;
 pub mod settings;
 pub mod srs;
 pub mod subtitle;
