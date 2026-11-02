@@ -126,7 +126,24 @@ impl TranscriptWorker {
             )
             .json(&serde_json::json!({
                 "source": url,
-                "model_name": self.config.model,
+                "model_name": if self.config.engine.is_empty() {
+                    self.config.model.clone()
+                } else {
+                    format!("{}:{}", self.config.engine, self.config.model)
+                },
+                // VAD gating drops music/silence before alignment; without
+                // it WhisperX aligns intro lyrics to wrong beats.
+                "vad_filter": self.config.vad,
+                // Pin the language so code-switched audio keeps one align
+                // model instead of switching mid-stream on detected chunks.
+                "language": if self.config.language.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::json!(self.config.language)
+                },
+                // Diarization is optional (pyannote, needs HF_TOKEN).
+                "diarization": self.config.diarization,
+                "run_mpv": false,
             }))
             .send()
             .await;

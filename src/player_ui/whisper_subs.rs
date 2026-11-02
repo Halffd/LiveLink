@@ -49,15 +49,32 @@ impl WhisperSubs {
     }
 
     /// Start a transcription task for `source` (URL or server-visible
-    /// path), returning the task id.
-    pub fn start_transcription(&self, source: &str, model: &str) -> Result<String, String> {
+    /// path), returning the task id. `engine_prefix` ("whisperx" or empty)
+    /// routes the request; VAD gates music/silence; diarization is optional.
+    pub fn start_transcription(
+        &self,
+        source: &str,
+        model: &str,
+        engine_prefix: &str,
+        language: Option<&str>,
+        vad: bool,
+        diarization: bool,
+    ) -> Result<String, String> {
+        let model_name = if engine_prefix.is_empty() {
+            model.to_string()
+        } else {
+            format!("{engine_prefix}:{model}")
+        };
         let client = Self::client()?;
         let resp = client
             .post(format!("{}/transcribe", self.base))
             .header("X-API-Key", &self.key)
             .json(&serde_json::json!({
                 "source": source,
-                "model_name": model,
+                "model_name": model_name,
+                "vad_filter": vad,
+                "language": language,
+                "diarization": diarization,
                 "run_mpv": false,
             }))
             .send()

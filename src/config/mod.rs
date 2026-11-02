@@ -48,6 +48,20 @@ pub struct TranscriptConfig {
     /// Where generated .srt files are cached; defaults to
     /// `<config_dir>/transcripts` when empty
     pub transcript_dir: String,
+    /// Transcription engine prefix passed to whisper-subs (`whisperx:`
+    /// enables word-level alignment; bare names use faster-whisper).
+    #[serde(default = "default_transcript_engine")]
+    pub engine: String,
+    /// Audio language hint sent to the engine ("ja", "en", empty = auto).
+    #[serde(default)]
+    pub language: String,
+    /// VAD gate transcription requests (drops music/silence before
+    /// alignment — required for WhisperX quality on streams with intros).
+    #[serde(default = "default_true")]
+    pub vad: bool,
+    /// Speaker diarization (pyannote; needs HF_TOKEN on the server).
+    #[serde(default)]
+    pub diarization: bool,
 }
 
 impl Default for TranscriptConfig {
@@ -59,8 +73,16 @@ impl Default for TranscriptConfig {
             api_key_file: "/host/.whisper-subs/api/api_config.json".to_string(),
             model: "small".to_string(),
             transcript_dir: String::new(),
+            engine: "whisperx".to_string(),
+            language: String::new(),
+            vad: true,
+            diarization: false,
         }
     }
+}
+
+fn default_transcript_engine() -> String {
+    "whisperx".to_string()
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

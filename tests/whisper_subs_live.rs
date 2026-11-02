@@ -27,7 +27,9 @@ fn live_transcription_streams_subs_and_mpv_accepts_them() {
         client.subtitle_list().map(|v| v.len()),
     );
 
-    let task_id = client.start_transcription(&source, "tiny").expect("start");
+    let task_id = client
+        .start_transcription(&source, "tiny", "whisperx", Some("en"), true, false)
+        .expect("start");
     println!("task started: {task_id}");
 
     let (tx, rx) = std::sync::mpsc::channel();

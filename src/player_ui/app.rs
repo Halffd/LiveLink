@@ -836,7 +836,33 @@ impl PlayerApp {
             self.settings.whisper_subs_url.clone(),
             self.settings.whisper_subs_key.clone(),
         );
-        match client.start_transcription(&source, "large-v3") {
+        // Engine/VAD/language come from the transcript config so the F1
+        // panel and the automatic worker submit identical pipelines.
+        let transcript_cfg = std::fs::read_to_string(self.config_dir.join("player.json"))
+            .ok()
+            .and_then(|c| {
+                let value: serde_json::Value = serde_json::from_str(&c).ok()?;
+                Some((
+                    value["transcript"]["engine"]
+                        .as_str()
+                        .unwrap_or("whisperx")
+                        .to_string(),
+                    value["transcript"]["language"].as_str().map(str::to_string),
+                    value["transcript"]["vad"].as_bool().unwrap_or(true),
+                    value["transcript"]["diarization"].as_bool().unwrap_or(false),
+                ))
+            });
+        let (engine, language, vad, diarization) = transcript_cfg
+            .unwrap_or_else(|| ("whisperx".to_string(), None, true, false));
+        let language_ref = language.as_deref();
+        match client.start_transcription(
+            &source,
+            "large-v3",
+            &engine,
+            language_ref,
+            vad,
+            diarization,
+        ) {
             Ok(task_id) => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 super::whisper_subs::monitor_task(client, task_id, tx);
