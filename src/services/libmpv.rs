@@ -190,11 +190,18 @@ fn create_video_target(
             Some(tex),
             0,
         );
-        debug_assert_eq!(
-            gl.check_framebuffer_status(glow::FRAMEBUFFER),
-            glow::FRAMEBUFFER_COMPLETE,
-            "video render target FBO must be complete"
-        );
+        // A debug_assert compiles out in release: an incomplete FBO then
+        // shows up as a black window with no diagnostics. Check for real
+        // and report through tracing so the log names the cause.
+        {
+            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if status != glow::FRAMEBUFFER_COMPLETE {
+                tracing::error!(
+                    status = ?status,
+                    "video render FBO incomplete - video will stay black"
+                );
+            }
+        }
         gl.bind_framebuffer(glow::FRAMEBUFFER, None);
         (tex, fbo)
     }
