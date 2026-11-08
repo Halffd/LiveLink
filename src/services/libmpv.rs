@@ -636,6 +636,14 @@ impl MpvVideo {
             .unwrap_or_default()
     }
 
+    /// Publication date from mpv metadata ("" when the source has none).
+    pub fn media_date(&mut self) -> String {
+        self.mpv
+            .get_property::<String>("media-date") // ytdl sets "date" instead
+            .or_else(|_| self.mpv.get_property::<String>("date"))
+            .unwrap_or_default()
+    }
+
     /// Drain pending mpv events. Non-blocking.
     pub fn poll_events(&mut self) -> Vec<PlayerEvent> {
         let mut events = Vec::new();
@@ -678,6 +686,10 @@ impl MpvVideo {
 
     /// Register the GL texture with egui (once) so it can be drawn.
     pub fn register_texture(&mut self, frame: &mut eframe::Frame) {
+        // eframe owns the native texture once registered; keep the id and
+        // never re-register (re-registering would leak GL textures and can
+        // leave egui drawing a stale id = black screen). A one-time take of
+        // `self.texture` is safe because this runs before the first render.
         if self.texture_id.is_none() {
             if let Some(tex) = self.texture.take() {
                 self.texture_id = Some(frame.register_native_glow_texture(tex));
@@ -690,6 +702,11 @@ impl MpvVideo {
         // Also poll while paused so seeks and frame steps update the UI.
         if let Ok(t) = self.mpv.get_property::<f64>("time-pos") {
             self.last_time = t;
+        }
+        // No texture to draw into yet (render before eframe gave us a
+        // texture id): skip this frame; the next one re-renders.
+        if self.texture_id.is_none() {
+            return;
         }
         // flip=true: mpv writes the video top row first, which is what egui
         // expects. Set to false if the picture appears upside down.

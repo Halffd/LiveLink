@@ -62,6 +62,7 @@ pub struct PlayerConfig {
     pub streamlink_http_header: std::collections::HashMap<String, String>,
     pub screens: Vec<crate::config::ScreenConfig>,
     pub debug: bool,
+    pub mpv: crate::config::MpvConfig,
     pub mpv_config_dir: Option<String>,
     pub mpv_youtube_cookies: Option<String>,
 }
@@ -85,6 +86,7 @@ impl Default for PlayerConfig {
             streamlink_http_header: std::collections::HashMap::new(),
             screens: vec![],
             debug: false,
+            mpv: crate::config::MpvConfig::default(),
             mpv_config_dir: None,
             mpv_youtube_cookies: None,
         }
@@ -174,20 +176,46 @@ pub async fn start_mpv_process(
             .find(|s| s.screen == screen)
             .ok_or(PlayerError::NoPlayer(screen))?;
 
-        let mut extra_args = vec![
-            format!("--gpu-context={}", self.config.mpv_gpu_context),
-        ];
-        if self.config.mpv_priority != "normal" {
-            extra_args.push(format!("--priority={}", self.config.mpv_priority));
+        let mut extra_args = vec![];
+
+        // Renderer configuration
+        let mpv_config = &self.config.mpv;
+        match mpv_config.renderer.as_str() {
+            "gpu" => {
+                extra_args.push(format!("--gpu-context={}", mpv_config.gpu_context));
+                extra_args.push("--vo=gpu".to_string());
+                extra_args.push("--gpu-api=opengl".to_string());
+            }
+            "software" => {
+                // Software rendering via llvmpipe (Mesa) - no GPU required
+                extra_args.push("--vo=gpu".to_string());
+                extra_args.push("--gpu-api=swiftshader".to_string());
+                extra_args.push("--gpu-context=wayland".to_string());
+            }
+            "auto" => {
+                // Auto-detect: try GPU first, fallback to software
+                extra_args.push(format!("--gpu-context={}", mpv_config.gpu_context));
+                extra_args.push("--vo=gpu".to_string());
+                extra_args.push("--gpu-api=auto".to_string());
+            }
+            _ => {
+                // Default to GPU
+                extra_args.push(format!("--gpu-context={}", mpv_config.gpu_context));
+                extra_args.push("--vo=gpu".to_string());
+                extra_args.push("--gpu-api=opengl".to_string());
+            }
+        }
+        if self.config.mpv.priority != "normal" {
+            extra_args.push(format!("--priority={}", self.config.mpv.priority));
         }
         
         // Add YouTube cookies if configured
-        if let Some(cookies_file) = &self.config.mpv_youtube_cookies {
+        if let Some(cookies_file) = &self.config.mpv.youtube_cookies {
             extra_args.push(format!("--ytdl-raw-options=cookies={}", cookies_file));
         }
         
-        if self.config.mpv_priority != "normal" {
-            extra_args.push(format!("--priority={}", self.config.mpv_priority));
+        if self.config.mpv.priority != "normal" {
+            extra_args.push(format!("--priority={}", self.config.mpv.priority));
         }
         extra_args.extend(self.config.mpv_extra_args.clone());
 

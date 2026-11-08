@@ -1,4 +1,4 @@
-use crate::config::{FavoriteChannels, FiltersConfig, ScreenConfig};
+use crate::config::{FavoriteChannels, FiltersConfig, MpvConfig, ScreenConfig};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::debug;
@@ -224,4 +224,5 @@ pub struct OrchestratorConfig {
     pub mpv_youtube_cookies: Option<String>,
     /// Auto-start server daemon when player cannot reach it.
     pub daemon: bool,
+    pub mpv: MpvConfig,
 }

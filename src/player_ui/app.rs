@@ -1544,13 +1544,26 @@ impl PlayerApp {
     }
 
     fn pointer_recently_moved(&mut self, ctx: &egui::Context) -> bool {
-        let moved = ctx.input(|i| i.pointer.velocity().length_sq() > 0.0);
-        if moved {
+        // Any pointer activity counts: movement (velocity covers drags even
+        // when the pointer sits still mid-press) or a button press. Slow
+        // drifts produce velocity squares of ~0, so also treat a fresh
+        // press/release as activity — otherwise controls never come back
+        // after the pointer stops.
+        let (moved, clicked) = ctx.input(|i| {
+            (
+                i.pointer.velocity().length_sq() > 0.0,
+                i.pointer.any_pressed() || i.pointer.any_released(),
+            )
+        });
+        if moved || clicked {
             self.last_pointer_move = Some(Instant::now());
         }
-        self.last_pointer_move
-            .map(|t| t.elapsed() < OVERLAY_HIDE_AFTER)
-            .unwrap_or(true)
+        // Never shown? Show them once for OVERLAY_HIDE_AFTER so a freshly
+        // opened window is usable before the user wiggles the mouse.
+        match self.last_pointer_move {
+            Some(t) => t.elapsed() < OVERLAY_HIDE_AFTER,
+            None => false,
+        }
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
@@ -1627,6 +1640,67 @@ impl PlayerApp {
             });
     }
 
+    /// Right-click menu over the video: playback and panel actions without
+    /// memorising the hotkeys.
+    fn paint_video_context_menu(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(egui::Color32::TRANSPARENT))
+            .show(ctx, |ui| {
+                let response = ui.interact(
+                    ui.max_rect(),
+                    egui::Id::new("video_click_catcher"),
+                    egui::Sense::click(),
+                );
+                response.context_menu(|ui| {
+                    if ui.button("⏯ play/pause").clicked() {
+                        if let Some(mpv) = &mut self.mpv {
+                            mpv.set_paused(!mpv.paused);
+                        }
+                        ui.close_menu();
+                    }
+                    if ui.button("⏹ stop").clicked() {
+                        if let Some(mpv) = &mut self.mpv {
+                            mpv.stop();
+                        }
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("⏭ next").clicked() {
+                        self.navigate(1);
+                        ui.close_menu();
+                    }
+                    if ui.button("⏮ previous").clicked() {
+                        self.navigate(-1);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("📋 queue").clicked() {
+                        self.channels_open = !self.channels_open;
+                        ui.close_menu();
+                    }
+                    if ui.button("🎞 subtitles").clicked() {
+                        self.sub_list_open = !self.sub_list_open;
+                        ui.close_menu();
+                    }
+                    if ui.button("📖 reading").clicked() {
+                        self.reading_open = !self.reading_open;
+                        ui.close_menu();
+                    }
+                    if ui.button("🔎 whisper-subs").clicked() {
+                        self.ws_open = !self.ws_open;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("⛶ fullscreen").clicked() {
+                        self.settings.fullscreen = !self.settings.fullscreen;
+                        self.apply_viewport_settings(ctx);
+                        self.save_settings();
+                        ui.close_menu();
+                    }
+                });
+            });
+    }
+
     fn paint_overlays(&mut self, ctx: &egui::Context) {
         let show_controls = self.settings.controls_always()
             || self.settings_open
@@ -1641,6 +1715,10 @@ impl PlayerApp {
         });
 
         if let Some(title) = title {
+            let url = self.current_source.clone();
+            let (duration, date) = self.mpv.as_mut().map_or((0.0, String::new()), |m| {
+                (m.duration(), m.media_date())
+            });
             egui::Area::new(egui::Id::new("title_overlay"))
                 .anchor(egui::Align2::CENTER_TOP, [0.0, 8.0])
                 .order(egui::Order::Foreground)
@@ -1657,6 +1735,31 @@ impl PlayerApp {
                                     .size(16.0)
                                     .color(egui::Color32::WHITE),
                             );
+                            if !url.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(format!("URL: {url}"))
+                                        .size(11.0)
+                                        .color(egui::Color32::LIGHT_GRAY),
+                                );
+                            }
+                            ui.horizontal(|ui| {
+                                if duration > 0.0 {
+                                    let mins = (duration / 60.0).floor() as u32;
+                                    let secs = (duration % 60.0).round() as u32;
+                                    ui.label(
+                                        egui::RichText::new(format!("{mins}m {secs}s"))
+                                            .size(11.0)
+                                            .color(egui::Color32::LIGHT_GRAY),
+                                    );
+                                }
+                                if !date.is_empty() {
+                                    ui.label(
+                                        egui::RichText::new(date)
+                                            .size(11.0)
+                                            .color(egui::Color32::LIGHT_GRAY),
+                                    );
+                                }
+                            });
                         });
                 });
         }
@@ -2475,6 +2578,7 @@ impl eframe::App for PlayerApp {
         }
         self.paint_video(ctx);
         self.paint_overlays(ctx);
+        self.paint_video_context_menu(ctx);
 
         let playing = self.mpv.as_ref().map(|m| m.playing).unwrap_or(false);
         if playing {

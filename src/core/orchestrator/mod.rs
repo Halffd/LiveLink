@@ -134,6 +134,7 @@ impl Orchestrator {
 debug: config.debug,
             mpv_config_dir: config.mpv_config_dir.clone(),
             mpv_youtube_cookies: config.mpv_youtube_cookies.clone(),
+            mpv: config.mpv.clone(),
         };
         let player = PlayerService::new(exit_sender, player_config);
         let queue = QueueService::new();
@@ -312,6 +313,7 @@ pub fn get_favorite_channels(&self) -> crate::config::FavoriteChannels {
         use_locks: true,
         mpv_config_dir: None,
         mpv_youtube_cookies: None,
+        mpv: self.config.mpv.clone(),
         logging: crate::config::LoggingConfig {
           enabled: true,
           level: "info".to_string(),

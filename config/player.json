@@ -30,15 +30,41 @@
       "playerType": "both",
       "primary": true,
       "sources": [
-        { "type": "holodex_favorites", "enabled": true, "priority": 1, "limit": 100 },
-        { "type": "youtube_favorites", "enabled": true, "priority": 2, "limit": 50 },
-        { "type": "holodex_orgs_priority", "enabled": true, "priority": 3, "limit": 200 },
-        { "type": "twitch_favorites", "enabled": true, "priority": 4, "limit": 30 }
+        {
+          "type": "holodex_favorites",
+          "enabled": true,
+          "priority": 1,
+          "limit": 100
+        },
+        {
+          "type": "youtube_favorites",
+          "enabled": true,
+          "priority": 2,
+          "limit": 50
+        },
+        {
+          "type": "holodex_orgs_priority",
+          "enabled": true,
+          "priority": 3,
+          "limit": 200
+        },
+        {
+          "type": "twitch_favorites",
+          "enabled": true,
+          "priority": 4,
+          "limit": 30
+        }
       ],
       "sorting": {
         "rules": [
-          { "field": "viewerCount", "order": "desc" },
-          { "field": "isLive", "order": "desc" }
+          {
+            "field": "viewerCount",
+            "order": "desc"
+          },
+          {
+            "field": "isLive",
+            "order": "desc"
+          }
         ]
       },
       "refresh": 300,
@@ -59,23 +85,69 @@
       "playerType": "both",
       "primary": false,
       "sources": [
-        { "type": "twitch_favorites", "enabled": true, "priority": 1, "limit": 30 },
-        { "type": "holodex_favorites", "enabled": true, "priority": 1, "limit": 50 },
-        { "type": "twitch_followed", "enabled": true, "priority": 2, "limit": 50 },
-        { "type": "twitch_vtuber_tag", "enabled": true, "priority": 3, "limit": 50 },
-        { "type": "twitch_anime_tag", "enabled": true, "priority": 4, "limit": 50 },
-        { "type": "holodex_twitch_independents", "enabled": true, "priority": 5, "limit": 50 },
-        { "type": "twitch_top", "enabled": true, "priority": 6, "limit": 50 }
+        {
+          "type": "twitch_favorites",
+          "enabled": true,
+          "priority": 1,
+          "limit": 30
+        },
+        {
+          "type": "holodex_favorites",
+          "enabled": true,
+          "priority": 1,
+          "limit": 50
+        },
+        {
+          "type": "twitch_followed",
+          "enabled": true,
+          "priority": 2,
+          "limit": 50
+        },
+        {
+          "type": "twitch_vtuber_tag",
+          "enabled": true,
+          "priority": 3,
+          "limit": 50
+        },
+        {
+          "type": "twitch_anime_tag",
+          "enabled": true,
+          "priority": 4,
+          "limit": 50
+        },
+        {
+          "type": "holodex_twitch_independents",
+          "enabled": true,
+          "priority": 5,
+          "limit": 50
+        },
+        {
+          "type": "twitch_top",
+          "enabled": true,
+          "priority": 6,
+          "limit": 50
+        }
       ],
       "sorting": {
         "rules": [
-          { "field": "viewerCount", "order": "desc" },
-          { "field": "isLive", "order": "desc" }
+          {
+            "field": "viewerCount",
+            "order": "desc"
+          },
+          {
+            "field": "isLive",
+            "order": "desc"
+          }
         ]
       },
       "refresh": 300,
       "auto_start": true,
       "skip_watched_streams": false
     }
-  ]
+  ],
+  "mpv": {
+    "gpu_context": "auto",
+    "renderer": "auto",
+    "priority": "normal"
+  }
 }

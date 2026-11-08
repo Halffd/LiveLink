@@ -214,6 +214,8 @@ pub struct PlayerConfig {
     #[serde(alias = "forcePlayer", default)]
 
     pub force_player: bool,
+    #[serde(default)]
+    pub mpv: MpvConfig,
     #[serde(
         alias = "autoRefreshInterval",
         default = "default_auto_refresh_interval"
@@ -230,6 +232,31 @@ pub struct PlayerConfig {
     pub logging: LoggingConfig,
     pub screens: Vec<ScreenConfig>,
 }
+
+impl Default for PlayerConfig {
+    fn default() -> Self {
+        Self {
+            player_type: default_player_type(),
+            default_quality: default_quality(),
+            default_volume: default_volume(),
+            window_maximized: false,
+            max_streams: default_max_streams(),
+            auto_start: default_auto_start(),
+            disable_heartbeat: false,
+            daemon: default_daemon(),
+            force_player: false,
+            mpv: MpvConfig::default(),
+            auto_refresh_interval_seconds: default_auto_refresh_interval(),
+            watched_clear_hours: default_watched_clear_hours(),
+            use_locks: default_use_locks(),
+            mpv_config_dir: None,
+            mpv_youtube_cookies: None,
+            logging: LoggingConfig::default(),
+            screens: Vec::new(),
+        }
+    }
+}
+
 
 fn default_player_type() -> String {
     "mpv".to_string()
@@ -261,9 +288,9 @@ fn default_daemon() -> bool {
 }
 
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct LoggingConfig {
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -283,7 +310,11 @@ fn default_max_files() -> u32 {
     5
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+
+
+
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MpvConfig {
     #[serde(default = "default_mpv_path")]
     pub path: String,
@@ -291,6 +322,10 @@ pub struct MpvConfig {
     pub priority: String,
     #[serde(rename = "gpu-context", default = "default_gpu_context")]
     pub gpu_context: String,
+    /// Renderer backend: "gpu" (default, uses GPU), "software" (software rendering via swiftshader/llvmpipe),
+    /// or "auto" (auto-detect). Only affects subprocess mpv player; embedded player always uses GPU.
+    #[serde(rename = "renderer", default = "default_renderer")]
+    pub renderer: String,
     #[serde(default)]
     pub border: bool,
     #[serde(default)]
@@ -356,6 +391,47 @@ fn default_mpv_priority() -> String {
 }
 fn default_gpu_context() -> String {
     "auto".to_string()
+}
+
+fn default_renderer() -> String {
+    "gpu".to_string()
+}
+
+impl Default for MpvConfig {
+    fn default() -> Self {
+        Self {
+            path: default_mpv_path(),
+            priority: default_mpv_priority(),
+            gpu_context: default_gpu_context(),
+            renderer: default_renderer(),
+            border: false,
+            fullscreen: false,
+            ontop: false,
+            pause: false,
+            mute: false,
+            speed: 1.0,
+            loop_: None,
+            audio_file: None,
+            sub_file: None,
+            config_dir: None,
+            sub_lang: None,
+            vid: None,
+            aid: None,
+            sid: None,
+            cache: None,
+            cache_min: None,
+            cache_seek_min: None,
+            keep_open: false,
+            input_default_bindings: false,
+            input_terminal: false,
+            osd_level: None,
+            force_window: false,
+            cursor: true,
+            no_cursor: false,
+            youtube_cookies: None,
+            extra: HashMap::new(),
+        }
+    }
 }
 
 impl MpvConfig {
@@ -891,6 +967,7 @@ impl ConfigLoader {
             auto_refresh_interval_seconds: 60,
             watched_clear_hours: 10,
             use_locks: true,
+            mpv: MpvConfig::default(),
             mpv_config_dir: None,
             mpv_youtube_cookies: None,
             logging: LoggingConfig {

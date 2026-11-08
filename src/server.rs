@@ -65,6 +65,7 @@ pub async fn build_orchestrator(
     use_locks: config.player.use_locks,
     mpv_youtube_cookies: config.player.mpv_youtube_cookies,
     daemon: config.player.daemon,
+    mpv: config.mpv.clone(),
   };
 
   let orchestrator = Orchestrator::new(orchestrator_config, exit_rx, network_receiver);
