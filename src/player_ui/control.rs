@@ -252,4 +252,85 @@ mod tests {
         let resolved = super::super::resolve_with_streamlink("streamlink", "/tmp/a.mp4", "best").await;
         assert_eq!(resolved, "/tmp/a.mp4");
     }
+
+    /// Bind a real Unix socket via spawn_unix_listener, connect to it, send
+    /// one JSON command, and assert the listener delivers it over the
+    /// channel. Covers the whole IPC path that GL-less smoke tests cannot.
+    /// Dropping every Sender (the test's clone and the one moved into the
+    /// listener thread ends via its own disconnect path) lets the process
+    /// exit instead of hanging on a detached thread.
+    #[test]
+    fn unix_socket_delivers_commands_to_the_channel() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("livelink-ipc-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("player.sock");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_unix_listener(sock.clone(), tx);
+
+        let mut bound = false;
+        for _ in 0..50 {
+            if sock.exists() {
+                bound = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(bound, "listener never bound {}", sock.display());
+
+        {
+            let mut stream = std::os::unix::net::UnixStream::connect(&sock).unwrap();
+            stream
+                .write_all(b"{\"cmd\":\"pause\",\"value\":true}\n")
+                .unwrap();
+            stream.flush().unwrap();
+        } // closing the connection is the "UI gone" signal: the listener
+          // thread removes the socket and returns, so no thread outlives
+          // the test.
+
+        let cmd = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("no command delivered over the unix socket");
+        assert_eq!(cmd.cmd, "pause");
+        assert_eq!(cmd.value, Some(1.0));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stale socket file must not wedge the listener: bind succeeds after
+    /// the leftover file is removed, and commands still flow.
+    #[test]
+    fn stale_socket_file_does_not_block_binding() {
+        use std::io::Write;
+        let dir = std::env::temp_dir().join(format!("livelink-ipc-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("player.sock");
+        std::fs::write(&sock, b"garbage").unwrap(); // leftover from a dead run
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        spawn_unix_listener(sock.clone(), tx);
+
+        let mut stream = None;
+        for _ in 0..50 {
+            match std::os::unix::net::UnixStream::connect(&sock) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+        let mut stream = stream.expect("listener never accepted a connection");
+        stream.write_all(b"{\"cmd\":\"stop\"}\n").unwrap();
+        stream.flush().unwrap();
+        drop(stream); // same "UI gone" termination as above
+
+        let cmd = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("stale socket blocked command delivery");
+        assert_eq!(cmd.cmd, "stop");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
