@@ -388,18 +388,30 @@ mod play_path_tests {
 
     /// The IPC play command sets `playlist = expand_source(url)`; verify the
     /// full matrix of source types resolves to what load_current receives.
+    /// The playlist fixture is written to a temp dir so the test never
+    /// depends on files elsewhere on the machine.
     #[test]
     fn play_command_expansion_matrix() {
-        // Local playlist expands; URIs, files, magnets stay single-entry.
+        let dir = std::env::temp_dir().join(format!("livelink-src-matrix-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let playlist = dir.join("list.m3u");
+        std::fs::write(
+            &playlist,
+            "#EXTM3U\n#EXTINF:99,Local\na.mp4\nhttp://localhost:9999/live\nmagnet:?xt=urn:btih:abc\n/sub/other.mkv\n",
+        )
+        .unwrap();
+
+        // Local playlist expands; relative entries resolve against its dir.
         assert_eq!(
-            expand_source("/tmp/src-test/list.m3u"),
+            expand_source(&playlist.to_string_lossy()),
             vec![
-                "/tmp/src-test/a.mp4",
-                "http://localhost:9999/live",
-                "magnet:?xt=urn:btih:abc",
-                "/sub/other.mkv", // absolute entry stays verbatim
+                dir.join("a.mp4").to_string_lossy().into_owned(),
+                "http://localhost:9999/live".to_string(),
+                "magnet:?xt=urn:btih:abc".to_string(),
+                "/sub/other.mkv".to_string(), // absolute entry stays verbatim
             ]
         );
+        // URIs, magnets, files and torrents stay single-entry.
         assert_eq!(
             expand_source("magnet:?xt=urn:btih:abc"),
             vec!["magnet:?xt=urn:btih:abc"]
@@ -408,10 +420,12 @@ mod play_path_tests {
             expand_source("https://example.com/live"),
             vec!["https://example.com/live"]
         );
-        assert_eq!(expand_source("/tmp/src-test/song.flac"), vec!["/tmp/src-test/song.flac"]);
+        assert_eq!(expand_source("/tmp/song.flac"), vec!["/tmp/song.flac"]);
         assert_eq!(
-            expand_source("/tmp/src-test/archive.torrent"),
-            vec!["/tmp/src-test/archive.torrent"]
+            expand_source("/tmp/archive.torrent"),
+            vec!["/tmp/archive.torrent"]
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
