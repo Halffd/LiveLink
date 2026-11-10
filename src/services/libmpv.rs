@@ -23,8 +23,8 @@ pub enum PlayerEvent {
 
 /// The subtitle cue currently displayed by mpv, mirrored out of its
 /// properties. This is the input layer for anything drawn on top of the
-/// video (annotations, ruby text, search) — mpv itself renders the visible
-/// subtitles.
+/// video (annotations, ruby text, search) — mpv itself renders the
+/// visible subtitles.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SubtitleCue {
     /// Plain text of the current cue (empty when nothing is shown).
@@ -35,6 +35,29 @@ pub struct SubtitleCue {
     pub start: f64,
     /// Cue end in seconds (negative when unknown).
     pub end: f64,
+}
+
+/// Whether the loaded file advertises a container-level video stream.
+/// Used to distinguish "black because nothing decoded" from "black
+/// because there is no picture to show".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VideoState {
+    /// mpv `video-format`, e.g. "yuv420p". Empty when no frame decoded.
+    pub format: String,
+    /// Decoded frame width (0 until the first frame lands).
+    pub width: u32,
+    /// Decoded frame height (0 until the first frame lands).
+    pub height: u64,
+    /// Container advertises a video track.
+    pub has_video_track: bool,
+}
+
+/// True when a video track exists but the decoder produced nothing: no
+/// `video-format` or a zero width. This is the exact condition behind the
+/// window's "cannot decode (missing codec parameters)" warning, shared by
+/// the window code and its tests so the rule cannot drift.
+pub fn missing_video_decode(state: &VideoState) -> bool {
+    state.has_video_track && (state.format.is_empty() || state.width == 0)
 }
 
 impl SubtitleCue {
@@ -208,6 +231,41 @@ fn create_video_target(
 }
 
 impl MpvVideo {
+    /// Poll mpv's decode/container state for the currently loaded file.
+    pub fn video_state(&mut self) -> VideoState {
+        let format = self
+            .mpv
+            .get_property::<String>("video-format")
+            .unwrap_or_default();
+        let width = self.mpv.get_property::<i64>("width").unwrap_or(0);
+        let height = self.mpv.get_property::<i64>("height").unwrap_or(0);
+        let has_video_track = self.has_video_track();
+        VideoState {
+            format,
+            width: if width < 0 { 0 } else { width as u32 },
+            height: if height < 0 { 0 } else { height as u64 },
+            has_video_track,
+        }
+    }
+
+    /// Whether the container advertises at least one video track.
+    pub fn has_video_track(&self) -> bool {
+        let count = match self.mpv.get_property::<i64>("track-list/count") {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        for i in 0..count {
+            let kind = self
+                .mpv
+                .get_property::<String>(&format!("track-list/{i}/type"))
+                .unwrap_or_default();
+            if kind == "video" {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Create an mpv instance with an OpenGL render context targeting a new
     /// texture. Must be called on the UI thread while the GL context is
     /// current (inside the eframe app creator).
@@ -847,4 +905,53 @@ mod tests {
             cue.ass_text
         );
     }
+}
+
+#[cfg(test)]
+mod video_state_tests {
+    use super::*;
+
+    /// The decode check only fires when a video track exists AND the decoder
+    /// produced nothing. Both halves of that condition are pure data, so
+    /// they can be tested without opening a window or decoding a file.
+    #[test]
+    fn decode_warning_requires_track_and_no_frames() {
+        // Track present, no decode -> warn.
+        let broken = VideoState {
+            format: String::new(),
+            width: 0,
+            height: 0,
+            has_video_track: true,
+        };
+        assert!(missing_video_decode(&broken));
+
+        // Track present, decoding -> no warn.
+        let playing = VideoState {
+            format: "yuv420p".to_string(),
+            width: 640,
+            height: 360,
+            has_video_track: true,
+        };
+        assert!(!missing_video_decode(&playing));
+
+        // No video track at all (audio-only) -> never warn.
+        let audio = VideoState {
+            format: String::new(),
+            width: 0,
+            height: 0,
+            has_video_track: false,
+        };
+        assert!(!missing_video_decode(&audio));
+
+        // Track present, width still 0 but format reported: caller treats
+        // format-or-width, so this also counts as missing.
+        let half = VideoState {
+            format: "yuv420p".to_string(),
+            width: 0,
+            height: 360,
+            has_video_track: true,
+        };
+        assert!(missing_video_decode(&half));
+    }
+
 }

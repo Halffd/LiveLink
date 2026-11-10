@@ -150,6 +150,12 @@ pub struct PlayerApp {
     current_source: String,
     /// Status message from the last SRS mining job, with its timestamp.
     srs_status: Option<(String, Instant)>,
+    /// When the current media was first seen playing, for the decode check.
+    media_started_at: Option<Instant>,
+    /// Whether the decode check for the current media already ran.
+    media_check_done: bool,
+    /// User-visible warning from the last decode check, if any.
+    video_warning: Option<String>,
     /// Receiver for SRS mining results from the worker thread.
     srs_rx: Option<std::sync::mpsc::Receiver<String>>,
     /// True while a mining job is running.
@@ -296,6 +302,9 @@ impl PlayerApp {
             mpv_path: window.mpv_path.clone(),
             current_source: String::new(),
             srs_status: None,
+            media_started_at: None,
+            media_check_done: false,
+            video_warning: None,
             srs_rx: None,
             srs_busy: false,
             torrent_rx: None,
@@ -1325,6 +1334,49 @@ impl PlayerApp {
         if let Some(mpv) = &mut self.mpv {
             mpv.load(&self.current_source);
         }
+        // Reset the decode check for the new media: give mpv ~2s to report
+        // a decoded frame before judging the file.
+        self.media_started_at = Some(Instant::now());
+        self.media_check_done = false;
+        self.video_warning = None;
+    }
+
+    /// After ~2s of playback, check whether mpv actually decoded anything.
+    /// A file that advertises a video track but yields no `video-format` /
+    /// width/height means the container or codec parameters are broken —
+    /// say so where the user can see it instead of showing a black window.
+    fn check_video_decode(&mut self) {
+        if self.media_check_done {
+            return;
+        }
+        let Some(started) = self.media_started_at else {
+            return;
+        };
+        if started.elapsed() < Duration::from_secs(2) {
+            return;
+        }
+        self.media_check_done = true;
+        let Some(mpv) = &mut self.mpv else {
+            return;
+        };
+        if !mpv.playing {
+            return; // stopped or idle: nothing to judge
+        }
+        let state = mpv.video_state();
+        if crate::services::libmpv::missing_video_decode(&state) {
+            let message = format!(
+                "mpv reports a video stream but cannot decode it \
+                 (missing codec parameters — the file may be corrupt). \
+                 Try: ffmpeg -i '{}' -c copy fixed.mkv",
+                self.current_source
+            );
+            tracing::warn!(
+                source = %self.current_source,
+                has_video_track = state.has_video_track,
+                "container reports video stream but mpv cannot decode (missing codec parameters)"
+            );
+            self.video_warning = Some(message);
+        }
     }
 
     /// Poll the torrent helper result; load its stream URL on success.
@@ -1702,6 +1754,34 @@ impl PlayerApp {
     }
 
     fn paint_overlays(&mut self, ctx: &egui::Context) {
+        // Decode warning: shown over the video the black screen belongs to,
+        // so a corrupt file explains itself instead of looking like a bug.
+        if let Some(message) = self.video_warning.clone() {
+            egui::Area::new(egui::Id::new("video_warning"))
+                .anchor(egui::Align2::CENTER_TOP, [0.0, 48.0])
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::default()
+                        .fill(egui::Color32::from_black_alpha(220))
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::symmetric(14.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_max_width(600.0);
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 170, 60),
+                                egui::RichText::new("⚠ video not decoding")
+                                    .size(14.0)
+                                    .strong(),
+                            );
+                            ui.label(
+                                egui::RichText::new(message)
+                                    .size(12.0)
+                                    .color(egui::Color32::WHITE),
+                            );
+                        });
+                });
+        }
+
         let show_controls = self.settings.controls_always()
             || self.settings_open
             || (self.settings.controls_auto() && self.pointer_recently_moved(ctx));
@@ -2561,6 +2641,7 @@ impl eframe::App for PlayerApp {
         self.drain_channels();
         self.drain_ws();
         self.handle_events();
+        self.check_video_decode();
         self.render_mpv(frame);
         // Panels first, then the central video area (egui gives panels the
         // space they claim; the video takes what remains).
