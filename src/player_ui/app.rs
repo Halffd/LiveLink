@@ -238,7 +238,7 @@ impl PlayerApp {
             // SAFETY: the loader is owned by the eframe runner and outlives the app.
             let proc_addr: &'static dyn Fn(&std::ffi::CStr) -> *const std::ffi::c_void =
                 unsafe { std::mem::transmute(proc_addr) };
-            match MpvVideo::new(gl, proc_addr, screen_cfg.width, screen_cfg.height) {
+            match MpvVideo::new(gl, proc_addr, screen_cfg.width, screen_cfg.height, &window.hwdec) {
                 Ok(mut m) => {
                     let volume = window.volume.unwrap_or(settings.volume);
                     m.set_volume(volume);
@@ -2449,6 +2449,10 @@ impl eframe::App for PlayerApp {
             self.apply_theme(ctx);
             self.apply_viewport_settings(ctx);
         }
+        // Apply a requested maximize only after the surface exists: the
+        // builder-level maximize can land on a 0x0 viewport and leave the
+        // window permanently black.
+        super::apply_pending_maximize(ctx);
 
         self.drain_commands(ctx);
         while let Ok(result) = self.post_rx.try_recv() {

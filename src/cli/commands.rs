@@ -267,6 +267,8 @@ pub struct PlayerUiCommand {
   pub ipc_socket: Option<String>,
   #[arg(long = "no-ipc", help = "Disable the Unix-socket IPC listener")]
   pub no_ipc: bool,
+  #[arg(long, help = "mpv hardware decoding (auto-safe, no, vaapi, nvdec, videotoolbox); defaults to auto-safe, use \"no\" when hwdec init stalls on a box with no working GPU")]
+  pub hwdec: Option<String>,
   #[arg(long, help = "Initial playback volume (mpv scale 0-130; overrides saved settings)")]
   pub volume: Option<i64>,
   #[arg(long, help = "Start the window maximized")]
@@ -535,6 +537,10 @@ pub async fn run_player_window(
     borderless: cmd.borderless,
     position,
     rotate: cmd.rotate.unwrap_or(0),
+    hwdec: cmd
+      .hwdec
+      .clone()
+      .unwrap_or_else(|| "auto-safe".to_string()),
     server_url: if cmd.no_server {
       None
     } else {

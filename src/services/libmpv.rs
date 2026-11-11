@@ -274,10 +274,11 @@ impl MpvVideo {
         get_proc_address: &'static dyn Fn(&CStr) -> *const c_void,
         width: u32,
         height: u32,
+        hwdec: &str,
     ) -> Result<Self, libmpv2::Error> {
         let mpv = Mpv::with_initializer(|init| {
             init.set_option("vo", "libmpv")?;
-            init.set_option("hwdec", "auto-safe")?;
+            init.set_option("hwdec", hwdec)?;
             // No keep-open: it holds the file at EOF so end-file never fires,
             // which starves PlayerEvent::Eof and the window's media-end
             // advance (observed: a 6s file never advanced to the next

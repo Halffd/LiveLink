@@ -43,6 +43,8 @@ pub struct PlayerWindowConfig {
     pub position: Option<[f32; 2]>,
     /// Video rotation in degrees (0/90/180/270).
     pub rotate: u32,
+    /// mpv hardware decoding mode ("auto-safe", "no", "vaapi", ...).
+    pub hwdec: String,
     /// LiveLink server base URL (e.g. http://localhost:3001) for channel
     /// surfing; `None` disables server-driven channel switching.
     pub server_url: Option<String>,
@@ -172,12 +174,15 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(title)
         .with_inner_size([width as f32, height as f32]);
-    if window.window_maximized {
-        viewport = viewport.with_maximized(true);
-    }
     if let Some([x, y]) = position {
         viewport = viewport.with_position([x, y]);
     }
+    // Maximizing must never go on the builder: a just-created viewport can
+    // take the maximize while its surface is still 0x0 (nothing ever draws
+    // and the window stays black). Applied from `update` instead, where it
+    // lands after the first real frame.
+    let start_maximized = window.window_maximized;
+    PENDING_MAXIMIZE.store(start_maximized, std::sync::atomic::Ordering::Relaxed);
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -188,5 +193,19 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
         Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx)))),
     )
     .map_err(|e| format!("player window failed: {e}"))
+}
+
+/// Whether the first `update` should issue the maximize that was requested at
+/// creation. Set by `run` and read once by [apply_pending_maximize].
+static PENDING_MAXIMIZE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Issue the startup maximize once, from the first `update` — never before the
+/// window has a real surface. A maximize sent at viewport-creation time can
+/// reach a 0x0 surface and leave the window mapping while drawing nothing,
+/// which looks exactly like a black screen with a live GL context.
+pub fn apply_pending_maximize(ctx: &egui::Context) {
+    if PENDING_MAXIMIZE.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    }
 }
 

@@ -104,7 +104,7 @@ impl LiveLinkApp {
                     .get(i)
                     .map(|s| (s.width, s.height))
                     .unwrap_or((1280, 720));
-                match MpvVideo::new(gl, proc_addr, w, h) {
+                match MpvVideo::new(gl, proc_addr, w, h, "auto-safe") {
                     Ok(p) => *player = Some(p),
                     Err(e) => tracing::warn!(
                         screen = i,
