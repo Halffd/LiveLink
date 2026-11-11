@@ -134,6 +134,8 @@ pub struct MpvVideo {
     texture_id: Option<egui::TextureId>,
     pub width: u32,
     pub height: u32,
+    /// The GL context this texture/FBO live in (needed to bind the FBO).
+    gl: &'static glow::Context,
     pub playing: bool,
     pub paused: bool,
     pub volume: i64,
@@ -320,6 +322,10 @@ impl MpvVideo {
             fbo,
             texture: Some(texture),
             texture_id: None,
+            // SAFETY: the eframe loader owns this context for the process
+            // lifetime and MpvVideo dies before it (struct drop order and
+            // the window lifetime guarantee this).
+            gl: unsafe { std::mem::transmute::<&glow::Context, &'static glow::Context>(gl) },
             width,
             height,
             playing: false,
@@ -774,15 +780,33 @@ impl MpvVideo {
         if self.texture_id.is_none() {
             return;
         }
-        // flip=true: mpv writes the video top row first, which is what egui
-        // expects. Set to false if the picture appears upside down.
-        if let Err(e) = self.rc.render::<()>(
-            self.fbo.0.get() as i32,
-            self.width as i32,
-            self.height as i32,
-            true,
-        ) {
-            tracing::warn!(error = %e, "mpv render failed");
+        // Bind our FBO around the render: libmpv draws into the texture id
+        // we pass, but a driver is free to treat that as a target only while
+        // it is actually GL_FRAMEBUFFER-bound in this context. Skipping the
+        // bind is silently a no-op on several drivers — the render "succeeds"
+        // and the texture never changes, which is the all-black window.
+        {
+            use glow::HasContext as _;
+            let gl = self.gl;
+            unsafe {
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
+                let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+                if status != glow::FRAMEBUFFER_COMPLETE {
+                    tracing::error!(?status, "video FBO incomplete before render - staying black");
+                }
+            }
+            let result = self.rc.render::<()>(
+                self.fbo.0.get() as i32,
+                self.width as i32,
+                self.height as i32,
+                true,
+            );
+            unsafe {
+                gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            }
+            if let Err(e) = result {
+                tracing::warn!(error = %e, "mpv render failed");
+            }
         }
     }
 

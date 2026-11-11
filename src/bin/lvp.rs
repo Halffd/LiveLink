@@ -19,6 +19,19 @@ struct Args {
 }
 
 fn main() -> Result<(), String> {
+  // Standalone windows are run by hand, so their diagnostics have to land
+  // somewhere visible: without a subscriber, every tracing call in the
+  // player (render failures, decode warnings, control-port drops, FBO
+  // problems) is silently discarded and the window looks inexplicable.
+  // RUST_LOG overrides the default, matching the server binary's behavior.
+  let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+  tracing_subscriber::fmt()
+    .with_env_filter(filter)
+    .with_target(true)
+    .with_thread_ids(false)
+    .init();
+
   let args = Args::parse();
   let config =
     livelink::config::ConfigLoader::with_base_path(&args.config_dir).load();

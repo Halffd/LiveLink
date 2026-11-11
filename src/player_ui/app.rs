@@ -1624,6 +1624,32 @@ impl PlayerApp {
         self.theme_applied = true;
     }
 
+    /// Bar spacing tuned for a TV-scale overlay. The default egui spacing
+    /// packs a 16-control bar into a clump at tiny sizes; the overlay also
+    /// consumes `style.spacing` the moment it is applied, so this runs on
+    /// every frame rather than once at startup.
+    fn apply_controls_style(&self, ctx: &egui::Context) {
+        let mut style = (*ctx.style()).clone();
+        let scale = self.settings.font_scale.max(0.25);
+        for text_style in [
+            egui::TextStyle::Body,
+            egui::TextStyle::Button,
+            egui::TextStyle::Small,
+            egui::TextStyle::Monospace,
+        ] {
+            if let Some(font) = style.text_styles.get_mut(&text_style) {
+                font.size = (font.size * scale).max(14.0);
+            }
+        }
+        // Groups of controls need visible gaps; egui's defaults assume a
+        // dense tool UI, not a floating video bar.
+        style.spacing.item_spacing = egui::vec2(14.0 * scale, 8.0 * scale);
+        style.spacing.button_padding = egui::vec2(10.0 * scale, 6.0 * scale);
+        style.spacing.interact_size = egui::vec2(0.0, 34.0 * scale);
+        style.spacing.menu_margin = egui::Margin::same(10.0);
+        ctx.set_style(style);
+    }
+
     fn apply_viewport_settings(&self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(
             !self.settings.borderless,
@@ -1782,6 +1808,8 @@ impl PlayerApp {
                 });
         }
 
+        // Style must apply before the bar is laid out this frame.
+        self.apply_controls_style(ctx);
         let show_controls = self.settings.controls_always()
             || self.settings_open
             || (self.settings.controls_auto() && self.pointer_recently_moved(ctx));
@@ -1862,6 +1890,10 @@ impl PlayerApp {
                     .rounding(10.0)
                     .inner_margin(egui::Margin::symmetric(14.0, 8.0))
                     .show(ui, |ui| {
+                        // The bar is grouped by what a thumb reaches for:
+                        // transport, then position, then sound, then panels.
+                        // Without the grouping the 16 controls read as one
+                        // clump, especially at TV distance.
                         ui.horizontal(|ui| {
                             if ui.button("⏮").clicked() {
                                 self.navigate(-1);
@@ -1896,6 +1928,8 @@ impl PlayerApp {
                                 self.navigate(1);
                             }
 
+                            // End of the transport group; the position group
+                            // (seek / time / track pickers) starts here.
                             if self.settings.show_progress && playing {
                                 let (mut t, dur) = self
                                     .mpv
@@ -1963,6 +1997,8 @@ impl PlayerApp {
                                 }
                             }
 
+                            // End of the position group; the audio group
+                            // (mute / volume / speed) starts here.
                             let mut save_volume = false;
                             if let Some(mpv) = &mut self.mpv {
                                 if ui.button(if mpv.muted() { "🔇" } else { "🔊" }).clicked() {
@@ -2004,6 +2040,8 @@ impl PlayerApp {
                                 self.save_settings();
                             }
 
+                            // End of the audio group; the panel toggles and
+                            // window controls start here.
                             if ui.button("📖").on_hover_text("Reading (r)").clicked() {
                                 self.reading_open = !self.reading_open;
                             }
@@ -2449,10 +2487,6 @@ impl eframe::App for PlayerApp {
             self.apply_theme(ctx);
             self.apply_viewport_settings(ctx);
         }
-        // Apply a requested maximize only after the surface exists: the
-        // builder-level maximize can land on a 0x0 viewport and leave the
-        // window permanently black.
-        super::apply_pending_maximize(ctx);
 
         self.drain_commands(ctx);
         while let Ok(result) = self.post_rx.try_recv() {
