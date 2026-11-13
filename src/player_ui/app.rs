@@ -1386,6 +1386,17 @@ impl PlayerApp {
                 "container reports video stream but mpv cannot decode (missing codec parameters)"
             );
             self.video_warning = Some(message);
+        } else if state.has_video_track {
+            // Positive confirmation for diagnostics: mpv has video and is
+            // reporting a decoded frame, so a remaining black window is in
+            // the GL path (texture/FBO), not the decode path.
+            tracing::info!(
+                source = %self.current_source,
+                format = %state.format,
+                width = state.width,
+                height = state.height,
+                "media decoded: mpv is producing video frames"
+            );
         }
     }
 
