@@ -331,6 +331,16 @@ impl PlayerApp {
             app.channels_rx = Some(rx);
         }
         app.apply_sub_settings();
+        // A window launched with media on the command line (positional arg,
+        // --playlist, --dir) must actually start it. Nothing else kicks off
+        // the initial playlist: `load_current` otherwise runs only on a
+        // whisper-panel click, a local advance, or the server's "play"
+        // command, so a standalone `lvp <url>` would open a black window
+        // that never loads the file, emits no mpv events, and never even
+        // reaches the decode check.
+        if !app.playlist.is_empty() {
+            app.load_current();
+        }
         app
     }
 
