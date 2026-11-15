@@ -795,11 +795,16 @@ impl MpvVideo {
                     tracing::error!(?status, "video FBO incomplete before render - staying black");
                 }
             }
+            // FlipY must be false: egui samples this texture with its UV
+            // origin at the top, and mpv's frame already comes out in that
+            // orientation once drawn into the FBO. Passing true drew every
+            // frame upside down (verified: a red-top/blue-bottom clip showed
+            // red at the bottom of the window).
             let result = self.rc.render::<()>(
                 self.fbo.0.get() as i32,
                 self.width as i32,
                 self.height as i32,
-                true,
+                false,
             );
             unsafe {
                 gl.bind_framebuffer(glow::FRAMEBUFFER, None);
