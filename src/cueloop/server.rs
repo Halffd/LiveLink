@@ -228,7 +228,7 @@ async fn get_captions(
     let kind = query
         .kind
         .as_deref()
-        .and_then(CaptionKind::from_str)
+        .and_then(CaptionKind::parse)
         .unwrap_or(CaptionKind::Auto);
     match state.cache.get_caption(&hash, &language, kind) {
         Ok(Some(caption)) => (StatusCode::OK, Json(serde_json::json!({"caption": caption}))),
@@ -250,7 +250,7 @@ async fn store_caption(
     Path(hash): Path<String>,
     Json(request): Json<StoreCaptionRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    let kind = CaptionKind::from_str(&request.kind).unwrap_or(CaptionKind::Auto);
+    let kind = CaptionKind::parse(&request.kind).unwrap_or(CaptionKind::Auto);
     let stream = Stream {
         hash: hash.clone(),
         url: request.url.clone().unwrap_or_default(),
@@ -299,7 +299,7 @@ async fn caption_exists(
     let kind = query
         .kind
         .as_deref()
-        .and_then(CaptionKind::from_str)
+        .and_then(CaptionKind::parse)
         .unwrap_or(CaptionKind::Auto);
     match state.cache.has_caption(&hash, &language, kind) {
         Ok(exists) => (StatusCode::OK, Json(serde_json::json!({"exists": exists}))),
@@ -373,18 +373,19 @@ mod tests {
     #[tokio::test]
     async fn pin_and_skip() {
         let state = state();
-        let mut queue = state.queue.lock().unwrap();
-        let entry = queue.enqueue(
-            StreamSource {
-                url: "file:///a.mp4".to_string(),
-                ..Default::default()
-            },
-            None,
-            None,
-            0,
-        );
-        let id = entry.id;
-        drop(queue);
+        let id = {
+            let mut queue = state.queue.lock().unwrap();
+            let entry = queue.enqueue(
+                StreamSource {
+                    url: "file:///a.mp4".to_string(),
+                    ..Default::default()
+                },
+                None,
+                None,
+                0,
+            );
+            entry.id
+        };
 
         let app = router(state);
         let response = app

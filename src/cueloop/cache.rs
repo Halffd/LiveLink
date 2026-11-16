@@ -38,7 +38,7 @@ impl CaptionKind {
         }
     }
 
-    pub fn from_str(value: &str) -> Option<Self> {
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "auto" => Some(CaptionKind::Auto),
             "human" => Some(CaptionKind::Human),
@@ -120,9 +120,8 @@ impl CaptionCache {
 
     fn apply_schema(&self) -> Result<(), String> {
         let conn = self.conn.lock().expect("cache lock");
-        conn
-            .execute_batch(
-                "PRAGMA journal_mode=WAL;
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
                  PRAGMA foreign_keys=ON;
 
                  CREATE TABLE IF NOT EXISTS stream (
@@ -155,32 +154,31 @@ impl CaptionCache {
 
                  CREATE INDEX IF NOT EXISTS caption_by_stream
                      ON caption(stream_hash);",
-            )
-            .map_err(|e| format!("apply schema: {e}"))
+        )
+        .map_err(|e| format!("apply schema: {e}"))
     }
 
     /// Insert or update a media item.
     pub fn upsert_stream(&self, stream: &Stream) -> Result<(), String> {
         let conn = self.conn.lock().expect("cache lock");
-        conn
-            .execute(
-                "INSERT INTO stream (hash, url, title, source_type, duration, added_at)
+        conn.execute(
+            "INSERT INTO stream (hash, url, title, source_type, duration, added_at)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(hash) DO UPDATE SET
                      url = excluded.url,
                      title = excluded.title,
                      source_type = excluded.source_type,
                      duration = COALESCE(excluded.duration, stream.duration)",
-                params![
-                    stream.hash,
-                    stream.url,
-                    stream.title,
-                    stream.source_type,
-                    stream.duration,
-                    stream.added_at
-                ],
-            )
-            .map_err(|e| format!("upsert stream: {e}"))?;
+            params![
+                stream.hash,
+                stream.url,
+                stream.title,
+                stream.source_type,
+                stream.duration,
+                stream.added_at
+            ],
+        )
+        .map_err(|e| format!("upsert stream: {e}"))?;
         Ok(())
     }
 
@@ -188,20 +186,19 @@ impl CaptionCache {
     /// with the same (stream, language, kind).
     pub fn put_caption(&self, caption: &Caption) -> Result<i64, String> {
         let conn = self.conn.lock().expect("cache lock");
-        conn
-            .execute(
-                "INSERT INTO caption (stream_hash, language, kind, created_at)
+        conn.execute(
+            "INSERT INTO caption (stream_hash, language, kind, created_at)
                  VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(stream_hash, language, kind) DO UPDATE SET
                      created_at = excluded.created_at",
-                params![
-                    caption.stream_hash,
-                    caption.language,
-                    caption.kind.as_str(),
-                    caption.created_at
-                ],
-            )
-            .map_err(|e| format!("put caption: {e}"))?;
+            params![
+                caption.stream_hash,
+                caption.language,
+                caption.kind.as_str(),
+                caption.created_at
+            ],
+        )
+        .map_err(|e| format!("put caption: {e}"))?;
         let id: i64 = conn
             .query_row(
                 "SELECT id FROM caption
@@ -211,24 +208,22 @@ impl CaptionCache {
             )
             .map_err(|e| format!("read caption id: {e}"))?;
 
-        conn
-            .execute("DELETE FROM line WHERE caption_id = ?1", params![id])
+        conn.execute("DELETE FROM line WHERE caption_id = ?1", params![id])
             .map_err(|e| format!("clear lines: {e}"))?;
         for line in &caption.lines {
-            conn
-                .execute(
-                    "INSERT INTO line (caption_id, idx, start, end, text, translation)
+            conn.execute(
+                "INSERT INTO line (caption_id, idx, start, end, text, translation)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        id,
-                        line.index as i64,
-                        line.start,
-                        line.end,
-                        line.text,
-                        line.translation
-                    ],
-                )
-                .map_err(|e| format!("put line: {e}"))?;
+                params![
+                    id,
+                    line.index as i64,
+                    line.start,
+                    line.end,
+                    line.text,
+                    line.translation
+                ],
+            )
+            .map_err(|e| format!("put line: {e}"))?;
         }
         Ok(id)
     }
@@ -269,7 +264,7 @@ impl CaptionCache {
             id,
             stream_hash,
             language,
-            kind: CaptionKind::from_str(&kind_str).unwrap_or(CaptionKind::Auto),
+            kind: CaptionKind::parse(&kind_str).unwrap_or(CaptionKind::Auto),
             created_at,
             lines,
         }))
@@ -345,7 +340,6 @@ impl CaptionCache {
             added_at: row.get(5).map_err(|e| format!("read added_at: {e}"))?,
         }))
     }
-
 }
 
 /// Read the cues of a caption set through an open connection.

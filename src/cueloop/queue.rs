@@ -82,9 +82,8 @@ impl QueueStore {
             .first()
             .cloned()
             .or_else(|| self.pending.first().cloned())
-            .map(|entry| {
+            .inspect(|entry| {
                 self.remove_entry(entry.id);
-                entry
             })
     }
 
