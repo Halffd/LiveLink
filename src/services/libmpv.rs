@@ -302,6 +302,14 @@ impl MpvVideo {
         })?;
         mpv.set_property("volume", 100i64)?;
 
+        // Ask mpv for its own log. Without this a failed URL surfaces only
+        // as a numeric error code (e.g. Raw(-13) = "loading failed") with no
+        // reason; "info" is the level the command-line player prints.
+        unsafe {
+            let level = CString::new("info").expect("static level has no NUL");
+            libmpv2_sys::mpv_request_log_messages(mpv.ctx.as_ptr(), level.as_ptr());
+        }
+
         let rc = mpv.create_render_context([
             RenderParam::ApiType(RenderParamApiType::OpenGl),
             RenderParam::InitParams(OpenGLInitParams {
@@ -741,6 +749,18 @@ impl MpvVideo {
                 Some(Ok(Event::Shutdown)) => {
                     self.playing = false;
                     events.push(PlayerEvent::Failed);
+                }
+                Some(Ok(Event::LogMessage { prefix, level, text, .. })) => {
+                    // mpv's own diagnostics — yt-dlp failures, codec and
+                    // network errors. Keep their severity so a "loading
+                    // failed" is accompanied by the actual reason.
+                    match level {
+                        "fatal" | "error" => {
+                            tracing::error!(target: "mpv", %prefix, "{}", text)
+                        }
+                        "warn" => tracing::warn!(target: "mpv", %prefix, "{}", text),
+                        _ => tracing::debug!(target: "mpv", %prefix, "{}", text),
+                    }
                 }
                 Some(Ok(_)) => {}
                 Some(Err(err)) => {
