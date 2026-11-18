@@ -8,6 +8,47 @@
 - **Fetch Operations** (`src/core/orchestrator/fetch_ops.rs`) - Multi-platform stream fetching (Holodex, Twitch, YouTube, Kick, Niconico, Bilibili, Facebook)
 - **API Server** (`src/api/`) - Axum-based HTTP API server
 
+## Also (see docs/ARCHITECTURE.md for the full map)
+
+### Player window backend (`player_type: "embedded"`)
+- **Player windows** (`src/player_ui/`, `src/services/libmpv.rs`) - one `lvp`
+  process per screen; libmpv renders each frame into an FBO that is uploaded
+  as an egui texture, with an overlay for controls.
+- **Embedded ops** (`src/core/orchestrator/embedded_ops.rs`) - the server
+  drives those windows: `take_next_stream`, `mark_embedded_playing`, and
+  end reasons (Eof/Stop/Error).
+- **Control ports** (`src/player_ui/control.rs`) - line-delimited JSON over
+  TCP on port `3100 + screen`: `{"cmd":"play"|"pause"|"volume"|"seek"|
+  "sub-add"|...}`. The server forwards stream changes this way and attaches
+  generated subtitles.
+See **[docs/PLAYER_BACKENDS.md](docs/PLAYER_BACKENDS.md)** for which backend
+runs and why the distinction matters (pause/volume/seek behave differently).
+
+### cueloop (learning loop daemon)
+- **Queue** (`src/cueloop/queue.rs`) - FIFO entries; pinned entries jump the
+  queue but keep their relative order. Knows nothing about playback.
+- **Caption cache** (`src/cueloop/cache.rs`) - captions on disk keyed by
+  content hash (SQLite: `stream`, `caption`, `line`; `line` carries per-cue
+  translations and word timings). Captions are produced once and reused.
+- **Source handlers** (`src/cueloop/sources.rs`) - `SourceHandler` trait:
+  resolve a queue entry to a playable URL (+ duration, existing subs, or
+  "needs transcription"). A new source type is one handler.
+- **Daemon API** (`src/cueloop/server.rs`) - its own HTTP socket: `/queue`,
+  `/queue/next`, `/queue/reorder`, `/queue/:id/pin`, `/queue/:id`,
+  `/captions/:hash`, `/captions/:hash/exists`. Run via `cueloopd`.
+
+### Language path
+- **Shared whisper API** (`src/services/whisper_api.rs`) - the `.whisper-subs`
+  URL paths, the `POST /transcribe` body, and response decoding. Used by both
+  the server worker and the player panel so they cannot diverge.
+- **Transcript worker** (`src/services/transcript.rs`) - on stream start:
+  submit, poll, stream the growing `.srt` into the cache, and attach it to the
+  screen's player window over its control port. mpv reloads changed subtitle
+  files, so captions update live.
+- **Learning features** (`src/player_ui/`) - `whisper_subs.rs` (panel +
+  monitor thread), `reading.rs` (furigana/pinyin), `srs.rs` (SRS notes),
+  `subtitle.rs` (overlay, modes, delays).
+
 ## Key Services
 1. **Orchestrator**
    - Manages screen states (Idle, Starting, Playing, Error)

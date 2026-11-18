@@ -1,350 +1,170 @@
 # Architecture Overview
 
-## System Architecture
+LiveLink is a **personal TV**: it decides what to play next and shows it,
+while captions are captured and reused for language learning. This document
+describes what is actually in the tree, not a target state.
+
+Read [`PLAYER_BACKENDS.md`](PLAYER_BACKENDS.md) for the two ways pictures are
+shown and how the server talks to them — that distinction explains most
+questions about this codebase.
+
+## Layers
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              LiveLink Server                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────────┐  │
-│  │   Orchestrator   │    │   QueueService   │    │     PlayerService    │  │
-│  │   (Central Hub)  │    │   (Per-Screen)   │    │  (MPV/Streamlink)    │  │
-│  └────────┬─────────┘    └────────┬────────┘    └──────────┬───────────┘  │
-│           │                       │                        │              │
-│           ▼                       ▼                        ▼              │
-│  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │                     Fetch Operations                                 │  │
-│  │  ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌───────┐ ┌───────┐        │  │
-│  │  │ Holodex  │ │ Twitch  │ │ YouTube  │ │ Kick  │ │ ...   │        │  │
-│  │  └──────────┘ └─────────┘ └──────────┘ └───────┘ └───────┘        │  │
-│  └─────────────────────────────────────────────────────────────────────┘  │
-│           │                                                            │
-│           ▼                                                            │
-│  ┌─────────────────────────────────────────────────────────────────────┐  │
-│  │                    Network Monitor                                   │  │
-│  └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────── LiveLink (one process) ────────────────────────┐
+│                                                                         │
+│  Sources        Orchestrator          Players          cueloop daemon   │
+│  ┌────────┐     ┌──────────────┐      ┌───────────┐   ┌─────────────┐  │
+│  │holodex │     │ screen state │      │subprocess │   │ FIFO queue  │  │
+│  │twitch  │────▶│ queues       │────▶ │ mpv       │   │ (with pins) │  │
+│  │youtube │     │ watched      │      ├───────────┤   ├─────────────┤  │
+│  │kick    │     │ fetch rules  │      │player     │   │ caption     │  │
+│  │niconico│     │ per-screen   │      │window     │   │ cache       │  │
+│  │bilibili│     │ locks        │      │(embedded) │   │ (SQLite)    │  │
+│  │facebook│     └──────────────┘      └───────────┘   ├─────────────┤  │
+│  └────────┘            │                              │ source      │  │
+│                       │ language path                │ handlers    │  │
+│                       ▼                              └─────────────┘  │
+│              ┌──────────────────┐                    ↑ same socket API │
+│              │ transcript worker│─── sub-add ──▶ player window         │
+│              │ whisper panel    │                    └─────────────────┘ │
+│              │ reading / SRS    │                                       │
+│              └──────────────────┘                                       │
+│                                                                         │
+│  Control: CLI (`src/cli/`) · HTTP API (`src/api/`) · control ports      │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Core Components
+## Layer responsibilities
 
-### 1. Orchestrator (`src/core/orchestrator/`)
+### Sources — `src/services/*.rs` (except the player files)
 
-Central coordinator managing all subsystems.
+Adapters that answer "what streams exist?" and "what URL plays this?":
 
-**Responsibilities:**
-- Screen lifecycle management
-- Stream scheduling and queue coordination
-- Process exit handling
-- Network recovery
-- Auto-refresh and watched cleanup
+| Module | Notes |
+|---|---|
+| `holodex.rs` | VTuber orgs, channels, live streams |
+| `twitch.rs` | Helix API, favorites, top streams |
+| `youtube.rs` | Data API v3, RSS fallback |
+| `kick.rs`, `niconico.rs`, `bilibili.rs`, `facebook.rs` | live streams |
+| `fallback.rs` | static streams when APIs fail |
+| `network.rs` | connectivity monitor + recovery events |
+| `transcript.rs` | transcription **worker** (see language path) |
+| `player.rs`, `mpv.rs` | subprocess players (see `PLAYER_BACKENDS.md`) |
+| `libmpv.rs` | embedded player (see `PLAYER_BACKENDS.md`) |
+| `whisper_api.rs` | shared `.whisper-subs` HTTP surface (see language path) |
 
-**Key Files:**
-- `mod.rs` - Main orchestrator, initialization, signal handling
-- `stream_ops.rs` - Stream lifecycle (start/stop/exit handling)
-- `queue_ops.rs` - Queue management
-- `fetch_ops.rs` - Stream fetching from all platforms
-- `state_ops.rs` - Screen state, filters, sorting
-- `lock_ops.rs` - Per-screen mutex locks
-- `recovery_ops.rs` - Network recovery
+### Orchestrator — `src/core/orchestrator/`
 
-### 2. QueueService (`src/queue/`)
+Central coordinator. Holds screen state and queues, and is the only thing
+allowed to change them.
 
-Per-screen stream queues with watched tracking.
+| File | Responsibility |
+|---|---|
+| `mod.rs` | init, config, stream-change events, `window_playback()` |
+| `stream_ops.rs` | stream lifecycle (start/stop/exit handling) |
+| `queue_ops.rs` | queue mutation |
+| `fetch_ops.rs` | multi-platform fetching, filters, sorting |
+| `state_ops.rs` | screen state, filters, sorting view |
+| `lock_ops.rs` | **per-screen locks** |
+| `recovery_ops.rs` | recovery after network flapping |
+| `player_ops.rs` | player commands, forwarded to windows in embedded mode |
+| `embedded_ops.rs` | driving a **player window** (take-next, mark-playing, end reasons) |
+| `query_ops.rs`, `channel_ops.rs`, `clone_impl.rs` | query joins, channel ops, cloning |
 
-**Features:**
-- Per-screen queues with priority ordering
-- Watched history with timestamps
-- Sorting by favorites, viewers, priority
-- Watched cleanup with TTL
-- Soft-skip detection
+`src/core/state.rs` holds `ScreenState`/`StreamInfo`/`StreamState`;
+`src/queue/queue.rs` is `QueueService` (per-screen queues + watched history).
 
-**Key Files:**
-- `queue.rs` - Queue implementation, sorting, watched tracking
+### cueloop — `src/cueloop/`
 
-### 3. PlayerService (`src/services/player.rs`)
+A **separable daemon** (same code, own HTTP socket) for the newer learning
+loop. Three parts:
 
-Manages MPV/Streamlink/VLC processes.
+- `queue.rs` — FIFO entries, **pinned** entries jump but keep relative order.
+  Knows nothing about playback.
+- `cache.rs` — captions on disk keyed by content hash (SQLite, 3 tables:
+  `stream`, `caption`, `line`; `line` already carries per-cue translations
+  and word-level timings).
+- `sources.rs` — a `SourceHandler` trait: resolve an entry to a URL (+
+  duration, existing subs, or "needs transcription"). **Adding a source type
+  means adding one handler**, not touching queue or player.
+- `server.rs` — routes: `/health`, `/queue` (get/post), `/queue/next`,
+  `/queue/reorder`, `/queue/:id/pin`, `/queue/:id`, `/captions/:hash`,
+  `/captions/:hash/exists`.
 
-**Features:**
-- Fork-based MPV spawning with kill_on_drop
-- IPC communication via Unix sockets
-- Wait thread (100ms polling) for exit detection
-- Exit callback with actual playback time
-- Race condition protection
+`src/bin/cueloopd.rs` runs it standalone.
 
-**Key Files:**
-- `player.rs` - PlayerService, process management
-- `mpv.rs` - MpvController, MpvInstance, IPC
+### The language path
 
-### 4. NetworkMonitor (`src/services/network.rs`)
+Captions are produced once and reused forever ("the second viewing is
+instant"). Two clients, one shared HTTP surface:
 
-Monitors network connectivity.
+- `src/services/whisper_api.rs` — the shared `.whisper-subs` surface:
+  `paths`, `transcribe_body`, and response decoding. Both callers use these,
+  so they cannot drift apart.
+- `src/services/transcript.rs` — server-side worker: on stream start it
+  submits, polls, streams the growing `.srt` into the caption cache, and
+  attaches it to the screen's **player window** over its control port
+  (`{"cmd":"sub-add","url":"<file>"}`). mpv reloads changed subtitle files,
+  so live-updating captions need no player-specific code.
+- `src/player_ui/whisper_subs.rs` — the player-window panel client
+  (library/channels/live/subtitles) plus a background monitor thread.
 
-**Features:**
-- Periodic connectivity checks
-- Network state events (Online/Offline)
-- Automatic recovery on restore
+Learning features live in the player window: `reading.rs` (furigana and
+pinyin annotation), `srs.rs` (SRS note building), `subtitle.rs` (overlay,
+modes, delays).
 
-### 5. Platform Services (`src/services/`)
+## Control surfaces
 
-| Service | Platform | Key Features |
-|---------|----------|--------------|
-| `holodex.rs` | Holodex | VTuber orgs, channels, live streams |
-| `twitch.rs` | Twitch | Helix API, favorites, top streams |
-| `youtube.rs` | YouTube | Data API v3, RSS fallback, categories |
-| `kick.rs` | Kick | Live streams |
-| `niconico.rs` | Niconico | Live streams |
-| `bilibili.rs` | Bilibili | Live streams |
-| `facebook.rs` | Facebook | Live streams |
-| `fallback.rs` | Fallback | Static streams when APIs fail |
+| Surface | Code | Notes |
+|---|---|---|
+| CLI | `src/cli/` | `livelink ...` |
+| HTTP API | `src/api/` | axum, see `docs/API.md` |
+| Player control ports | `src/player_ui/control.rs` | JSON lines over TCP, `3100 + screen` |
+| cueloop socket | `src/cueloop/server.rs` | the daemon's own client API |
 
-### 6. API Server (`src/api/`)
+## Concurrency
 
-Axum-based HTTP server.
+| Resource | Lock | Scope |
+|---|---|---|
+| Screen state | `Arc<Mutex<()>>` | per screen (`lock_ops.rs`) |
+| Queue | `Arc<Mutex<QueueService>>` | global |
+| Player instances | `DashMap` | per (screen, instance) |
+| MPV instance | `Mutex` | per controller |
+| Caption cache | `rusqlite` connection in a `Mutex` | global |
 
-**Endpoints:**
-- `/health` - Health check
-- `/status` - Screen states, active count
-- `/streams` - Cached streams by platform
-- `/favorites` - Favorite channels
-- `/watched` - Watched history
-- `/queues` - Queue info
-- `/stream/start|stop|stop-all` - Stream control
-- `/queue/add|clear` - Queue management
-- `/screen/enable|disable|toggle` - Screen control
-- `/query` - Search streams
-- `/refresh` - Force refresh
-- `/save` - Save config
+Tokio for async I/O, `mpsc`/`broadcast` for inter-task events,
+`spawn_blocking` for blocking MPV calls.
 
-## Data Flow
-
-### Stream Start Flow
-
-```
-1. CLI/API → Orchestrator.start_stream(screen)
-2. Orchestrator → acquire screen lock
-3. Orchestrator → check active stream count
-4. Orchestrator → dequeue next stream from QueueService
-5. Orchestrator → update ScreenState to Starting
-6. Orchestrator → spawn PlayerService.start()
-6. PlayerService → MpvController.play()
-7. MpvController → fork() + exec mpv with IPC
-8. MpvController → spawn wait thread (100ms polling)
-9. MpvController → on exit: send ProcessExit via mpsc
-10. Orchestrator.exit_listener → handle_process_exit()
-11. Orchestrator → determine exit type (soft-skip/crash/normal)
-12. Orchestrator → update state, mark watched, start next
-```
-
-### Stream Fetch Flow
-
-```
-1. Timer/Event → Orchestrator.refresh_all_queues()
-2. Orchestrator → FetchOperations.fetch_all_streams_internal()
-3. FetchOps → HolodexService.get_live_streams()
-4. FetchOps → TwitchService.get_live_streams()
-4. FetchOps → YouTubeService.get_live_streams()
-5. FetchOps → apply_filters() → filter by platform, members, rules
-6. FetchOps → sort_streams_by_favorites()
-7. Orchestrator → QueueService.set_queue(screen, streams)
-8. Orchestrator → if screen idle & auto_start → start_stream()
-```
-
-### Network Recovery Flow
-
-```
-1. NetworkMonitor → detects Online
-2. NetworkMonitor → sends NetworkEvent::Online
-3. Orchestrator.network_listener → recover_on_network_restore()
-4. Orchestrator → refresh_all_queues()
-5. Orchestrator → for idle screens with auto_start → start_stream()
-```
-
-## Concurrency Model
-
-### Locks
-
-| Resource | Lock Type | Scope |
-|----------|-----------|-------|
-| Screen State | `Arc<Mutex<()>>` | Per-screen |
-| Queue | `Arc<Mutex<QueueService>>` | Global |
-| Player Instances | `DashMap` | Per (screen, instance) |
-| MPV Instance | `Mutex<MpvInstance>` | Per controller |
-| Network State | `Arc<Mutex<NetworkState>>` | Global |
-
-### Async Patterns
-
-- **Tokio runtime** for async I/O
-- **mpsc channels** for inter-task communication
-- **spawn_blocking** for blocking MPV operations
-- **Tokio mutex** for async locks
-- **Std mutex** for sync locks (short critical sections)
-
-### Thread Safety
-
-- `Arc<Orchestrator>` shared across tasks
-- `DashMap` for concurrent instance access
-- `Arc<Mutex>` for MPV instance
-- `mpsc` channels for exit events
-
-## Configuration System
-
-### Config Loader (`src/config/mod.rs`)
-
-```rust
-ConfigLoader::with_base_path("./config")
-    .load()  // Loads all JSON files
-```
-
-**Files Loaded:**
-- `config.json` - Main config (API keys, paths)
-- `player.json` - Player settings, screens, filters
-- `mpv.json` - MPV options
-- `streamlink.json` - Streamlink settings
-- `vlc.json` - VLC settings
-- `filters.json` - Filter rules
-- `favorites.json` - Favorite channels
-- `streams.json` - Stream sources
-
-### Configuration Merging
-
-1. Load JSON files
-2. Override with environment variables
-3. Apply defaults for missing values
-4. Validate required fields
-
-## State Management
-
-### ScreenState (`src/core/state.rs`)
-
-```rust
-pub struct ScreenState {
-    pub screen: u32,
-    pub state: StreamState,  // Idle, Starting, Playing, Error, Stopping
-    pub stream: Option<StreamInfo>,
-    pub enabled: bool,
-    pub instance_id: u32,
-}
-```
-
-### StreamInfo
-
-```rust
-pub struct StreamInfo {
-    pub url: String,
-    pub title: Option<String>,
-    pub platform: Platform,
-    pub screen: u32,
-    pub quality: String,
-    pub volume: u8,
-    pub start_time: Option<Instant>,
-}
-```
-
-### StreamState Enum
-
-```rust
-pub enum StreamState {
-    Idle,
-    Starting,
-    Playing,
-    Error,
-    Stopping,
-}
-```
-
-## Process Exit Handling
-
-### Exit Types
+## Exit handling
 
 | Type | Condition | Action |
-|------|-----------|--------|
-| Soft Skip | `playback_time < 2s` | Mark watched, start next |
-| Crash | `2s < playback_time < 3s` | Mark Error, stay in Error |
-| Normal End | `playback_time >= 3s` | Mark watched, start next |
+|---|---|---|
+| Soft skip | playback < 2s | mark watched, start next |
+| Crash | 2s–3s | mark Error, stop retrying that stream |
+| Normal end | ≥ 3s | mark watched, start next |
 
-### Exit Detection
+Exit is detected by a wait thread (100 ms polling) and delivered over an
+`mpsc` channel to `stream_ops.rs`.
 
-1. **Wait Thread** (100ms polling) - Detects process exit
-2. **Exit Callback** - Captures actual playback time
-3. **mpsc Channel** - Sends ProcessExit to orchestrator
-5. **Exit Listener** - Processes exit, determines type
-6. **Handle Process Exit** - Updates state, starts next
+## Configuration
 
-## Filtering Pipeline
+`ConfigLoader::with_base_path(dir).load()` reads `config.json`,
+`player.json` (incl. `screens`, `player_type`), `mpv.json`,
+`streamlink.json`, `vlc.json`, `filters.json`, `favorites.json`,
+`streams.json`, `transcript.json`, with environment overrides.
 
-```
-Raw Streams → apply_filters() → 
-  1. Members-only filter
-  2. Channel name exclusion (exact + regex)
-  3. Title pattern exclusion (exact + regex)
-  4. Platform exclusion
-  5. Custom rules (channel/title with regex/ignore_case)
-  6. ChannelFilter (name, english_name, aliases)
-  7. Sort by favorites → priority → viewers
-```
+`player_type` chooses the backend: `mpv`/`streamlink`/`vlc` spawn
+subprocesses, `embedded` runs player windows.
 
-## Testing Architecture
+## Testing
 
-### Unit Tests (`src/core_test.rs`)
+`cargo test` — unit and integration tests (`src/core_test.rs`, mock player,
+plus per-module tests). Roughly 100 test functions across the tree.
 
-- State operations
-- Queue operations
-- Filter matching
-- Sort logic
-- Exit handling (mock player)
-- Integration tests with mock player
+## Known asymmetries / rough edges
 
-### Mock Player
-
-```rust
-struct MockPlayer {
-    instances: Arc<Mutex<HashMap<(u32,u32), MockInstance>>>,
-    exit_sender: mpsc::Sender<ProcessExit>,
-    should_fail_start: Arc<Mutex<bool>>,
-}
-```
-
-### Running Tests
-
-```bash
-cargo test                    # All tests
-cargo test mock_player_tests  # Mock player tests only
-cargo test -- --test-threads=1  # Sequential
-```
-
-## Performance Considerations
-
-1. **DashMap** for concurrent instance access
-2. **Arc<Mutex>** for shared state
-3. **Tokio spawn** for async tasks
-4. **spawn_blocking** for MPV operations
-5. **Quota caching** for YouTube categories
-6. **Batch API calls** where possible
-7. **Lazy loading** for heavy resources
-
-## Security Considerations
-
-1. **API keys** in environment variables, not config files
-2. **No authentication** on API (local use assumed)
-3. **IPC sockets** in `/tmp` with random names
-4. **Fork + setsid** for process isolation
-5. **Signal handling** for graceful shutdown
-6. **Config validation** on load
-
-## Scaling Considerations
-
-Current limits:
-- Max 10 screens (hardcoded in some places)
-- Max 4 concurrent streams (configurable)
-- Per-screen queue limit: 1000 items
-- API quota: 10,000/day YouTube
-
-Future improvements:
-- Horizontal scaling via message queue
-- Distributed queue
-- Redis for shared state
-- WebSocket for real-time updates
+- **Docs and code drifted**: the language path, `cueloop`, and the embedded
+  player backend post-date most of this text. They are described here now.
+- **No web or TUI front end**: control is CLI, HTTP API, and control ports.
+- `player_type` is global per run, not per screen.

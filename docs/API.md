@@ -419,6 +419,38 @@ Forces refresh of all queues.
 
 ---
 
+### Queue Transcription
+
+```
+POST /transcribe
+Content-Type: application/json
+
+{
+  "screen": 1,
+  "url": "https://youtube.com/watch?v=..."
+}
+```
+
+Submits a URL for transcription now, out-of-band with playback. The
+transcript worker polls the result, writes the growing `.srt` into the
+configured transcript directory, and attaches it to that screen's player
+window (`{"cmd":"sub-add", ...}` over the control port) when the window is
+listening.
+
+**Response (queued):**
+```json
+{ "success": true, "message": "transcription queued" }
+```
+
+**Response (unavailable):**
+```json
+{ "success": false, "error": "transcription not configured" }
+```
+
+`503 SERVICE_UNAVAILABLE` when the transcription worker has stopped.
+
+---
+
 ### Save Config
 
 ```

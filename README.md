@@ -12,7 +12,7 @@ A high-performance, race-condition-free streaming manager for Twitch, YouTube, a
 
 ```bash
 git clone https://github.com/yourrepo/LiveLink
-cd LiveLink/rust
+cd LiveLink
 cargo build --release
 ```
 
