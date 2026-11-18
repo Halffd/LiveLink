@@ -78,6 +78,8 @@ pub enum Commands {
   Ochs,
   Diagnostics,
   Ui,
+  /// Live status dashboard: every screen and its queue at a glance.
+  Tui,
   PlayerUi(PlayerUiCommand),
   Subs(SubsCommand),
   Config(ConfigCommand),
@@ -1000,6 +1002,56 @@ Commands::Diagnostics => {
     println!("Primary screen state: {:?}", state);
     println!("Network: online");
     println!("Player service: running");
+  }
+  Commands::Tui => {
+    // A read-only dashboard over the live orchestrator: every screen, what
+    // it is playing, and what is next in its queue. Read-only on purpose —
+    // it never mutates state, so it is safe to run next to a live server.
+    let queue_arc = orchestrator.get_queue();
+    println!("LiveLink dashboard (read-only) — Ctrl-C to exit");
+    let mut tick = 0u64;
+    loop {
+      let screens: Vec<crate::config::ScreenConfig> =
+        orchestrator.config.screens.clone();
+      tick += 1;
+      print!("\x1B[2J\x1B[1;1H"); // clear screen, home
+      println!("\u{1b}[36mLiveLink\u{1b}[0m  screens, what is playing, what is next");
+      println!("{}", "─".repeat(78));
+      if screens.is_empty() {
+        println!("  no screens have queues yet (run `livelink refresh` first)");
+      }
+      for cfg in &screens {
+        let state = orchestrator.get_state(cfg.screen).await;
+        let stream = orchestrator.current_channel(cfg.screen).await;
+        let next = {
+          let queue = queue_arc.lock().await;
+          queue
+            .get_queue(cfg.screen)
+            .and_then(|q| q.sources().first().cloned())
+        };
+        let (icon, color) = match state {
+          Some(crate::core::state::StreamState::Playing) => ("▶", "\u{1b}[32m"),
+          Some(crate::core::state::StreamState::Starting) => ("…", "\u{1b}[33m"),
+          Some(crate::core::state::StreamState::Error) => ("✗", "\u{1b}[31m"),
+          _ => ("·", "\u{1b}[90m"),
+        };
+        let now = stream
+          .map(|s| s.title.unwrap_or_else(|| s.url.clone()))
+          .unwrap_or_else(|| "nothing".to_string());
+        let next = next
+          .map(|s| s.title.unwrap_or(s.url.clone()))
+          .unwrap_or_else(|| "—".to_string());
+        println!(
+          "{color}{icon}\u{1b}[0m screen \u{1b}[1m{}\u{1b}[0m  {now}\n      next: {next}",
+          cfg.screen
+        );
+      }
+      println!(
+        "\n\u{1b}[90mrefresh {tick} · active {} · Ctrl-C to exit\u{1b}[0m",
+        orchestrator.count_active_streams()
+      );
+      tokio::time::sleep(Duration::from_secs(2)).await;
+    }
   }
   Commands::Ui => {
     println!("Launching UI...");
