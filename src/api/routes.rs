@@ -1,7 +1,7 @@
 use axum::{
   extract::{Path, State},
-  http::StatusCode,
-  response::Json,
+  http::{header, StatusCode},
+  response::{IntoResponse, Json, Response},
   routing::{get, post},
   Router,
 };
@@ -547,6 +547,23 @@ async fn query_streams(
   }
 }
 
+/// The web front end: one page plus one script, both embedded.
+async fn ui_index() -> Response {
+  (
+    [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+    crate::api::assets::INDEX_HTML,
+  )
+    .into_response()
+}
+
+async fn ui_app_js() -> Response {
+  (
+    [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+    crate::api::assets::APP_JS,
+  )
+    .into_response()
+}
+
 pub fn create_router(
     orchestrator: Arc<Orchestrator>,
     transcribe_trigger: Option<tokio::sync::mpsc::UnboundedSender<(u32, String)>>,
@@ -554,6 +571,10 @@ pub fn create_router(
   let app_state = AppState { orchestrator, transcribe_trigger };
 
   Router::new()
+    // The web front end, served by the same server as the API it drives.
+    .route("/", get(ui_index))
+    .route("/app.js", get(ui_app_js))
+    .route("/index.html", get(ui_index))
     .route("/status", get(get_status))
     .route("/streams", get(get_streams))
     .route("/favorites", get(get_favorites))

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LiveLink</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d0f13;
+        --panel: #161a22;
+        --panel-2: #1d2330;
+        --border: #262d3a;
+        --text: #e6e9ef;
+        --muted: #8b93a5;
+        --accent: #4f8cc9;
+        --ok: #4caf7d;
+        --warn: #d9a13b;
+        --err: #d9603f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        background: var(--bg);
+        z-index: 5;
+      }
+      header h1 { font-size: 15px; margin: 0; letter-spacing: 0.04em; }
+      header .spacer { flex: 1; }
+      #status {
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      main { padding: 16px 20px 40px; max-width: 1200px; margin: 0 auto; }
+      h2 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+        margin: 24px 0 10px;
+      }
+      .grid {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .row .title { font-weight: 600; }
+      .grow { flex: 1; }
+      .state {
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .state.playing { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 40%, transparent); }
+      .state.starting { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, transparent); }
+      .state.error { color: var(--err); border-color: color-mix(in oklab, var(--err) 40%, transparent); }
+      .now { font-size: 13px; color: var(--text); min-height: 20px; }
+      .now.none { color: var(--muted); font-style: italic; }
+      .queue { display: flex; flex-direction: column; gap: 4px; }
+      .queue .q {
+        font-size: 12px;
+        color: var(--muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+      button {
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 11px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--panel-2);
+        color: var(--text);
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      select {
+        font: inherit;
+        font-size: 12px;
+        padding: 5px 8px;
+        border-radius: 6px;
+        background: var(--panel-2);
+        color: var(--text);
+        border: 1px solid var(--border);
+      }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th {
+        text-align: left;
+        color: var(--muted);
+        font-weight: 500;
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      td { padding: 6px 8px; border-bottom: 1px solid #1b2130; vertical-align: middle; }
+      td.muted, .muted { color: var(--muted); }
+      .ellipsis { max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #toast {
+        position: fixed;
+        left: 50%;
+        bottom: 22px;
+        transform: translateX(-50%) translateY(20px);
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 14px;
+        font-size: 12px;
+        opacity: 0;
+        transition: opacity 0.18s, transform 0.18s;
+        pointer-events: none;
+        max-width: 80vw;
+      }
+      #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+      #toast.err { border-color: var(--err); }
+      a { color: var(--accent); }
+    </style>
+    </head>
+  <body>
+    <header>
+      <h1>LIVELINK</h1>
+      <span class="spacer"></span>
+      <span id="status">connecting…</span>
+      <button id="refresh">Refresh</button>
+    </header>
+    <main>
+      <h2>Screens</h2>
+      <div id="screens" class="grid"></div>
+      <h2>Streams available</h2>
+      <div id="streams" class="card"></div>
+    </main>
+    <div id="toast" role="status" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
