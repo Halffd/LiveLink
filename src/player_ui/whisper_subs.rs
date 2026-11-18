@@ -48,6 +48,38 @@ impl WhisperSubs {
         resp.json().map_err(|e| format!("bad response: {e}"))
     }
 
+    fn get_text(&self, path: &str) -> Result<Option<String>, String> {
+        let client = Self::client()?;
+        let resp = client
+            .get(format!("{}{path}", self.base))
+            .header("X-API-Key", &self.key)
+            .send()
+            .map_err(|e| format!("server unreachable: {e}"))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(format!("server: {}", resp.status()));
+        }
+        resp.text()
+            .map(Some)
+            .map_err(|e| format!("read: {e}"))
+    }
+
+    fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let client = Self::client()?;
+        let resp = client
+            .post(format!("{}{path}", self.base))
+            .header("X-API-Key", &self.key)
+            .json(body)
+            .send()
+            .map_err(|e| format!("server unreachable: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("server: {}", resp.status()));
+        }
+        resp.json().map_err(|e| format!("bad response: {e}"))
+    }
+
     /// Start a transcription task for `source` (URL or server-visible
     /// path), returning the task id. `engine_prefix` ("whisperx" or empty)
     /// routes the request; VAD gates music/silence; diarization is optional.
@@ -60,29 +92,10 @@ impl WhisperSubs {
         vad: bool,
         diarization: bool,
     ) -> Result<String, String> {
-        let model_name = if engine_prefix.is_empty() {
-            model.to_string()
-        } else {
-            format!("{engine_prefix}:{model}")
-        };
-        let client = Self::client()?;
-        let resp = client
-            .post(format!("{}/transcribe", self.base))
-            .header("X-API-Key", &self.key)
-            .json(&serde_json::json!({
-                "source": source,
-                "model_name": model_name,
-                "vad_filter": vad,
-                "language": language,
-                "diarization": diarization,
-                "run_mpv": false,
-            }))
-            .send()
-            .map_err(|e| format!("server unreachable: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("server: {}", resp.status()));
-        }
-        let decoded: serde_json::Value = resp.json().map_err(|e| format!("bad response: {e}"))?;
+        let body = crate::services::whisper_api::transcribe_body(
+            source, model, engine_prefix, language, vad, diarization,
+        );
+        let decoded = self.post_json(crate::services::whisper_api::paths::TRANSCRIBE, &body)?;
         decoded["task_id"]
             .as_str()
             .map(|s| s.to_string())
@@ -92,7 +105,8 @@ impl WhisperSubs {
     /// Poll one task: (status, progress-line). status is one of the
     /// server's pending|processing|completed|failed.
     pub fn task_status(&self, task_id: &str) -> Result<(String, String), String> {
-        let decoded = self.get_json(&format!("/tasks/{task_id}"))?;
+        let path = crate::services::whisper_api::paths::task(task_id);
+        let decoded = self.get_json(&path)?;
         let status = decoded["status"].as_str().unwrap_or_default().to_string();
         let progress = decoded["progress"].as_str().unwrap_or_default().to_string();
         Ok((status, progress))
@@ -102,55 +116,39 @@ impl WhisperSubs {
     /// task runs). None while the server has not registered the subtitle
     /// path yet.
     pub fn task_subtitles(&self, task_id: &str) -> Result<Option<String>, String> {
-        let client = Self::client()?;
-        let resp = client
-            .get(format!("{}/api/v1/tasks/{task_id}/subtitles", self.base))
-            .header("X-API-Key", &self.key)
-            .send()
-            .map_err(|e| format!("server unreachable: {e}"))?;
-        if resp.status().as_str() == "404 Not Found" || resp.status() == 404 {
-            return Ok(None);
-        }
-        if !resp.status().is_success() {
-            return Err(format!("server: {}", resp.status()));
-        }
-        Ok(Some(resp.text().map_err(|e| format!("read: {e}"))?))
+        let path = crate::services::whisper_api::paths::task_subtitles(task_id);
+        self.get_text(&path)
     }
 
     /// Library entries: {title, channel, has_video, has_audio, urls{...},
     /// source_url} for every finished transcription.
     pub fn library(&self) -> Result<Vec<serde_json::Value>, String> {
-        let decoded = self.get_json("/api/v1/library")?;
-        Ok(list_of(&decoded, "library"))
+        self.list_of(crate::services::whisper_api::paths::LIBRARY, "library")
     }
 
     /// Channel list: {name, transcribed, unfinished}.
     pub fn channels(&self) -> Result<Vec<serde_json::Value>, String> {
-        let decoded = self.get_json("/api/v1/channels")?;
-        Ok(list_of(&decoded, "channels"))
+        self.list_of(crate::services::whisper_api::paths::CHANNELS, "channels")
     }
 
     /// Merged video list for one channel.
     pub fn channel_videos(&self, channel: &str) -> Result<Vec<serde_json::Value>, String> {
-        let encoded = urlencoding::encode(channel).to_string();
-        let decoded = self.get_json(&format!("/api/v1/channels/{encoded}/videos"))?;
-        Ok(list_of(&decoded, "videos"))
+        self.list_of(&crate::services::whisper_api::paths::channel_videos(channel), "videos")
     }
 
     /// Live/running transcription tasks.
     pub fn live_tasks(&self) -> Result<Vec<serde_json::Value>, String> {
-        let decoded = self.get_json("/api/v1/live")?;
-        Ok(list_of(
-            &decoded,
-            if decoded
-                .get("live")
-                .is_some() { "live" } else { "tasks" },
-        ))
+        self.get_json(crate::services::whisper_api::paths::LIVE).map(|decoded| {
+            list_of(
+                &decoded,
+                if decoded.get("live").is_some() { "live" } else { "tasks" },
+            )
+        })
     }
 
     /// Every subtitle file the server kept (the subtitle directory).
     pub fn subtitle_list(&self) -> Result<Vec<serde_json::Value>, String> {
-        let decoded = self.get_json("/subtitles/list")?;
+        let decoded = self.get_json(crate::services::whisper_api::paths::SUBTITLES_LIST)?;
         decoded
             .as_array()
             .cloned()
@@ -159,56 +157,48 @@ impl WhisperSubs {
 
     /// Fetch one subtitle file's content by its server-relative path.
     pub fn subtitle_text(&self, path: &str) -> Result<String, String> {
-        let client = Self::client()?;
-        let resp = client
-            .get(format!("{}/subtitles/{}", self.base, encode_path(path)))
-            .header("X-API-Key", &self.key)
-            .send()
-            .map_err(|e| format!("server unreachable: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("server: {}", resp.status()));
-        }
-        resp.text().map_err(|e| format!("read: {e}"))
+        let path = crate::services::whisper_api::paths::subtitle(path);
+        self.get_text(&path)?
+            .ok_or_else(|| "server: 404".to_string())
     }
 
-    /// Absolute, properly encoded URL for a server-relative link
-    /// ("/api/v1/subs/file?path=chan/Video.srt") — the server emits raw
-    /// path values in query strings and titles contain spaces/brackets.
-    pub fn resolve(&self, rel: &str) -> String {
-        let trimmed = rel.trim_start_matches('/');
-        if trimmed.is_empty() {
-            return self.base.clone();
-        }
-        match trimmed.split_once('?') {
-            None => format!("{}/{}", self.base, encode_path(trimmed)),
-            Some((path, query)) => {
-                let mut params = Vec::new();
-                for pair in query.split('&') {
-                    if let Some((k, v)) = pair.split_once('=') {
-                        params.push(format!(
-                            "{}={}",
-                            urlencoding::encode(k),
-                            urlencoding::encode(v)
-                        ));
-                    }
+    fn list_of(&self, path: &str, key: &str) -> Result<Vec<serde_json::Value>, String> {
+        self.get_json(path).map(|decoded| list_of(&decoded, key))
+    }
+}
+
+/// Absolute, properly encoded URL for a server-relative link ("/api/v1/
+/// subs/file?path=chan/Video.srt") — the server emits raw path values in
+/// query strings and titles contain spaces/brackets.
+///
+/// Free (not a method) so callers building links to hand to mpv do not
+/// need a whole client, and so it never smells like a network call.
+pub fn resolve(base: &str, rel: &str) -> String {
+    let trimmed = rel.trim_start_matches('/');
+    if trimmed.is_empty() {
+        return base.to_string();
+    }
+    let encode = crate::services::whisper_api::paths::encode_path;
+    match trimmed.split_once('?') {
+        None => format!("{base}/{}", encode(trimmed)),
+        Some((path, query)) => {
+            let mut params = Vec::new();
+            for pair in query.split('&') {
+                if let Some((k, v)) = pair.split_once('=') {
+                    params.push(format!(
+                        "{}={}",
+                        crate::services::whisper_api::paths::encode(k),
+                        crate::services::whisper_api::paths::encode(v)
+                    ));
                 }
-                format!("{}/{}?{}", self.base, encode_path(path), params.join("&"))
             }
+            format!("{base}/{}?{}", encode(path), params.join("&"))
         }
     }
 }
 
 fn list_of(value: &serde_json::Value, key: &str) -> Vec<serde_json::Value> {
     value[key].as_array().cloned().unwrap_or_default()
-}
-
-/// Encode a server-relative *path* segment-wise (slashes are separators,
-/// spaces and brackets must be encoded).
-fn encode_path(path: &str) -> String {
-    path.split('/')
-        .map(|seg| urlencoding::encode(seg).to_string())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// Message from the transcription monitor thread to the UI loop.
@@ -222,6 +212,129 @@ pub enum WsEvent {
     Completed,
     /// The task failed with the server's error.
     Failed(String),
+}
+
+/// One request the UI hands to its whisper worker thread. The panel never
+/// performs HTTP itself: paint sends a job here and paints whatever the
+/// previous reply left in the state.
+#[derive(Debug)]
+pub enum WsRequest {
+    /// Fetch a section list (the panel's first view and reload button).
+    Library,
+    Channels {
+        channel: Option<String>,
+    },
+    Live,
+    Subs,
+    /// Fetch one subtitle file's text and adopt it locally.
+    Subtitle {
+        path: String,
+    },
+    /// Submit the currently loaded media for transcription.
+    Transcribe {
+        source: String,
+        engine: String,
+        language: Option<String>,
+        vad: bool,
+        diarization: bool,
+    },
+}
+
+/// The worker's reply to a [`WsRequest`], delivered over an mpsc channel
+/// and applied by the UI loop.
+#[derive(Debug)]
+pub enum WsReply {
+    Library {
+        result: Result<Vec<serde_json::Value>, String>,
+    },
+    Channels {
+        channel: Option<String>,
+        result: Result<Vec<serde_json::Value>, String>,
+    },
+    Live(Result<Vec<serde_json::Value>, String>),
+    Subs(Result<Vec<serde_json::Value>, String>),
+    /// Subtitle text for `path`, already written to a local temp file the
+    /// player adopted, or the error that prevented it.
+    Subtitle {
+        path: String,
+        local: Option<String>,
+        error: Option<String>,
+    },
+    /// Transcription submit outcome. On success the worker has already
+    /// started a monitor for the task and hands its receiver to the UI.
+    Transcribe {
+        result: Result<(String, std::sync::mpsc::Receiver<WsEvent>), String>,
+    },
+}
+
+/// Spawn the panel's worker thread: it owns every blocking HTTP call so the
+/// UI thread never waits on the network.
+pub fn spawn_worker(
+    url: String,
+    key: String,
+    rx: std::sync::mpsc::Receiver<WsRequest>,
+    tx: std::sync::mpsc::Sender<WsReply>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let client = WhisperSubs::new(url, key);
+        while let Ok(request) = rx.recv() {
+            let reply = match request {
+                WsRequest::Library => WsReply::Library {
+                    result: client.library(),
+                },
+                WsRequest::Channels { channel } => WsReply::Channels {
+                    channel: channel.clone(),
+                    result: match channel {
+                        Some(name) => client.channel_videos(&name),
+                        None => client.channels(),
+                    },
+                },
+                WsRequest::Live => WsReply::Live(client.live_tasks()),
+                WsRequest::Subs => WsReply::Subs(client.subtitle_list()),
+                WsRequest::Subtitle { path } => {
+                    let outcome = client.subtitle_text(&path);
+                    WsReply::Subtitle {
+                        error: outcome.as_ref().err().cloned(),
+                        local: outcome.ok().and_then(|text| {
+                            let local = std::env::temp_dir().join(format!(
+                                "livelink-ws-{}.srt",
+                                urlencoding::encode(&path)
+                            ));
+                            std::fs::write(&local, text)
+                                .ok()
+                                .map(|()| local.to_string_lossy().to_string())
+                        }),
+                        path,
+                    }
+                }
+                WsRequest::Transcribe {
+                    source,
+                    engine,
+                    language,
+                    vad,
+                    diarization,
+                } => WsReply::Transcribe {
+                    result: client
+                        .start_transcription(
+                            &source,
+                            "large-v3",
+                            &engine,
+                            language.as_deref(),
+                            vad,
+                            diarization,
+                        )
+                        .map(|task_id| {
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            monitor_task(client.clone(), task_id.clone(), tx);
+                            (task_id, rx)
+                        }),
+                },
+            };
+            if tx.send(reply).is_err() {
+                return; // UI is gone
+            }
+        }
+    })
 }
 
 /// Poll a transcription task in the background, streaming the growing
@@ -304,8 +417,7 @@ mod tests {
 
     #[test]
     fn resolve_encodes_query_values_and_path_segments() {
-        let client = ws();
-        let url = client.resolve("/api/v1/subs/file?path=chan/My Video [x].srt");
+        let url = resolve("http://ws.test", "/api/v1/subs/file?path=chan/My Video [x].srt");
         assert_eq!(
             url,
             "http://ws.test/api/v1/subs/file?path=chan%2FMy%20Video%20%5Bx%5D.srt"
@@ -314,12 +426,12 @@ mod tests {
 
     #[test]
     fn resolve_encodes_path_only_links() {
-        let url = ws().resolve("api/v1/media file.mp4");
+        let url = resolve("http://ws.test", "api/v1/media file.mp4");
         assert_eq!(url, "http://ws.test/api/v1/media%20file.mp4");
     }
 
     #[test]
     fn resolve_handles_empty() {
-        assert_eq!(ws().resolve("/"), "http://ws.test");
+        assert_eq!(resolve("http://ws.test", "/"), "http://ws.test");
     }
 }

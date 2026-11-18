@@ -20,6 +20,7 @@ use tracing::{debug, info, warn};
 use crate::config::TranscriptConfig;
 use crate::core::orchestrator::{Orchestrator, StreamChangeEvent, StreamChangeKind};
 use crate::player_ui::control;
+use crate::services::whisper_api;
 
 /// Poll interval for task status and growing subtitles.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
@@ -119,32 +120,30 @@ impl TranscriptWorker {
             return;
         }
 
-        let response = self
+let response = self
             .request(
                 reqwest::Method::POST,
-                format!("{}/transcribe", self.config.api_url),
+                format!("{}{}", self.config.api_url, whisper_api::paths::TRANSCRIBE),
             )
-            .json(&serde_json::json!({
-                "source": url,
-                "model_name": if self.config.engine.is_empty() {
-                    self.config.model.clone()
+            .json(&whisper_api::transcribe_body(
+                url,
+                &self.config.model,
+                // Engine prefix ("whisperx" or empty) routes the request.
+                &self.config.engine,
+                // Pin the language so code-switched audio keeps one align
+                // model instead of switching mid-stream on detected chunks.
+                // Empty means auto-detect; the server expects null, not "".
+                if self.config.language.is_empty() {
+                    None
                 } else {
-                    format!("{}:{}", self.config.engine, self.config.model)
+                    Some(self.config.language.as_str())
                 },
                 // VAD gating drops music/silence before alignment; without
                 // it WhisperX aligns intro lyrics to wrong beats.
-                "vad_filter": self.config.vad,
-                // Pin the language so code-switched audio keeps one align
-                // model instead of switching mid-stream on detected chunks.
-                "language": if self.config.language.is_empty() {
-                    serde_json::Value::Null
-                } else {
-                    serde_json::json!(self.config.language)
-                },
+                self.config.vad,
                 // Diarization is optional (pyannote, needs HF_TOKEN).
-                "diarization": self.config.diarization,
-                "run_mpv": false,
-            }))
+                self.config.diarization,
+            ))
             .send()
             .await;
         let task_id = match response {
@@ -179,7 +178,7 @@ impl TranscriptWorker {
             let _ = self
                 .request(
                     reqwest::Method::GET,
-                    format!("{}/tasks/{}/cancel", self.config.api_url, task_id),
+                    format!("{}{}", self.config.api_url, whisper_api::paths::task_cancel(&task_id)),
                 )
                 .send()
                 .await;
@@ -203,7 +202,7 @@ impl TranscriptWorker {
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
 
-            let status_url = format!("{}/tasks/{}", self.config.api_url, task_id);
+            let status_url = format!("{}{}", self.config.api_url, whisper_api::paths::task(&task_id));
             let status = match self
                 .request(reqwest::Method::GET, status_url)
                 .send()
@@ -258,7 +257,7 @@ impl TranscriptWorker {
     }
 
     async fn fetch_subtitles(&self, task_id: &str) -> Option<String> {
-        let url = format!("{}/api/v1/tasks/{}/subtitles", self.config.api_url, task_id);
+        let url = format!("{}{}", self.config.api_url, whisper_api::paths::task_subtitles(task_id));
         let response = self.request(reqwest::Method::GET, url).send().await.ok()?;
         if !response.status().is_success() {
             return None;

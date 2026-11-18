@@ -185,6 +185,17 @@ pub struct PlayerApp {
     ws_error: Option<String>,
     /// Receiver for the transcription monitor thread.
     ws_rx: Option<std::sync::mpsc::Receiver<super::whisper_subs::WsEvent>>,
+    /// Request channel to the whisper worker thread; the panel never does
+    /// HTTP itself. `None` until the panel first needs the worker.
+    ws_req_tx: Option<std::sync::mpsc::Sender<super::whisper_subs::WsRequest>>,
+    /// Reply channel from that worker, drained in `update`.
+    ws_reply_rx: Option<std::sync::mpsc::Receiver<super::whisper_subs::WsReply>>,
+    /// Sections already asked for, so a lazy request is not repeated every
+    /// frame while the worker is answering. Reset on reload.
+    ws_requested: [bool; 4],
+    /// The channel whose video list has been requested (the channel-level
+    /// list and the video-level list need separate in-flight guards).
+    ws_videos_requested: Option<String>,
     /// Task status line while transcription runs.
     ws_task_status: Option<String>,
     /// Local temp file the growing subtitles stream into.
@@ -321,6 +332,10 @@ impl PlayerApp {
             ws_subs: None,
             ws_error: None,
             ws_rx: None,
+            ws_req_tx: None,
+            ws_reply_rx: None,
+            ws_requested: [false; 4],
+            ws_videos_requested: None,
             ws_task_status: None,
             ws_live_sub_path: None,
             ws_live_sub_added: false,
@@ -851,12 +866,10 @@ impl PlayerApp {
             self.ws_error = Some("nothing is loaded".to_string());
             return;
         };
-        let client = super::whisper_subs::WhisperSubs::new(
-            self.settings.whisper_subs_url.clone(),
-            self.settings.whisper_subs_key.clone(),
-        );
         // Engine/VAD/language come from the transcript config so the F1
         // panel and the automatic worker submit identical pipelines.
+        // The file is read here (cheap, synchronous) and only the network
+        // call is handed to the worker.
         let transcript_cfg = std::fs::read_to_string(self.config_dir.join("player.json"))
             .ok()
             .and_then(|c| {
@@ -873,24 +886,14 @@ impl PlayerApp {
             });
         let (engine, language, vad, diarization) = transcript_cfg
             .unwrap_or_else(|| ("whisperx".to_string(), None, true, false));
-        let language_ref = language.as_deref();
-        match client.start_transcription(
-            &source,
-            "large-v3",
-            &engine,
-            language_ref,
+        self.ws_task_status = Some("submitting…".to_string());
+        self.ws_send(super::whisper_subs::WsRequest::Transcribe {
+            source,
+            engine,
+            language,
             vad,
             diarization,
-        ) {
-            Ok(task_id) => {
-                let (tx, rx) = std::sync::mpsc::channel();
-                super::whisper_subs::monitor_task(client, task_id, tx);
-                self.ws_rx = Some(rx);
-                self.ws_task_status = Some("queued".to_string());
-                self.ws_error = None;
-            }
-            Err(e) => self.ws_error = Some(e),
-        }
+        });
     }
 
     /// The WhisperSubs panel: server browse (library, channels, live,
@@ -941,63 +944,43 @@ impl PlayerApp {
                     ui.separator();
                 }
 
-                let client = super::whisper_subs::WhisperSubs::new(
-                    self.settings.whisper_subs_url.clone(),
-                    self.settings.whisper_subs_key.clone(),
-                );
+                // Every fetch runs on the worker thread; paint only reads
+                // the caches the replies fill.
                 match self.ws_section {
-                    0 => self.paint_ws_library(ui, &client),
-                    1 => self.paint_ws_channels(ui, &client),
-                    2 => self.paint_ws_live(ui, &client),
-                    _ => self.paint_ws_subs(ui, &client),
+                    0 => self.paint_ws_library(ui),
+                    1 => self.paint_ws_channels(ui),
+                    2 => self.paint_ws_live(ui),
+                    _ => self.paint_ws_subs(ui),
                 }
             });
     }
 
-    /// Fetch a section list on demand (first view and the reload button).
+    /// Re-fetch a section list on demand (the reload button).
     fn ws_reload_section(&mut self) {
         self.ws_error = None;
-        let client = super::whisper_subs::WhisperSubs::new(
-            self.settings.whisper_subs_url.clone(),
-            self.settings.whisper_subs_key.clone(),
-        );
-        match self.ws_section {
-            0 => match client.library() {
-                Ok(items) => self.ws_library = Some(items),
-                Err(e) => self.ws_error = Some(e),
+        let section = self.ws_section;
+        // Drop the old data first so the panel shows its empty state while
+        // the worker answers, which is honest about what the UI knows.
+        match section {
+            0 => self.ws_library = None,
+            1 => match self.ws_channel {
+                Some(_) => self.ws_channel_videos = None,
+                None => self.ws_channels = None,
             },
-            1 => {
-                let target = self.ws_channel.clone();
-                match target {
-                    Some(name) => match client.channel_videos(&name) {
-                        Ok(items) => self.ws_channel_videos = Some(items),
-                        Err(e) => self.ws_error = Some(e),
-                    },
-                    None => match client.channels() {
-                        Ok(items) => self.ws_channels = Some(items),
-                        Err(e) => self.ws_error = Some(e),
-                    },
-                }
-            }
-            2 => match client.live_tasks() {
-                Ok(items) => self.ws_live = Some(items),
-                Err(e) => self.ws_error = Some(e),
-            },
-            _ => match client.subtitle_list() {
-                Ok(items) => self.ws_subs = Some(items),
-                Err(e) => self.ws_error = Some(e),
-            },
+            2 => self.ws_live = None,
+            _ => self.ws_subs = None,
         }
+        if let Some(flag) = self.ws_requested.get_mut(section as usize) {
+            *flag = false;
+        }
+        self.ws_request_section(section);
     }
 
-    fn paint_ws_library(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+    fn paint_ws_library(&mut self, ui: &mut egui::Ui) {
         if self.ws_library.is_none() {
-            match client.library() {
-                Ok(items) => self.ws_library = Some(items),
-                Err(e) => {
-                    self.ws_error = Some(e);
-                    return;
-                }
+            if self.ws_request_section(0) {
+                ui.weak("loading library…");
+                return;
             }
         }
         ui.horizontal(|ui| {
@@ -1026,13 +1009,17 @@ impl PlayerApp {
                     let playable = (media && !srt.is_empty()) || !source.is_empty();
                     let response = ui.add(egui::Label::new(format!("{title}\n{channel}")).wrap());
                     if playable && response.clicked() {
+                        // Pure string work: the panel no longer builds HTTP
+                        // requests, but links handed to mpv still need the
+                        // server's base URL.
+                        let base = self.settings.whisper_subs_url.clone();
                         // Play in this window: media URL via the server, with
                         // its SRT attached; otherwise fall back to the source.
                         if let Some(first) =
                             item["urls"]["media"].as_array().and_then(|a| a.first())
                         {
-                            let url = client.resolve(first["url"].as_str().unwrap_or_default());
-                            let sub = client.resolve(srt);
+                            let url = super::whisper_subs::resolve(&base, first["url"].as_str().unwrap_or_default());
+                            let sub = super::whisper_subs::resolve(&base, srt);
                             // Local playlist files expand so the window's own
                         // next/prev walks the entries; URIs and files pass
                         // through unchanged.
@@ -1057,24 +1044,26 @@ impl PlayerApp {
             });
     }
 
-    fn paint_ws_channels(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+    fn paint_ws_channels(&mut self, ui: &mut egui::Ui) {
         if let Some(name) = self.ws_channel.clone() {
             ui.horizontal(|ui| {
                 if ui.button("←").clicked() {
                     self.ws_channel = None;
                     self.ws_channel_videos = None;
+                    self.ws_videos_requested = None;
                 }
                 ui.label(&name);
             });
             ui.separator();
             if self.ws_channel_videos.is_none() {
-                match client.channel_videos(&name) {
-                    Ok(items) => self.ws_channel_videos = Some(items),
-                    Err(e) => {
-                        self.ws_error = Some(e);
-                        return;
-                    }
+                if self.ws_videos_requested.as_deref() != Some(name.as_str()) {
+                    self.ws_videos_requested = Some(name.clone());
+                    self.ws_send(super::whisper_subs::WsRequest::Channels {
+                        channel: Some(name),
+                    });
                 }
+                ui.weak("loading videos…");
+                return;
             }
             let items = self.ws_channel_videos.clone().unwrap_or_default();
             egui::ScrollArea::vertical()
@@ -1111,12 +1100,9 @@ impl PlayerApp {
             return;
         }
         if self.ws_channels.is_none() {
-            match client.channels() {
-                Ok(items) => self.ws_channels = Some(items),
-                Err(e) => {
-                    self.ws_error = Some(e);
-                    return;
-                }
+            if self.ws_request_section(1) {
+                ui.weak("loading channels…");
+                return;
             }
         }
         let items = self.ws_channels.clone().unwrap_or_default();
@@ -1132,6 +1118,7 @@ impl PlayerApp {
                     {
                         self.ws_channel = Some(name.to_string());
                         self.ws_channel_videos = None;
+                        self.ws_videos_requested = None;
                     }
                     ui.separator();
                 }
@@ -1141,14 +1128,11 @@ impl PlayerApp {
             });
     }
 
-    fn paint_ws_live(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+    fn paint_ws_live(&mut self, ui: &mut egui::Ui) {
         if self.ws_live.is_none() {
-            match client.live_tasks() {
-                Ok(items) => self.ws_live = Some(items),
-                Err(e) => {
-                    self.ws_error = Some(e);
-                    return;
-                }
+            if self.ws_request_section(2) {
+                ui.weak("loading live tasks…");
+                return;
             }
         }
         let items = self.ws_live.clone().unwrap_or_default();
@@ -1168,14 +1152,11 @@ impl PlayerApp {
             });
     }
 
-    fn paint_ws_subs(&mut self, ui: &mut egui::Ui, client: &super::whisper_subs::WhisperSubs) {
+    fn paint_ws_subs(&mut self, ui: &mut egui::Ui) {
         if self.ws_subs.is_none() {
-            match client.subtitle_list() {
-                Ok(items) => self.ws_subs = Some(items),
-                Err(e) => {
-                    self.ws_error = Some(e);
-                    return;
-                }
+            if self.ws_request_section(3) {
+                ui.weak("loading subtitles…");
+                return;
             }
         }
         let items = self.ws_subs.clone().unwrap_or_default();
@@ -1188,22 +1169,7 @@ impl PlayerApp {
                     let path = s["path"].as_str().unwrap_or_default().to_string();
                     let response = ui.add(egui::Label::new(format!("{name}\n{created}")).wrap());
                     if response.clicked() && !path.is_empty() {
-                        match client.subtitle_text(&path) {
-                            Ok(text) => {
-                                let local = std::env::temp_dir().join(format!(
-                                    "livelink-ws-{}.srt",
-                                    urlencoding::encode(&path)
-                                ));
-                                if std::fs::write(&local, text).is_ok() {
-                                    if let Some(mpv) = &mut self.mpv {
-                                        let path_str = local.to_string_lossy().to_string();
-                                        mpv.sub_add(&path_str);
-                                        self.subtitles.push(path_str);
-                                    }
-                                }
-                            }
-                            Err(e) => self.ws_error = Some(e),
-                        }
+                        self.ws_send(super::whisper_subs::WsRequest::Subtitle { path });
                     }
                     ui.separator();
                 }
@@ -1315,6 +1281,113 @@ impl PlayerApp {
                         }
                     });
             });
+    }
+
+    /// Ensure the whisper worker thread exists, then hand it one request. The
+    /// worker is spawned lazily (first panel use) so a player that never
+    /// opens the F1 panel pays nothing for it.
+    fn ws_send(&mut self, request: super::whisper_subs::WsRequest) {
+        let url = self.settings.whisper_subs_url.clone();
+        let key = self.settings.whisper_subs_key.clone();
+        if self.ws_req_tx.is_none() {
+            let (req_tx, req_rx) = std::sync::mpsc::channel();
+            let (reply_tx, reply_rx) = std::sync::mpsc::channel();
+            super::whisper_subs::spawn_worker(url, key, req_rx, reply_tx);
+            self.ws_req_tx = Some(req_tx);
+            self.ws_reply_rx = Some(reply_rx);
+        }
+        if let Some(tx) = &self.ws_req_tx {
+            if tx.send(request).is_err() {
+                // The worker is gone; drop it so the next request restarts it.
+                self.ws_req_tx = None;
+                self.ws_reply_rx = None;
+            }
+        }
+    }
+
+    /// Ask for a section list once, on first view, without repeating the
+    /// request while the worker is answering. Returns true when a request
+    /// was actually sent (so callers can show "loading" instead of nothing).
+    fn ws_request_section(&mut self, section: u8) -> bool {
+        let index = section as usize;
+        if self.ws_requested.get(index).copied().unwrap_or(false) {
+            return false;
+        }
+        let request = match section {
+            0 => super::whisper_subs::WsRequest::Library,
+            1 => super::whisper_subs::WsRequest::Channels { channel: self.ws_channel.clone() },
+            2 => super::whisper_subs::WsRequest::Live,
+            _ => super::whisper_subs::WsRequest::Subs,
+        };
+        self.ws_send(request);
+        if let Some(flag) = self.ws_requested.get_mut(index) {
+            *flag = true;
+        }
+        true
+    }
+
+    /// Apply one worker reply. Runs on the UI thread, never touching the
+    /// network: fetch results fill the panel's caches and the subtitle /
+    /// transcription jobs are completed here.
+    fn ws_apply_reply(&mut self, reply: super::whisper_subs::WsReply) {
+        use super::whisper_subs::WsReply;
+        match reply {
+            WsReply::Library { result } => match result {
+                Ok(items) => self.ws_library = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            WsReply::Channels { channel: Some(name), result } => match result {
+                // Channel-scoped reply only fills the videos cache while
+                // that channel is still selected.
+                Ok(items) if self.ws_channel.as_deref() == Some(name.as_str()) => {
+                    self.ws_channel_videos = Some(items);
+                }
+                Ok(_) => {}
+                Err(e) => self.ws_error = Some(e),
+            },
+            WsReply::Channels { channel: None, result } => match result {
+                Ok(items) => self.ws_channels = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            WsReply::Live(result) => match result {
+                Ok(items) => self.ws_live = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            WsReply::Subs(result) => match result {
+                Ok(items) => self.ws_subs = Some(items),
+                Err(e) => self.ws_error = Some(e),
+            },
+            WsReply::Subtitle { path: _, local, error } => {
+                if let Some(e) = error {
+                    self.ws_error = Some(e);
+                } else if let Some(local) = local {
+                    if let Some(mpv) = &mut self.mpv {
+                        mpv.sub_add(&local);
+                        self.subtitles.push(local);
+                    }
+                }
+            }
+            WsReply::Transcribe { result } => match result {
+                Ok((task_id, rx)) => {
+                    self.ws_rx = Some(rx);
+                    self.ws_task_status = Some(format!("queued · {task_id}"));
+                    self.ws_error = None;
+                }
+                Err(e) => self.ws_error = Some(e),
+            },
+        }
+    }
+
+    /// Drain every pending worker reply. Called from `update`, not from a
+    /// paint function, so the UI thread never blocks on the network.
+    fn ws_drain_replies(&mut self) {
+        let Some(rx) = self.ws_reply_rx.take() else {
+            return;
+        };
+        while let Ok(reply) = rx.try_recv() {
+            self.ws_apply_reply(reply);
+        }
+        self.ws_reply_rx = Some(rx);
     }
 
     fn load_current(&mut self) {
@@ -2510,6 +2583,9 @@ impl eframe::App for PlayerApp {
         }
 
         self.drain_commands(ctx);
+        // Whisper panel replies are applied here (never inside paint, which
+        // must not block on the network).
+        self.ws_drain_replies();
         while let Ok(result) = self.post_rx.try_recv() {
             self.channels_error = result.err();
         }
