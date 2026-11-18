@@ -87,26 +87,30 @@ struct QueueInfo {
 }
 
 async fn get_status(State(state): State<AppState>) -> Json<StatusResponse> {
+    // Derived from config, not a literal: a run configured for three screens
+    // must report three, and the cap the caller sees has to be the one the
+    // orchestrator actually enforces (otherwise the UI gates "start" on a
+    // number that is not the real limit).
     let active = state.orchestrator.count_active_streams();
-    let screens = vec![
-        ScreenStatus {
-            screen: 0,
-            state: state.orchestrator.get_state(0).await.unwrap_or(StreamState::Idle),
+    let max_streams = state.orchestrator.config.max_streams;
+    let mut screens = Vec::new();
+    for screen_config in &state.orchestrator.config.screens {
+        screens.push(ScreenStatus {
+            screen: screen_config.screen,
+            state: state
+                .orchestrator
+                .get_state(screen_config.screen)
+                .await
+                .unwrap_or(StreamState::Idle),
             active_streams: active,
-            max_streams: 2,
-        },
-        ScreenStatus {
-            screen: 1,
-            state: state.orchestrator.get_state(1).await.unwrap_or(StreamState::Idle),
-            active_streams: active,
-            max_streams: 2,
-        },
-    ];
+            max_streams,
+        });
+    }
 
     Json(StatusResponse {
         screens,
         total_active: active,
-        max_streams: 2,
+        max_streams,
     })
 }
 

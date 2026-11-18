@@ -95,3 +95,79 @@ async fn the_api_routes_still_answer() {
   assert_eq!(status, 200);
   assert!(body.contains("ok"), "health did not answer ok: {body}");
 }
+
+/// `/status` used to be hardcoded to two screens (0 and 1) and
+/// `max_streams: 2`, so a run configured for four screens reported two and
+/// the stream cap callers gate on was fiction. The UI's "Play" button reads
+/// that cap, so the numbers have to come from the config the orchestrator
+/// actually holds.
+#[tokio::test]
+async fn status_reports_the_configured_screens_and_cap() {
+  // A run configured for screens 3, 5 and 7. `config.screens` is what the
+  // server holds after loading config, so that is what drives the response.
+  let screens = [3u32, 5, 7]
+    .into_iter()
+    .map(|screen| livelink::config::ScreenConfig {
+      id: screen,
+      screen,
+      enabled: true,
+      width: 640,
+      height: 360,
+      x: 0,
+      y: 0,
+      volume: 50,
+      quality: "best".to_string(),
+      window_maximized: false,
+      primary: false,
+      sources: Vec::new(),
+      sorting: None,
+      refresh: 0,
+      auto_start: false,
+      skip_watched_streams: None,
+    })
+    .collect::<Vec<_>>();
+  let config = OrchestratorConfig {
+    max_streams: 1,
+    startup_cooldown_ms: 1000,
+    crash_threshold_seconds: 3,
+    skip_threshold_seconds: 2,
+    screens,
+    ..Default::default()
+  };
+
+  let (_exit_tx, exit_rx) = tokio::sync::mpsc::channel(1);
+  let (_network_tx, network_rx) = tokio::sync::mpsc::channel(1);
+  let orchestrator = Orchestrator::new(config, exit_rx, network_rx);
+  let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel::<(u32, String)>();
+  let response = api_router(orchestrator, Some(sender))
+    .oneshot(
+      axum::http::Request::builder()
+        .uri("/status")
+        .body(axum::body::Body::empty())
+        .unwrap(),
+    )
+    .await
+    .expect("router answered");
+
+  assert_eq!(response.status(), 200);
+  let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .expect("body read");
+  let payload: serde_json::Value = serde_json::from_slice(&bytes).expect("status json");
+
+  let reported = payload["screens"]
+    .as_array()
+    .expect("screens array")
+    .iter()
+    .map(|s| s["screen"].as_u64().expect("screen number"))
+    .collect::<Vec<_>>();
+  assert_eq!(
+    reported,
+    vec![3, 5, 7],
+    "status must report the configured screens, not a hardcoded 0 and 1"
+  );
+
+  // The cap is whatever the orchestrator enforces, not a hardcoded 2.
+  assert_eq!(payload["max_streams"].as_u64(), Some(1));
+  assert_eq!(payload["total_active"].as_u64(), Some(0));
+}
