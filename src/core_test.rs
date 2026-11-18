@@ -204,8 +204,11 @@ mod failure_tests {
         assert_eq!(event.screen, 0);
         assert_eq!(event.url, "http://stream1.com");
 
-        // Pause is a window-side action now, not a server IPC call.
-        assert!(orch.player_pause(0).await.is_err());
+        // Pause is forwarded to the screen's player window over its control port.
+        // No window is listening in this test, so the send is a no-op rather
+        // than an error: the orchestrator still owns the request, the window
+        // just is not there to answer it.
+        assert!(orch.player_pause(0).await.is_ok());
 
         // Stop: clean state without touching any player process.
         orch.stop_stream(0).await.unwrap();
