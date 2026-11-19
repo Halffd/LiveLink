@@ -8,6 +8,7 @@ use crate::core::state::OrchestratorConfig;
 use crate::services::network::{NetworkEvent, NetworkMonitor};
 use crate::services::transcript::TranscriptWorker;
 use std::sync::Arc;
+use tracing::{debug, error, info};
 use tokio::sync::mpsc;
 
 /// Build the orchestrator from config: register screens, populate queues,
@@ -94,6 +95,13 @@ pub async fn build_orchestrator(
     network_monitor.start().await;
   });
 
+  // Populate queues and auto-start: without this the server comes up, marks
+  // its screens registered, and then sits idle, which is the "configured
+  // streams never launch" report. `build_orchestrator` promised this in its
+  // own docstring but never called it (the helper had no callers).
+  let screen_configs = orchestrator.config.screens.clone();
+  populate_and_autostart(&orchestrator, &screen_configs).await?;
+
   Ok((orchestrator, transcribe_tx))
 }
 
@@ -106,13 +114,29 @@ pub async fn populate_and_autostart(
     return Err(format!("failed to populate screens: {e}"));
   }
   for screen_config in screen_configs {
-    if screen_config.enabled && screen_config.auto_start {
+    let auto_start = screen_config.enabled && screen_config.auto_start;
+    if auto_start {
+      info!(
+        screen = screen_config.screen,
+        "Auto-starting screen (enabled={}, auto_start={})",
+        screen_config.enabled,
+        screen_config.auto_start
+      );
       if let Err(e) = orchestrator.start_stream(screen_config.screen).await {
-        return Err(format!(
-          "failed to auto-start screen {}: {e}",
-          screen_config.screen
-        ));
+        // One screen failing must not stop the others from starting.
+        error!(
+          screen = screen_config.screen,
+          error = %e,
+          "failed to auto-start screen"
+        );
       }
+    } else {
+      debug!(
+        screen = screen_config.screen,
+        "Skipping screen (enabled={}, auto_start={})",
+        screen_config.enabled,
+        screen_config.auto_start
+      );
     }
   }
   Ok(())

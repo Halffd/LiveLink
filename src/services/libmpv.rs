@@ -292,12 +292,18 @@ impl MpvVideo {
             init.set_option("input-cursor", "no")?;
             // Auto-load external subtitle files next to the media (movie.srt).
             init.set_option("sub-auto", "fuzzy")?;
-            // Ask yt-dlp for every subtitle track (manual + auto captions) so
-            // YouTube and other supported sites come with selectable subs.
-            init.set_option(
-                "ytdl-raw-options",
-                "write-subs=yes,write-auto-subs=yes,sub-langs=all",
-            )?;
+            // Ask yt-dlp for every subtitle track it can find (manual +
+            // auto captions) so YouTube and other supported sites come with
+            // selectable subs.
+            //
+            // NOT write-subs/write-auto-subs: those tell yt-dlp to download
+            // subtitle files as a side effect, which mpv's hook does not
+            // want, and which breaks resolution outright on current
+            // yt-dlp — every URL fails with "'yes' is not a valid URL" and
+            // the window cannot play anything (verified: the same option
+            // set fails on `mpv --ytdl-raw-options` for a Twitch stream that
+            // plays fine without it).
+            init.set_option("ytdl-raw-options", "sub-langs=all")?;
             Ok(())
         })?;
         mpv.set_property("volume", 100i64)?;

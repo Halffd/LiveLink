@@ -846,6 +846,27 @@ impl ConfigLoader {
             config.mpv_youtube_cookies = mpv.youtube_cookies.clone();
             config
         });
+        // `player.json` carries a top-level autoStart that governs the whole
+        // file's screens, but a screen that omits its own value deserializes
+        // to false, silently overriding it. Read the raw JSON once: a screen
+        // that says nothing inherits the file-level flag; a screen that says
+        // something keeps it. This is what makes "set autoStart in
+        // player.json and the server plays your streams" work.
+        let mut player = player;
+        if let Ok(raw) = std::fs::read_to_string(self.config_dir.join("player.json")) {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) {
+                let screen_sets_auto = value
+                    .get("screens")
+                    .and_then(|s| s.as_array())
+                    .map(|screens| screens.iter().map(|s| s.get("autoStart").is_some()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                for (screen, set) in player.screens.iter_mut().zip(screen_sets_auto) {
+                    if !set {
+                        screen.auto_start = player.auto_start;
+                    }
+                }
+            }
+        }
 
         let streamlink: StreamlinkConfig = self
             .try_load_json_file("streamlink.json")
