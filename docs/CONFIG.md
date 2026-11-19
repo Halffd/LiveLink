@@ -14,6 +14,7 @@ Complete reference for all configuration files.
 | `filters.json` | Stream filtering rules |
 | `favorites.json` | Favorite channels per platform |
 | `streams.json` | Stream source configurations |
+| `transcript.json` | Transcription: server or native whisper, and where audio comes from |
 
 ## config.json
 
@@ -339,6 +340,73 @@ Streamlink settings and MPV overrides.
 - `http_header`: HTTP headers for requests
 - `mpv`: MPV-specific settings when launched by streamlink (merged with mpv.json)
 - `args`: Additional CLI arguments for streamlink
+
+## transcript.json
+
+Captions are produced once per stream and cached under `<config_dir>/transcripts/<hash>.srt`,
+so the second viewing of a stream attaches instantly with no re-run of anything.
+Two engines produce them, and they share that cache and the same `sub-add`, so a
+transcript made by one is reused by the other.
+
+```json
+{
+  "enabled": true,
+  "backend": "server",
+  "capture": "record",
+  "model": "small",
+  "engine": "whisperx",
+  "language": "",
+  "vad": true,
+  "diarization": false,
+  "transcript_dir": "",
+  "api_url": "http://localhost:8000",
+  "api_key_file": "/host/.whisper-subs/api/api_config.json",
+  "chunk_seconds": 5,
+  "audio_dir": "",
+  "whisper_model": "ggml-small.bin",
+  "model_dir": "models",
+  "whisper_gpu": true,
+  "downloader": "yt-dlp",
+  "timeout_seconds": 600
+}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `enabled` | `true` | Master switch for transcription. |
+| `backend` | `"server"` | `"server"` sends the URL to a `.whisper-subs` server, which fetches and transcribes it for us. `"native"` (also accepted: `"local"`, `"whisper"`) runs whisper.cpp inside this process — no server, no second host. |
+| `capture` | `"record"` | Where the `native` backend gets audio. See the table below. Ignored for `"server"`. |
+| `model` | `"small"` | Model name sent to a `"server"` backend. |
+| `engine` | `"whisperx"` | Engine prefix for `"server"`: `"whisperx"` enables word-level alignment, an empty string uses faster-whisper. |
+| `language` | `""` | Language hint (`"ja"`, `"en"`). Empty means auto-detect; pin it when a stream code-switches so the alignment model does not flip mid-stream. |
+| `vad` | `true` | Voice-activity gating. Required for quality on streams with music intros. |
+| `diarization` | `false` | Speaker diarization (pyannote; needs `HF_TOKEN` on the server). |
+| `transcript_dir` | `""` | Where `.srt` files are cached. Empty means `<config_dir>/transcripts`. |
+| `api_url` | `http://localhost:8000` | Base URL of the `.whisper-subs` server, when `backend` is `"server"`. |
+| `api_key_file` | `/host/.whisper-subs/api/api_config.json` | Where to read an API key from when `api_key` is not set directly. |
+| `chunk_seconds` | `5` | Seconds of audio per transcription chunk (native). Smaller means lower latency and worse context. |
+| `audio_dir` | `""` | Where captured audio lands, when `capture` needs a file. Empty means the transcript directory. |
+| `whisper_model` | `"ggml-small.bin"` | whisper.cpp model file (native). Downloaded by hand; a large download is an explicit operator action, not a surprise on first run. |
+| `model_dir` | `"models"` | Directory holding whisper model files. |
+| `whisper_gpu` | `true` | Use the GPU for inference when the backend supports it. |
+| `downloader` | `"yt-dlp"` | Resolver used by the `"download"` capture (`"yt-dlp"`, `"streamlink"`, or any fetch command). |
+| `timeout_seconds` | `600` | Wall-clock cap on one capture/inference pass. |
+
+### The three capture modes (`backend: "native"`)
+
+| `capture` | Where the audio comes from | Choose it when | Cost |
+|-----------|----------------------------|----------------|------|
+| `record` | the player's dumped audio file | the player cooperates and audio is already being written | needs a file to exist; nothing before playback starts |
+| `pa` | the system's audio output (PulseAudio, or PipeWire's monitor source) | a source the resolver cannot pull directly, and being able to hear it is enough | records what the speakers emit, so a muted screen yields silence; Linux-only |
+| `download` | a short `yt-dlp` / `streamlink` / `curl` run pulls the audio track | you want the cleanest possible audio | needs a working resolver and a destination that permits it; free for live |
+
+`pa` reads `LIVELINK_AUDIO_MONITOR` when set, otherwise the default
+PulseAudio monitor. On PipeWire desktops the PulseAudio compatibility layer
+serves the same name, so no extra plumbing is needed.
+
+A transcript made while a screen is muted is the expected, documented
+behaviour of `record` and `download`; `pa` captures whatever is audible, so
+it needs a screen that is actually sounding.
 
 ## favorites.json
 

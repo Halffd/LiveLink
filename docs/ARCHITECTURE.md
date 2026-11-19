@@ -97,18 +97,38 @@ loop. Three parts:
 ### The language path
 
 Captions are produced once and reused forever ("the second viewing is
-instant"). Two clients, one shared HTTP surface:
+instant"). Two engines, one shared HTTP surface, one shared cache:
 
-- `src/services/whisper_api.rs` — the shared `.whisper-subs` surface:
-  `paths`, `transcribe_body`, and response decoding. Both callers use these,
-  so they cannot drift apart.
-- `src/services/transcript.rs` — server-side worker: on stream start it
-  submits, polls, streams the growing `.srt` into the caption cache, and
-  attaches it to the screen's **player window** over its control port
-  (`{"cmd":"sub-add","url":"<file>"}`). mpv reloads changed subtitle files,
-  so live-updating captions need no player-specific code.
-- `src/player_ui/whisper_subs.rs` — the player-window panel client
-  (library/channels/live/subtitles) plus a background monitor thread.
+- **Server engine** (the original path):
+  - `src/services/whisper_api.rs` — the shared `.whisper-subs` surface:
+    `paths`, `transcribe_body`, and response decoding. Both callers of that
+    surface use these, so they cannot drift.
+  - `src/services/transcript.rs` — the worker: on stream start it submits,
+    polls, streams the growing `.srt` into the caption cache, and attaches
+    it to the screen's **player window** over its control port
+    (`{"cmd":"sub-add","url":"<file>"}`). mpv reloads changed subtitle files,
+    so live-updating captions need no player-specific code.
+  - `src/player_ui/whisper_subs.rs` — the player-window panel client
+    (library/channels/live/subtitles) plus a background monitor thread.
+
+- **Native engine** (`backend: "native"`, no server): `src/services/whisper_native/`
+  - `engine.rs` — whisper.cpp via whisper-rs 0.16: 16 kHz mono f32 in,
+    timestamped segments out. Knows nothing about where audio came from,
+    so it is testable and swappable on its own.
+  - `capture.rs` — three audio sources behind one type: `record` (the
+    player's dumped file), `pa` (the system's audio output, the only option
+    for a source the resolver cannot pull — it records what the speakers
+    emit, so a muted screen yields silence), and `download` (yt-dlp /
+    streamlink / curl pulls the audio track). Capture is time-bounded,
+    decodes WAV natively and everything else through ffmpeg, and mixes to
+    mono before resampling to 16 kHz.
+  - Wired in `transcript.rs::transcribe_native`, which runs on a dedicated
+    thread, accumulates cues with a stream-relative offset so a growing
+    `.srt` stays in sync, rewrites it atomically, and attaches it over the
+    control port.
+
+Both engines write the same cache files and send the same `sub-add`, so
+switching backends reuses existing transcripts.
 
 Learning features live in the player window: `reading.rs` (furigana and
 pinyin annotation), `srs.rs` (SRS note building), `subtitle.rs` (overlay,
