@@ -62,6 +62,52 @@ pub struct TranscriptConfig {
     /// Speaker diarization (pyannote; needs HF_TOKEN on the server).
     #[serde(default)]
     pub diarization: bool,
+    /// Where audio comes from when the native backend is used, and which
+    /// engine runs when no server is reachable:
+    ///
+    /// - `server`   (default) — send the URL to the `.whisper-subs` server
+    ///                that fetches and transcribes it for us.
+    /// - `native`   — run whisper.cpp locally (no server, no network).
+    ///
+    /// For `native`, `capture` decides where the audio comes from:
+    ///
+    /// - `record`   — ask the player to dump audio to a file and read that.
+    /// - `pa`       — capture the system's audio output via PulseAudio/Wayland
+    ///                pipewire monitor. Captures whatever is *playing* (so a
+    ///                muted screen records silence), and is the only option
+    ///                for a stream the resolver cannot pull audio from
+    ///                directly.
+    /// - `download` — pull the audio track with yt-dlp / streamlink / curl
+    ///                (a short subprocess) and read it. Cleanest audio, and
+    ///                free for live: the stream is fetched once.
+    #[serde(default = "default_transcript_backend")]
+    pub backend: String,
+    /// Audio source for the native backend: `record`, `pa`, or `download`.
+    #[serde(default = "default_transcript_capture")]
+    pub capture: String,
+    /// Directory for captured audio and generated .srt files (native path).
+    #[serde(default)]
+    pub audio_dir: String,
+    /// whisper.cpp model file (ggml, e.g. `ggml-small.bin`);
+    /// downloaded on demand by the worker.
+    #[serde(default = "default_whisper_model")]
+    pub whisper_model: String,
+    /// Directory holding whisper.cpp model files.
+    #[serde(default = "default_model_dir")]
+    pub model_dir: String,
+    /// Use GPU for inference when the backend supports it.
+    #[serde(default = "default_true")]
+    pub whisper_gpu: bool,
+    /// Seconds of audio per transcription chunk (smaller = lower latency,
+    /// worse context).
+    #[serde(default = "default_chunk_seconds")]
+    pub chunk_seconds: u32,
+    /// Command used to pull audio (native `download` capture).
+    #[serde(default = "default_downloader")]
+    pub downloader: String,
+    /// Seconds a transcription may run before it is abandoned.
+    #[serde(default = "default_transcript_timeout")]
+    pub timeout_seconds: u64,
 }
 
 impl Default for TranscriptConfig {
@@ -77,12 +123,56 @@ impl Default for TranscriptConfig {
             language: String::new(),
             vad: true,
             diarization: false,
+            backend: default_transcript_backend(),
+            capture: default_transcript_capture(),
+            audio_dir: String::new(),
+            whisper_model: default_whisper_model(),
+            model_dir: default_model_dir(),
+            whisper_gpu: true,
+            chunk_seconds: default_chunk_seconds(),
+            downloader: default_downloader(),
+            timeout_seconds: default_transcript_timeout(),
         }
     }
 }
 
+impl TranscriptConfig {
+    /// True when transcription runs in-process rather than on a server.
+    pub fn native(&self) -> bool {
+        matches!(self.backend.as_str(), "native" | "local" | "whisper")
+    }
+}
+
+fn default_transcript_backend() -> String {
+    "server".to_string()
+}
+
 fn default_transcript_engine() -> String {
     "whisperx".to_string()
+}
+
+fn default_transcript_capture() -> String {
+    "record".to_string()
+}
+
+fn default_whisper_model() -> String {
+    "ggml-small.bin".to_string()
+}
+
+fn default_model_dir() -> String {
+    "models".to_string()
+}
+
+fn default_chunk_seconds() -> u32 {
+    5
+}
+
+fn default_downloader() -> String {
+    "yt-dlp".to_string()
+}
+
+fn default_transcript_timeout() -> u64 {
+    600
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

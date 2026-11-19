@@ -175,6 +175,20 @@ pub async fn send_command(port: u16, line: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// The same command without an async caller, for code that runs on a plain
+/// thread with no reactor available (the native transcription worker).
+///
+/// Same protocol and the same "no window listening is not an error" rule as
+/// [`send_command`]: a closed window simply has nothing to tell.
+pub fn send_command_sync(port: u16, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
+    stream.write_all(line.as_bytes())?;
+    stream.write_all(b"\n")?;
+    stream.flush()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

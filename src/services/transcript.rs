@@ -75,13 +75,9 @@ impl TranscriptWorker {
     pub fn srt_path(&self, url: &str) -> PathBuf {
         let mut hasher = DefaultHasher::new();
         url.hash(&mut hasher);
-        self.transcripts_dir.join(format!("{:016x}.srt", hasher.finish()))
-    }
-
-    fn transcribable(url: &str) -> bool {
-        url.starts_with("http://")
-            || url.starts_with("https://")
-            || std::path::Path::new(url).is_file()
+        self
+            .transcripts_dir
+            .join(format!("{:016x}.srt", hasher.finish()))
     }
 
     fn request(&self, method: reqwest::Method, url: String) -> reqwest::RequestBuilder {
@@ -90,6 +86,15 @@ impl TranscriptWorker {
             Some(key) => request.header("X-API-Key", key),
             None => request,
         }
+    }
+
+    /// True when the worker can try this source: an existing local file or a
+    /// remote HTTP(S) URL. Anything else (magnet/rtmp/paths that do not
+    /// resolve) has no audio the server can read.
+    fn transcribable(url: &str) -> bool {
+        url.starts_with("http://")
+            || url.starts_with("https://")
+            || std::path::Path::new(url).is_file()
     }
 
     /// Send a sub-add command for the cached srt to the screen's player window.
@@ -117,6 +122,14 @@ impl TranscriptWorker {
             return;
         }
         if self.followers.contains_key(&(screen, url.to_string())) {
+            return;
+        }
+
+// Native path: no server, capture + whisper.cpp in this process. Same
+        // cache file and the same attach() as the server path, so a transcript
+        // made either way is reused by the other.
+        if self.config.native() {
+            self.follow_native(screen, url.to_string());
             return;
         }
 
@@ -183,6 +196,160 @@ let response = self
                 .send()
                 .await;
         }
+    }
+
+    /// Transcribe a stream in this process: capture audio, chunk it, run
+    /// whisper.cpp on each chunk, and append the cues to the cached .srt so
+    /// the player's subtitle file grows as the stream does.
+    ///
+    /// Blocking calls run on a dedicated thread (never the reactor), because
+    /// both capture (a subprocess) and inference can take seconds per chunk.
+    fn follow_native(self: &Arc<Self>, screen: u32, url: String) {
+        let worker = Arc::clone(self);
+        std::thread::spawn(move || {
+            worker.transcribe_native(screen, &url);
+        });
+    }
+
+    /// The blocking body of [`Self::follow_native`].
+    fn transcribe_native(&self, screen: u32, url: &str) {
+        use crate::services::whisper_native::{
+            capture::{self, download_command, run_pull},
+            engine,
+        };
+
+        let config = &self.config;
+        let cache = self.srt_path(url);
+
+        // 1. Engine.
+        let mut engine: Box<dyn engine::Transcriber> = engine::build_engine(config);
+        if engine.model_name() == "disabled" {
+            debug!(screen, "native transcription disabled; nothing to do");
+            return;
+        }
+
+        // 2. Capture.
+        let (audio, source_label) = match config.capture.as_str() {
+            "pa" => match capture::run_pull(&capture::pa_command(&self.pa_target())) {
+                Ok(()) => match capture::read_audio(&self.pa_target()) {
+                    Ok(audio) => (audio, "pa"),
+                    Err(e) => {
+                        warn!(screen, error = %e, "pa capture produced no audio");
+                        return;
+                    }
+                },
+                Err(e) => {
+                    warn!(screen, error = %e, "pa capture failed (is parecord installed and a monitor source set?)");
+                    return;
+                }
+            },
+            "record" => match capture::read_audio(&self.record_target()) {
+                Ok(audio) => (audio, "record"),
+                Err(e) => {
+                    warn!(screen, error = %e, "record capture read failed");
+                    return;
+                }
+            },
+            // Anything else (including the default) pulls the audio track.
+            _ => {
+                let target = self.download_target(url);
+                let command = download_command(config, url, &target);
+                match run_pull(&command) {
+                    Ok(()) => match capture::read_audio(&target) {
+                        Ok(audio) => (audio, "download"),
+                        Err(e) => {
+                            warn!(screen, error = %e, path = %target.display(), "downloaded audio unreadable");
+                            return;
+                        }
+                    },
+                    Err(e) => {
+                        warn!(screen, error = %e, cmd = %command.display(), "audio download failed");
+                        return;
+                    }
+                }
+            }
+        };
+
+        info!(
+            screen,
+            source = source_label,
+            seconds = audio.len() as f32 / 16_000.0,
+            "captured audio for native transcription"
+        );
+
+        // 3. Transcribe chunk by chunk, keeping cue offset from the stream
+        //    start so a growing .srt stays in sync.
+        let mut segments: Vec<engine::Segment> = Vec::new();
+        let chunk_seconds = config.chunk_seconds.max(1);
+        let chunk_size = (16_000 * chunk_seconds) as usize;
+
+        for (index, chunk) in capture::chunk_audio(&audio, chunk_seconds).into_iter().enumerate() {
+            let offset_ms = (index * chunk_size / 16) as u64;
+            match engine.transcribe(&chunk) {
+                Ok(mut chunk_segments) => {
+                    for mut segment in chunk_segments.drain(..) {
+                        segment.start_ms += offset_ms;
+                        segment.end_ms += offset_ms;
+                        segments.push(segment);
+                    }
+                }
+                Err(e) => {
+                    warn!(screen, error = %e, chunk = index, "whisper failed on a chunk");
+                    return;
+                }
+            }
+        }
+
+        // 4. Publish atomically, then hand it to the player. The writer rewrites
+        //    through a temp file and renames, so the player never reads a
+        //    half-written .srt mid-update.
+        let srt = engine::to_srt(&segments);
+        save_if_changed(&cache, &srt);
+        info!(screen, path = %cache.display(), "native transcript written");
+        // attach() is async because the server path is; this path is a plain
+        // thread, so use the blocking port send it wraps.
+        // A closed window is the expected case (nothing to tell), so the send's
+        // result carries no information worth surfacing.
+        let _ = control::send_command_sync(self.control_port(screen), &self.sub_add_line(&cache));
+    }
+
+    /// Where `record` capture expects the player to have dumped audio.
+    fn record_target(&self) -> std::path::PathBuf {
+        self.audio_root().join("record.wav")
+    }
+
+    /// Where `pa` capture writes the monitor recording.
+    fn pa_target(&self) -> std::path::PathBuf {
+        self.audio_root().join("pa.wav")
+    }
+
+    /// Where `download` capture writes the pulled audio track, named per
+    /// source so two screens never clobber each other.
+    fn download_target(&self, url: &str) -> std::path::PathBuf {
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        self
+            .audio_root()
+            .join(format!("{:016x}.audio", hasher.finish()))
+    }
+
+    /// Root for all capture artifacts (one directory, modes aside).
+    fn audio_root(&self) -> std::path::PathBuf {
+        if self.config.audio_dir.trim().is_empty() {
+            self.transcripts_dir.clone()
+        } else {
+            std::path::PathBuf::from(&self.config.audio_dir)
+        }
+    }
+
+    /// The control port a screen's player window listens on.
+    fn control_port(&self, screen: u32) -> u16 {
+        control::DEFAULT_BASE_PORT.saturating_add(u16::try_from(screen).unwrap_or(0))
+    }
+
+    /// The sub-add command line for a transcript file.
+    fn sub_add_line(&self, path: &std::path::Path) -> String {
+        serde_json::json!({ "cmd": "sub-add", "url": path.to_string_lossy() }).to_string()
     }
 
     fn spawn_follower(self: &Arc<Self>, screen: u32, url: String, task_id: String) -> JoinHandle<()> {

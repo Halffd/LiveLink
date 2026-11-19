@@ -41,6 +41,10 @@ pinyin = "0.11"
 lindera = "6"
 lindera-dictionary = "6"
 lindera-ipadic = { version = "6", features = ["embed-ipadic"] }
+# Native whisper.cpp transcription (no server): the reference pattern comes
+# from /host/captioner-rs, which pins these same versions.
+whisper-rs = "0.16"
+hound = "3"
 
 [[bin]]
 name = "cueloopd"
