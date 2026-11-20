@@ -12,4 +12,5 @@ pub mod transcript;
 pub mod twitch;
 pub mod whisper_api;
 pub mod whisper_native;
+pub mod subtitle_sync;
 pub mod youtube;
