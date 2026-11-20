@@ -363,6 +363,14 @@ impl MpvVideo {
         self.paused = false;
     }
 
+    /// Tell mpv to dump audio to `path` (`--stream-record`). Called by the
+    /// transcription worker so a `record` capture has something to read.
+    pub fn set_stream_record(&mut self, path: &str) -> Result<(), String> {
+        self.mpv
+            .set_property("stream-record", path)
+            .map_err(|e| format!("mpv stream-record: {e}"))
+    }
+
     /// Stop playback.
     pub fn stop(&mut self) {
         if let Err(e) = self.mpv.command("stop", &[]) {

@@ -12,7 +12,7 @@ use livelink::services::whisper_native::{
     capture::{self, download_command, pa_command, PullCommand},
     engine,
 };
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 fn native_config() -> TranscriptConfig {
     let mut cfg = TranscriptConfig::default();
@@ -129,6 +129,64 @@ fn the_native_and_server_paths_agree_on_the_cache_path() {
     let native_cache = TranscriptWorker::new(native_cfg, Path::new("/tmp/cfg")).srt_path("https://twitch.tv/x");
 
     assert_eq!(cache, native_cache, "backends must share the cache layout");
+}
+
+#[test]
+fn record_capture_produces_a_per_screen_dump_path() {
+    let mut cfg = TranscriptConfig::default();
+    cfg.capture = "record".to_string();
+    cfg.backend = "native".to_string();
+    cfg.audio_dir.clear();
+
+    // The helper reads the config file from disk, so this test uses a temp
+    // config dir rather than the repo's real config.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_dir = tmp.path().join("config");
+    std::fs::create_dir_all(&config_dir).expect("mkdir");
+    std::fs::write(
+        config_dir.join("transcript.json"),
+        serde_json::to_string(&cfg).expect("serialize config"),
+    )
+    .expect("write transcript.json");
+
+    let path = livelink::services::whisper_native::record_for_screen(&config_dir, 1)
+        .expect("record capture enabled");
+    assert!(path.contains("screen-1"), "path should be per screen: {path}");
+    assert!(path.ends_with(".mkv"), "mpv names the dump an mkv: {path}");
+
+    // Screen 2 must get a different path, or two screens would share a file
+    // and one screen's transcript would come from the other's audio.
+    let path2 = livelink::services::whisper_native::record_for_screen(&config_dir, 2)
+        .expect("record capture enabled");
+    assert!(path2.contains("screen-2"), "screen 2 path: {path2}");
+    assert_ne!(path, path2, "each screen must dump to its own file");
+}
+
+#[test]
+fn default_backend_is_server_and_record_capture_is_off() {
+    let cfg = TranscriptConfig::default();
+    // The default is the existing server behavior, not native.
+    assert_eq!(cfg.backend, "server");
+    assert!(!cfg.native());
+
+    // `record` is a valid capture mode, but the helper only returns a path
+    // when the mode is explicitly set to "record" AND the backend is native.
+    // A server-backend config must not make the player dump audio.
+    let mut cfg = TranscriptConfig::default();
+    cfg.capture = "record".to_string();
+    // backend stays "server", so the player must not dump audio.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_dir = tmp.path().join("config");
+    std::fs::create_dir_all(&config_dir).expect("mkdir");
+    std::fs::write(
+        config_dir.join("transcript.json"),
+        serde_json::to_string(&cfg).expect("serialize config"),
+    )
+    .expect("write transcript.json");
+    assert!(
+        livelink::services::whisper_native::record_for_screen(&config_dir, 1).is_none(),
+        "a server-backend config must not make the player dump audio"
+    );
 }
 
 #[test]

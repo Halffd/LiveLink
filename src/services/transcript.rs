@@ -21,6 +21,7 @@ use crate::config::TranscriptConfig;
 use crate::core::orchestrator::{Orchestrator, StreamChangeEvent, StreamChangeKind};
 use crate::player_ui::control;
 use crate::services::whisper_api;
+use crate::services::whisper_native::capture;
 
 /// Poll interval for task status and growing subtitles.
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
@@ -214,7 +215,7 @@ let response = self
     /// The blocking body of [`Self::follow_native`].
     fn transcribe_native(&self, screen: u32, url: &str) {
         use crate::services::whisper_native::{
-            capture::{self, download_command, run_pull},
+            capture::{download_command, run_pull},
             engine,
         };
 
@@ -243,10 +244,15 @@ let response = self
                     return;
                 }
             },
-            "record" => match capture::read_audio(&self.record_target()) {
+            "record" => match capture::read_audio(&self.record_target(screen)) {
                 Ok(audio) => (audio, "record"),
                 Err(e) => {
-                    warn!(screen, error = %e, "record capture read failed");
+                    warn!(
+                        screen,
+                        error = %e,
+                        path = %self.record_target(screen).display(),
+                        "record capture read failed (is the player dumping audio to this path?)"
+                    );
                     return;
                 }
             },
@@ -270,32 +276,56 @@ let response = self
             }
         };
 
+        let kind = capture::SourceKind::of(url);
+        if let Some(note) = capture::capture_note(kind) {
+            warn!(screen, kind = ?kind, "{note}");
+        }
         info!(
             screen,
+            kind = ?kind,
             source = source_label,
             seconds = audio.len() as f32 / 16_000.0,
             "captured audio for native transcription"
         );
 
-        // 3. Transcribe chunk by chunk, keeping cue offset from the stream
-        //    start so a growing .srt stays in sync.
+        // 3. Transcribe. A finite source (a local file or a VOD) has no
+        //    future to wait for, so it is cheaper and more accurate to
+        //    transcribe the whole thing in one pass — no chunking, no
+        //    artificial cue offset. A live stream has no end, so it must be
+        //    chunked with a stream-relative offset so the growing .srt stays
+        //    in sync.
         let mut segments: Vec<engine::Segment> = Vec::new();
-        let chunk_seconds = config.chunk_seconds.max(1);
-        let chunk_size = (16_000 * chunk_seconds) as usize;
-
-        for (index, chunk) in capture::chunk_audio(&audio, chunk_seconds).into_iter().enumerate() {
-            let offset_ms = (index * chunk_size / 16) as u64;
-            match engine.transcribe(&chunk) {
-                Ok(mut chunk_segments) => {
-                    for mut segment in chunk_segments.drain(..) {
-                        segment.start_ms += offset_ms;
-                        segment.end_ms += offset_ms;
-                        segments.push(segment);
+        let short_file = audio.len() <= 16_000 * 120;
+        match kind {
+            capture::SourceKind::LocalFile | capture::SourceKind::Video if short_file => {
+                // Small file: one pass, no chunking, no artificial offset.
+                match engine.transcribe(&audio) {
+                    Ok(chunk_segments) => segments.extend(chunk_segments),
+                    Err(e) => {
+                        warn!(screen, error = %e, "whisper failed on the file");
+                        return;
                     }
                 }
-                Err(e) => {
-                    warn!(screen, error = %e, chunk = index, "whisper failed on a chunk");
-                    return;
+            }
+            _ => {
+                // Live streams and large files: chunk, keeping a
+                // stream-relative offset so the growing .srt stays in sync.
+                let chunk_seconds = config.chunk_seconds.max(1) as u64;
+                for (index, chunk) in capture::chunk_audio(&audio, chunk_seconds as u32).into_iter().enumerate() {
+                    let offset_ms = (index as u64) * chunk_seconds * 1000u64;
+                    match engine.transcribe(&chunk) {
+                        Ok(mut chunk_segments) => {
+                            for mut segment in chunk_segments.drain(..) {
+                                segment.start_ms += offset_ms;
+                                segment.end_ms += offset_ms;
+                                segments.push(segment);
+                            }
+                        }
+                        Err(e) => {
+                            warn!(screen, error = %e, chunk = index, "whisper failed on a chunk");
+                            return;
+                        }
+                    }
                 }
             }
         }
@@ -314,8 +344,11 @@ let response = self
     }
 
     /// Where `record` capture expects the player to have dumped audio.
-    fn record_target(&self) -> std::path::PathBuf {
-        self.audio_root().join("record.wav")
+    ///
+    /// Per screen, because each screen is its own player: a shared path would
+    /// have screen 1's transcript produced from screen 2's audio.
+    fn record_target(&self, screen: u32) -> std::path::PathBuf {
+        capture::record_target(&self.audio_root(), screen)
     }
 
     /// Where `pa` capture writes the monitor recording.

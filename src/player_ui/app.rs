@@ -256,6 +256,16 @@ impl PlayerApp {
                     if window.rotate != 0 {
                         m.set_rotation(window.rotate);
                     }
+                    // If the transcript worker wants `record` capture, this
+                    // player must actually dump audio for it. The worker
+                    // computes the same per-screen path from the same
+                    // config, so the two agree without a handshake.
+                    if let Some(record_path) = crate::services::whisper_native::record_for_screen(
+                        &window.config_dir,
+                        screen_cfg.screen,
+                    ) {
+                        let _ = m.set_stream_record(&record_path);
+                    }
                     mpv = Some(m);
                 }
 

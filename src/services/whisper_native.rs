@@ -36,6 +36,32 @@ pub fn audio_dir(config: &TranscriptConfig, config_dir: &str) -> PathBuf {
     }
 }
 
+/// If this screen's config wants `record` capture, the path the player on
+/// that screen should dump audio to. `None` when `record` is not the chosen
+/// mode, so the player never dumps audio it does not need.
+///
+/// Both the player and the transcription worker compute this path from the
+/// same config dir, which is why they agree without any handshake.
+pub fn record_for_screen(config_dir: &std::path::Path, screen: u32) -> Option<String> {
+    let config = crate::config::ConfigLoader::with_base_path(
+        config_dir.to_str().unwrap_or("config"),
+    )
+    .load()
+    .transcript;
+    // Only when the native backend is actually in use: a server-backend
+    // config that happens to name `record` as its capture must not make the
+    // player dump audio it will never read.
+    if !config.native() || config.capture.as_str() != "record" {
+        return None;
+    }
+    let dir = if config.audio_dir.trim().is_empty() {
+        config_dir.join("transcripts")
+    } else {
+        PathBuf::from(&config.audio_dir)
+    };
+    Some(self::capture::record_target(&dir, screen).to_string_lossy().to_string())
+}
+
 /// Per-stream cache path. Same digest and file name as the server backend's
 /// [`crate::services::transcript::TranscriptWorker::srt_path`], so a
 /// transcript produced either way lands in the same place and a re-run with

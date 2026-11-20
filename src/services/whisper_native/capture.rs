@@ -24,6 +24,112 @@ use tracing::debug;
 
 use crate::config::TranscriptConfig;
 
+/// The mpv flag(s) that make a player dump its audio to `out`.
+///
+/// `--stream-record` writes the *container* as it arrives, which is what a
+/// live stream needs; mpv names an `.mkv` even when the target ends in
+/// `.wav`, so the caller must expect that and decode accordingly.
+///
+/// Returned as a vec so a caller can append it to an existing argv
+/// (`mpv::play` already forwards `extra_args`) or set it as an option on the
+/// embedded player.
+pub fn record_args(out: &Path) -> Vec<String> {
+    vec![format!("--stream-record={}", out.display())]
+}
+
+/// Where `record` capture expects a screen's player to have dumped audio.
+/// Named per screen so two screens never clobber each other.
+pub fn record_target(dir: &Path, screen: u32) -> PathBuf {
+    dir.join(format!("screen-{screen}.mkv"))
+}
+
+/// The mpv arguments a player on `screen` needs so `record` capture has
+/// something to read. Returned as a `Vec<String>` for the subprocess
+/// player's `extra_args`; the embedded player can turn each entry into an
+/// `init.set_option` call.
+pub fn player_record_args(config: &TranscriptConfig, config_dir: &str, screen: u32) -> Vec<String> {
+    if config.capture.as_str() != "record" {
+        return Vec::new();
+    }
+    let dir = if config.audio_dir.trim().is_empty() {
+        Path::new(config_dir).join("transcripts")
+    } else {
+        PathBuf::from(&config.audio_dir)
+    };
+    record_args(&record_target(&dir, screen))
+}
+
+/// What a stream is, for the transcription decision. Live and on-demand
+/// sources are genuinely different: a live stream has no end to read, and a
+/// local file can be transcribed in one pass with no streaming at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    /// A local file on disk (anime, music, downloaded video).
+    LocalFile,
+    /// A live stream: no duration, no seeking, still being written.
+    Live,
+    /// On-demand video behind a URL (a YouTube VOD, a Twitch VOD).
+    Video,
+}
+
+impl SourceKind {
+    /// Classify a source URL.
+    ///
+    /// Live detection is deliberately shallow — a `/live` path on a known
+    /// platform, or a raw live-stream endpoint — because guessing wrong is
+    /// the expensive mistake here: treating a VOD as live would make
+    /// `capture` read only a fragment of it.
+    pub fn of(url: &str) -> Self {
+        let lowered = url.to_ascii_lowercase();
+
+        // Platform live pages. A bare "/live" covers niconico and bilibili; the
+        // two VTuber/streaming hosts default their channel pages to live, so
+        // they need their own markers. HLS (.m3u8) is deliberately absent:
+        // it serves both live and VOD, and calling a VOD live would make
+        // capture read only a fragment.
+        // Platform live pages. A bare "/live" covers niconico and bilibili; the
+        // streaming hosts' channel URLs are live by default, but their VOD
+        // URLs must not match — classify those first so a /video/ or
+        // /videos/ page is treated as on-demand content. HLS (.m3u8) is
+        // deliberately absent from live detection: it serves both live and
+        // VOD, and calling a VOD live would make capture read only a
+        // fragment.
+        let video_paths = ["/video/", "/videos/", "/vod/"];
+        if video_paths.iter().any(|p| lowered.contains(p)) {
+            return Self::Video;
+        }
+
+        let live_markers = ["/live", "twitch.tv/", "kick.com/"];
+        if live_markers.iter().any(|marker| lowered.contains(marker)) {
+            return Self::Live;
+        }
+
+        if is_direct_audio_url(url) {
+            return Self::LocalFile;
+        }
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Self::Video;
+        }
+        Self::LocalFile
+    }
+}
+
+/// A note about how a capture mode behaves for a given source, when the
+/// pairing is worth a word. `None` means the pairing is unremarkable.
+pub fn capture_note(kind: SourceKind) -> Option<&'static str> {
+    match kind {
+        // `download` on a live stream has no defined end, so it runs until
+        // the timeout kills it and the chunk in hand is what gets
+        // transcribed. `record` is the mode that matches live streaming.
+        SourceKind::Live => Some(
+            "live source with download capture: the pull runs until the \
+             timeout and transcribes what it captured",
+        ),
+        SourceKind::LocalFile => None,
+        SourceKind::Video => None,
+    }
+}
+
 /// The command that will pull the audio, and the arguments it gets.
 ///
 /// Kept separate from running it so a caller (and a test) can see exactly
@@ -354,6 +460,35 @@ pub fn chunk_audio(audio: &[f32], seconds: u32) -> Vec<Vec<f32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_and_vod_are_not_confused() {
+        // A VOD URL on a live platform must not read as live: it is finite,
+        // so a streaming reader would truncate it.
+        assert_eq!(
+            SourceKind::of("https://www.twitch.tv/videos/12345"),
+            SourceKind::Video
+        );
+        assert_eq!(
+            SourceKind::of("https://www.kick.com/someguy/videos/abcde"),
+            SourceKind::Video
+        );
+        assert_eq!(SourceKind::of("https://www.twitch.tv/cellbit"), SourceKind::Live);
+        assert_eq!(
+            SourceKind::of("https://www.niconico.jp/live/abcde"),
+            SourceKind::Live
+        );
+        assert_eq!(
+            SourceKind::of("https://www.youtube.com/watch?v=abc"),
+            SourceKind::Video
+        );
+    }
+
+    #[test]
+    fn direct_audio_is_a_local_file() {
+        assert_eq!(SourceKind::of("https://x.test/audio.m4a"), SourceKind::LocalFile);
+        assert_eq!(SourceKind::of("/home/user/anime.mkv"), SourceKind::LocalFile);
+    }
 
     #[test]
     fn download_command_varies_by_resolver() {
