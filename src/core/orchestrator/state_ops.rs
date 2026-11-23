@@ -7,6 +7,20 @@ use super::Orchestrator;
 
 #[allow(dead_code)]
 impl Orchestrator {
+    /// Where a screen's media clock currently is, in milliseconds.
+    ///
+    /// `None` because nothing in the server tracks it live: `playback_time`
+    /// is recorded from the player's *exit* report, and the player window's
+    /// control protocol has no position query. Callers that need to shift
+    /// captured audio onto the player's clock (transcription) must read the
+    /// position from the player window itself, not from here.
+    ///
+    /// Returning `None` rather than `0` matters: `0` would silently mean
+    /// "stream starts at the beginning" and hide a real offset behind a
+    /// plausible number.
+    pub async fn media_position_ms(&self, _screen: u32) -> Option<u64> {
+        None
+    }
     pub async fn get_state(&self, screen: u32) -> Option<StreamState> {
         self.state.lock().await.get(&screen).map(|s| s.state)
     }

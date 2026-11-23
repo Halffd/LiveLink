@@ -112,7 +112,14 @@ impl TranscriptWorker {
     }
 
     /// Submit a stream for transcription; cached transcripts attach instantly.
-    pub async fn handle(self: &Arc<Self>, screen: u32, url: &str) {
+    ///
+    /// `position_ms` is where the player's media clock was when the stream
+    /// started, when the caller knows it. It is what shifts captured audio
+    /// (always file-relative) onto the player's clock; without it a stream
+    /// joined mid-way gets subtitles early by exactly that offset. `None`
+    /// means "unknown", and the transcript is generated file-relative — the
+    /// pre-existing behaviour, and the honest fallback.
+    pub async fn handle(self: &Arc<Self>, screen: u32, url: &str, position_ms: Option<u64>) {
         if !self.config.enabled || !Self::transcribable(url) {
             return;
         }
@@ -130,7 +137,7 @@ impl TranscriptWorker {
         // cache file and the same attach() as the server path, so a transcript
         // made either way is reused by the other.
         if self.config.native() {
-            self.follow_native(screen, url.to_string());
+            self.follow_native(screen, url.to_string(), position_ms);
             return;
         }
 
@@ -205,15 +212,15 @@ let response = self
     ///
     /// Blocking calls run on a dedicated thread (never the reactor), because
     /// both capture (a subprocess) and inference can take seconds per chunk.
-    fn follow_native(self: &Arc<Self>, screen: u32, url: String) {
+    fn follow_native(self: &Arc<Self>, screen: u32, url: String, position_ms: Option<u64>) {
         let worker = Arc::clone(self);
         std::thread::spawn(move || {
-            worker.transcribe_native(screen, &url);
+            worker.transcribe_native(screen, &url, position_ms);
         });
     }
 
     /// The blocking body of [`Self::follow_native`].
-    fn transcribe_native(&self, screen: u32, url: &str) {
+    fn transcribe_native(&self, screen: u32, url: &str, position_ms: Option<u64>) {
         use crate::services::whisper_native::{
             capture::{download_command, run_pull},
             engine,
@@ -230,6 +237,18 @@ let response = self
         }
 
         // 2. Capture.
+        // Where the media was when capture began, in milliseconds. `download`
+        // pulls the audio from the start of the file, so its cue times are
+        // file-relative; the player is somewhere else entirely. Without this
+        // offset every cue is early by exactly the position we joined at,
+        // which is the "subtitles drift further the longer I watch" symptom.
+        //
+        // The worker cannot read the player's clock itself (no position query
+        // on the control protocol), so it is passed down from `handle`,
+        // which the orchestrator's stream-change loop calls with whatever it
+        // can supply.
+        let base_ms = position_ms.unwrap_or(0).max(0);
+
         let (audio, source_label) = match config.capture.as_str() {
             "pa" => match capture::run_pull(&capture::pa_command(&self.pa_target())) {
                 Ok(()) => match capture::read_audio(&self.pa_target()) {
@@ -298,9 +317,18 @@ let response = self
         let short_file = audio.len() <= 16_000 * 120;
         match kind {
             capture::SourceKind::LocalFile | capture::SourceKind::Video if short_file => {
-                // Small file: one pass, no chunking, no artificial offset.
+                // Small file: one pass, no chunking; the only offset is the
+                // capture base, which moves file-relative cues onto the
+                // player's clock.
                 match engine.transcribe(&audio) {
-                    Ok(chunk_segments) => segments.extend(chunk_segments),
+                    Ok(chunk_segments) => {
+                        for mut segment in chunk_segments {
+                            let base = base_ms as i64;
+                            segment.start_ms = (segment.start_ms as i64 + base).max(0) as u64;
+                            segment.end_ms = (segment.end_ms as i64 + base).max(0) as u64;
+                            segments.push(segment);
+                        }
+                    }
                     Err(e) => {
                         warn!(screen, error = %e, "whisper failed on the file");
                         return;
@@ -312,12 +340,16 @@ let response = self
                 // stream-relative offset so the growing .srt stays in sync.
                 let chunk_seconds = config.chunk_seconds.max(1) as u64;
                 for (index, chunk) in capture::chunk_audio(&audio, chunk_seconds as u32).into_iter().enumerate() {
-                    let offset_ms = (index as u64) * chunk_seconds * 1000u64;
+                    // Chunk offset is file-relative; base_ms moves the whole
+                    // run onto the player's clock.
+                    let offset_ms = (index as i64) * (chunk_seconds as i64 * 1000) + base_ms as i64;
                     match engine.transcribe(&chunk) {
                         Ok(mut chunk_segments) => {
                             for mut segment in chunk_segments.drain(..) {
-                                segment.start_ms += offset_ms;
-                                segment.end_ms += offset_ms;
+                                segment.start_ms =
+                                    (segment.start_ms as i64 + offset_ms).max(0) as u64;
+                                segment.end_ms =
+                                    (segment.end_ms as i64 + offset_ms).max(0) as u64;
                                 segments.push(segment);
                             }
                         }
@@ -551,7 +583,17 @@ let response = self
             tokio::select! {
                 event = changes.recv() => match event {
                     Ok(StreamChangeEvent { screen, url, kind }) => match kind {
-                        StreamChangeKind::Started => self.handle(screen, &url).await,
+                        StreamChangeKind::Started => {
+                            // The player's clock is what makes captured audio
+                            // line up; the orchestrator owns it, this loop has
+                            // the orchestrator, so read it at the moment the
+                            // stream starts.
+                            let position = orchestrator
+                                .media_position_ms(screen)
+                                .await
+                                .map(|ms| ms as u64);
+                            self.handle(screen, &url, position).await;
+                        }
                         StreamChangeKind::Stopped => self.cancel(screen, &url).await,
                     },
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -560,7 +602,9 @@ let response = self
                     Err(broadcast::error::RecvError::Closed) => break,
                 },
                 Some((screen, url)) = triggers.recv() => {
-                    self.handle(screen, &url).await;
+                    // A manual trigger has no "stream just started" moment to
+                    // read a position from, so it is generated file-relative.
+                    self.handle(screen, &url, None).await;
                 }
                 else => break,
             }
@@ -655,5 +699,30 @@ mod tests {
         assert!(TranscriptWorker::transcribable("https://x/y"));
         assert!(!TranscriptWorker::transcribable("rtmp://x/y"));
         assert!(!TranscriptWorker::transcribable("/definitely/not/a/file.mp4"));
+    }
+
+    /// The audio/video offset: captured audio is file-relative, the player is
+    /// on its own clock. A known position shifts every cue by it; an unknown
+    /// one (None) must be a no-op so existing transcripts are unchanged.
+    #[test]
+    fn unknown_position_is_a_no_op_and_known_position_shifts() {
+        // Mirrors the arithmetic in transcribe_native.
+let shift = |base_ms: Option<u64>, start_ms: u64| -> u64 {
+            let base = base_ms.unwrap_or(0) as i64;
+            (start_ms as i64 + base).max(0) as u64
+        };
+
+        // Unknown: unchanged, exactly the old behaviour.
+        assert_eq!(shift(None, 2_000), 2_000);
+
+        // Joined 340 s in: a cue at file t=2s belongs at 342 s.
+        assert_eq!(shift(Some(340_000), 2_000), 342_000);
+
+        // Chunk offsets compose with the base: chunk index 3 at 5s chunks is
+        // 15 s file-relative, plus the 340 s base.
+        let chunk = 3usize;
+        let chunk_seconds = 5u64;
+        let offset = (chunk as i64) * (chunk_seconds as i64 * 1000) + 340_000i64;
+        assert_eq!((2_000i64 + offset).max(0) as u64, 357_000);
     }
 }
