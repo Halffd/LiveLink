@@ -156,11 +156,15 @@ pub async fn resolve_with_streamlink(
 
 pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     let (tx, rx) = mpsc::channel();
+    // One hub per window: the listener threads queue `get-*` queries on it
+    // and the UI answers them in `update()`, which is the only place the
+    // player state is stable.
+    let hub = control::QueryHub::new();
     if let Some(port) = window.control_port {
-        control::spawn_listener(port, tx.clone());
+        control::spawn_listener(port, tx.clone(), hub.clone());
     }
     if let Some(path) = &window.ipc_socket {
-        control::spawn_unix_listener(path.clone(), tx.clone());
+        control::spawn_unix_listener(path.clone(), tx.clone(), hub.clone());
     }
     if window.control_port.is_none() && window.ipc_socket.is_none() {
         drop(tx); // receiver reports disconnection; app treats it as idle
@@ -187,7 +191,7 @@ pub fn run(window: PlayerWindowConfig) -> Result<(), String> {
     eframe::run_native(
         "LiveLink Player",
         options,
-        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx)))),
+        Box::new(move |cc| Ok(Box::new(app::PlayerApp::new(cc, &window, rx, hub)))),
     )
     .map_err(|e| format!("player window failed: {e}"))
 }

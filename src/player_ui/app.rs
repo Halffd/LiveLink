@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 use crate::core::subtitles::{resolve_delay, SubtitleMode, MAX_SUB_DELAY};
-use crate::player_ui::control::PlayerCommand;
+use crate::player_ui::control::{PlayerCommand, QueryHub};
 use crate::player_ui::settings::{
     PlayerUiSettings, CONTROLS_ALWAYS, CONTROLS_AUTO, CONTROLS_NEVER,
 };
@@ -99,6 +99,9 @@ pub struct PlayerApp {
     settings_dirty: bool,
     config_dir: PathBuf,
     cmd_rx: Receiver<PlayerCommand>,
+    /// Out-of-band queries from the control listener: answered in `update()`,
+    /// which is the only place the player state is stable.
+    query_hub: QueryHub,
     screen: u32,
     control_port: Option<u16>,
     last_pointer_move: Option<Instant>,
@@ -236,6 +239,7 @@ impl PlayerApp {
         cc: &eframe::CreationContext<'_>,
         window: &PlayerWindowConfig,
         cmd_rx: Receiver<PlayerCommand>,
+        query_hub: QueryHub,
     ) -> Self {
         let screen_cfg = &window.screen_cfg;
 
@@ -296,6 +300,7 @@ impl PlayerApp {
             settings_dirty: false,
             config_dir: window.config_dir.clone(),
             cmd_rx,
+            query_hub,
             screen: screen_cfg.screen,
             control_port: window.control_port,
             last_pointer_move: None,
@@ -1549,6 +1554,54 @@ impl PlayerApp {
         self.load_current();
     }
 
+    /// (position_seconds, duration_seconds) of the loaded media, (0, 0) when
+    /// no player exists. The media clock is what lets anything outside this
+    /// window line up its own timing with playback.
+    fn clock(&mut self) -> (f64, f64) {
+        match &mut self.mpv {
+            Some(mpv) => (mpv.time_pos(), mpv.duration()),
+            None => (0.0, 0.0),
+        }
+    }
+
+    /// Answer every `get-*` query the control listener forwarded.
+    ///
+    /// This is the reason the audio/video offset can exist at all: a query
+    /// like `get-position` is how anything outside this window learns the
+    /// media clock. Answered here rather than in the listener because this is
+    /// the only thread that owns the player state.
+    fn answer_queries(&mut self) {
+        for (cmd, reply_tx) in self.query_hub.take() {
+            let answer = match cmd.as_str() {
+                "get-position" => {
+                    let (position, duration) = self.clock();
+                    serde_json::json!({ "position": position, "duration": duration })
+                }
+                "get-status" => {
+                    let (position, duration) = self.clock();
+                    serde_json::json!({
+                        "playing": self.mpv.as_ref().map(|m| m.playing).unwrap_or(false),
+                        "paused": self.mpv.as_ref().map(|m| m.paused).unwrap_or(false),
+                        "volume": self.settings.volume,
+                        "speed": self.mpv.as_ref().map(|m| m.speed()).unwrap_or(1.0),
+                        "muted": self.mpv.as_ref().map(|m| m.muted()).unwrap_or(false),
+                        "index": self.index,
+                        "playlist_len": self.playlist.len(),
+                        "position": position,
+                        "duration": duration,
+                        "now_playing": self.playlist.get(self.index).cloned(),
+                    })
+                }
+                // Unknown query: empty object, never a dropped connection.
+                other => {
+                    tracing::warn!(cmd = %other, "unknown control query");
+                    serde_json::json!({})
+                }
+            };
+            let _ = reply_tx.send(answer.to_string());
+        }
+    }
+
     fn drain_commands(&mut self, ctx: &egui::Context) {
         self.drain_torrent();
         while let Ok(cmd) = self.cmd_rx.try_recv() {
@@ -2592,6 +2645,7 @@ impl eframe::App for PlayerApp {
             self.apply_viewport_settings(ctx);
         }
 
+        self.answer_queries();
         self.drain_commands(ctx);
         // Whisper panel replies are applied here (never inside paint, which
         // must not block on the network).

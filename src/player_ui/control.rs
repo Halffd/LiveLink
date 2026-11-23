@@ -24,8 +24,17 @@
 //!   {"cmd":"sub-mode-cycle"}              cycle to the next mode
 //!   {"cmd":"sub-toggle-secondary"}        toggle the secondary lane
 //!   {"cmd":"next"} / {"cmd":"prev"}       playlist navigation
+//!   {"cmd":"get-position"}                reply: {"position":12.5,"duration":60}
+//!   {"cmd":"get-status"}                  reply: {"playing":true,"paused":false,
+//!                                          "volume":80,"speed":1.0,"muted":false,
+//!                                          "index":0,"playlist_len":2,
+//!                                          "position":12.5,"duration":60,
+//!                                          "now_playing":"<url>"}
 //!   {"cmd":"reload"}                      reload player-ui.toml
 //!   {"cmd":"quit"}                        close this player window
+//!
+//! Queries (`get-*`) are answered on the **same connection**, so a caller
+//! sends one line and reads one line back. Commands are fire-and-forget.
 
 use serde::Deserialize;
 use std::net::TcpListener;
@@ -35,6 +44,49 @@ use std::sync::mpsc::Sender;
 /// defaults to `DEFAULT_BASE_PORT + N`. The server uses the same convention to
 /// forward stream changes.
 pub const DEFAULT_BASE_PORT: u16 = 3100;
+
+/// Carries a query from the listener thread to the UI and the answer back.
+///
+/// The listener thread owns the caller's connection and blocks on `reply`
+/// until the UI has read the current player state; the UI answers in
+/// `update()`, which is the only place the state is stable. One hub per
+/// window, created in [`spawn_listener`]'s caller so both threads share it.
+#[derive(Clone)]
+pub struct QueryHub {
+    pending: std::sync::Arc<std::sync::Mutex<Vec<(String, std::sync::mpsc::Sender<String>)>>>,
+}
+
+impl QueryHub {
+    pub fn new() -> Self {
+        Self {
+            pending: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Listener side: queue a query and wait for the UI's answer. Bounded by
+    /// [`QUERY_TIMEOUT`] so a wedged UI cannot hang the listener forever.
+    pub fn ask(&self, cmd: &str) -> Option<String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        {
+            let mut pending = self.pending.lock().ok()?;
+            pending.push((cmd.to_string(), tx));
+        }
+        rx.recv_timeout(QUERY_TIMEOUT).ok()
+    }
+
+    /// UI side: take every unanswered query. Called from `update()`.
+    pub fn take(&self) -> Vec<(String, std::sync::mpsc::Sender<String>)> {
+        let Ok(mut pending) = self.pending.lock() else {
+            return Vec::new();
+        };
+        std::mem::take(&mut *pending)
+    }
+}
+
+/// How long the listener waits for the UI to answer a query. The UI answers
+/// within a frame (16 ms at 60 fps), so anything near a second means the
+/// window is gone and the caller should give up rather than hang.
+const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct PlayerCommand {
@@ -71,6 +123,13 @@ pub fn parse_line(line: &str) -> Option<PlayerCommand> {
     serde_json::from_str(line.trim()).ok()
 }
 
+/// True for the `get-*` commands, which are answered on the caller's
+/// connection instead of being forwarded to the UI. Everything else is
+/// fire-and-forget.
+pub fn is_query(cmd: &str) -> bool {
+    cmd.starts_with("get-")
+}
+
 /// Read one newline-terminated JSON command from an established connection
 /// (one connection per command batch). Shared by the TCP and Unix listeners.
 fn read_command_line(stream: &mut impl std::io::Read) -> Option<String> {
@@ -94,36 +153,45 @@ fn read_command_line(stream: &mut impl std::io::Read) -> Option<String> {
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
-/// Dispatch one parsed line to `tx`; returns `false` when the receiver is
-/// gone (window closed) and the listener thread should exit.
-fn dispatch_line(line: &str, tx: &Sender<PlayerCommand>, source: &str) -> bool {
-    match parse_line(line) {
-        Some(cmd) => {
-            if tx.send(cmd).is_err() {
-                return false; // UI gone
-            }
-        }
-        None => {
-            if !line.trim().is_empty() {
-                tracing::warn!(source, line = %line.trim(), "unparsable control command dropped");
-            }
-        }
-    }
-    true
+/// Answer one query on the caller's connection: ask the UI, write the reply.
+///
+/// A query the UI cannot answer (timeout) gets an empty JSON object rather
+/// than a dropped connection, so a caller can distinguish "no answer" from
+/// "window gone".
+fn answer_query(stream: &mut impl std::io::Write, cmd: &str, hub: &QueryHub) {
+    let reply = hub.ask(cmd).unwrap_or_else(|| "{}".to_string());
+    let _ = stream.write_all(reply.as_bytes());
+    let _ = stream.write_all(b"\n");
+    let _ = stream.flush();
 }
 
 /// Bind `127.0.0.1:port` and forward parsed commands to `tx`. On bind failure
 /// (e.g. TIME_WAIT after a respawn) the thread retries every 5 seconds so a
 /// supervised player eventually owns its port. Never returns.
-pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>) {
+///
+/// `hub` carries `get-*` queries: the listener answers them on the caller's
+/// connection, since the UI cannot reach the connection itself.
+pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>, hub: QueryHub) {
     std::thread::spawn(move || loop {
         match TcpListener::bind(("127.0.0.1", port)) {
             Ok(listener) => {
                 for stream in listener.incoming() {
                     let Ok(mut stream) = stream else { continue };
                     let Some(line) = read_command_line(&mut stream) else { continue };
-                    if !dispatch_line(&line, &tx, "tcp") {
-                        return; // UI gone
+                    match parse_line(&line) {
+                        Some(cmd) if is_query(&cmd.cmd) => {
+                            answer_query(&mut stream, &cmd.cmd, &hub);
+                        }
+                        Some(cmd) => {
+                            if tx.send(cmd).is_err() {
+                                return; // UI gone
+                            }
+                        }
+                        None => {
+                            if !line.trim().is_empty() {
+                                tracing::warn!(source = "tcp", line = %line.trim(), "unparsable control command dropped");
+                            }
+                        }
                     }
                 }
             }
@@ -139,7 +207,7 @@ pub fn spawn_listener(port: u16, tx: Sender<PlayerCommand>) {
 /// same line-delimited JSON protocol as [`spawn_listener`]. Retries every 5
 /// seconds on bind failure (e.g. another window still owns the socket).
 /// Never returns.
-pub fn spawn_unix_listener(path: std::path::PathBuf, tx: Sender<PlayerCommand>) {
+pub fn spawn_unix_listener(path: std::path::PathBuf, tx: Sender<PlayerCommand>, hub: QueryHub) {
     std::thread::spawn(move || loop {
         // A leftover socket file from a previous run makes bind fail; only a
         // live listener would keep accept from succeeding, and remove at
@@ -150,9 +218,21 @@ pub fn spawn_unix_listener(path: std::path::PathBuf, tx: Sender<PlayerCommand>) 
                 for stream in listener.incoming() {
                     let Ok(mut stream) = stream else { continue };
                     let Some(line) = read_command_line(&mut stream) else { continue };
-                    if !dispatch_line(&line, &tx, "unix") {
-                        let _ = std::fs::remove_file(&path);
-                        return; // UI gone
+                    match parse_line(&line) {
+                        Some(cmd) if is_query(&cmd.cmd) => {
+                            answer_query(&mut stream, &cmd.cmd, &hub);
+                        }
+                        Some(cmd) => {
+                            if tx.send(cmd).is_err() {
+                                let _ = std::fs::remove_file(&path);
+                                return; // UI gone
+                            }
+                        }
+                        None => {
+                            if !line.trim().is_empty() {
+                                tracing::warn!(source = "unix", line = %line.trim(), "unparsable control command dropped");
+                            }
+                        }
                     }
                 }
             }
@@ -175,12 +255,46 @@ pub async fn send_command(port: u16, line: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The same command without an async caller, for code that runs on a plain
-/// thread with no reactor available (the native transcription worker).
-///
-/// Same protocol and the same "no window listening is not an error" rule as
-/// [`send_command`]: a closed window simply has nothing to tell.
-pub fn send_command_sync(port: u16, line: &str) -> std::io::Result<()> {
+/// Ask a player window a `get-*` query and return its parsed answer.
+    ///
+    /// The window replies on the same connection, so this sends one line and
+    /// reads one line. `None` when no window is listening (the normal case
+    /// when it is closed) or the reply is not JSON.
+    pub async fn query(port: u16, cmd: &str) -> Option<serde_json::Value> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .ok()?;
+        let line = serde_json::json!({ "cmd": cmd }).to_string();
+        stream.write_all(line.as_bytes()).await.ok()?;
+        stream.write_all(b"\n").await.ok()?;
+        stream.flush().await.ok()?;
+
+        // One reply, one line. A player that never answers must not wedge
+        // the caller, so the read is bounded.
+        let mut buf = [0u8; 8192];
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            stream.read(&mut buf),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        let text = String::from_utf8_lossy(&buf[..read]);
+        let text = text.trim();
+        if text.is_empty() {
+            return None;
+        }
+        serde_json::from_str(text).ok()
+    }
+
+    /// The same command without an async caller, for code that runs on a plain
+    /// thread with no reactor available (the native transcription worker).
+    ///
+    /// Same protocol and the same "no window listening is not an error" rule as
+    /// [`send_command`]: a closed window simply has nothing to tell.
+    pub fn send_command_sync(port: u16, line: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port))?;
     stream.write_all(line.as_bytes())?;
@@ -261,6 +375,68 @@ mod tests {
         );
     }
 
+    /// A `get-*` line is answered on the connection; everything else is
+    /// forwarded. Misclassifying would be total: a real command read as a
+    /// query gets no UI work done, a query read as a command is dropped.
+    #[test]
+    fn only_get_prefixed_commands_are_queries() {
+        for cmd in ["get-position", "get-status"] {
+            let parsed = parse_line(&format!(r#"{{"cmd":"{cmd}"}}"#)).expect("parses");
+            assert!(is_query(&parsed.cmd), "{cmd} must be a query");
+        }
+        for cmd in ["play", "pause", "volume", "seek", "sub-add", "quit"] {
+            let parsed = parse_line(&format!(r#"{{"cmd":"{cmd}"}}"#)).expect("parses");
+            assert!(!is_query(&parsed.cmd), "{cmd} must not be a query");
+        }
+        // A command that merely *starts* with get- letters is still a query
+        // by this rule; the UI's match arm decides what is answered, and an
+        // unknown one replies {} rather than doing work.
+        assert!(is_query("get-nonsense"));
+    }
+
+    /// The query hub must round-trip: the listener queues, the UI takes, the
+    /// answer comes back on the same channel. Without this the listener
+    /// would block for the full timeout on every query.
+    #[test]
+    fn query_hub_round_trips_an_answer() {
+        let hub = QueryHub::new();
+
+        // Listener side: parked on its own thread because ask() blocks until
+        // the UI answers.
+        let listener_hub = hub.clone();
+        let listener = std::thread::spawn(move || listener_hub.ask("get-position"));
+
+        // UI side: the query appears exactly once.
+        let mut answered = None;
+        for _ in 0..200 {
+            let pending = hub.take();
+            if let Some((cmd, tx)) = pending.into_iter().next() {
+                assert_eq!(cmd, "get-position");
+                let _ = tx.send(r#"{"position":12.5,"duration":60.0}"#.to_string());
+                answered = Some(cmd);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(answered.as_deref(), Some("get-position"));
+
+        // The listener got the answer, and the pending queue is now empty
+        // (take() drains, so nothing lingers for the next frame).
+        let reply = listener.join().expect("listener thread panicked");
+        assert_eq!(reply.as_deref(), Some(r#"{"position":12.5,"duration":60.0}"#));
+        assert!(hub.take().is_empty(), "answered query must not linger");
+    }
+
+    /// A query the UI never answers must not hang the listener forever.
+    #[test]
+    fn an_unanswered_query_times_out() {
+        let hub = QueryHub::new();
+        let queued = hub.ask("get-position");
+        // Nothing answers on the UI side, and the timeout is 2s, so the
+        // caller must get None rather than blocking forever.
+        assert!(queued.is_none(), "ask must give up when nobody answers");
+    }
+
     #[tokio::test]
     async fn resolve_keeps_non_http_urls_unchanged() {
         let resolved = super::super::resolve_with_streamlink("streamlink", "/tmp/a.mp4", "best").await;
@@ -281,7 +457,7 @@ mod tests {
         let sock = dir.join("player.sock");
 
         let (tx, rx) = std::sync::mpsc::channel();
-        spawn_unix_listener(sock.clone(), tx);
+        spawn_unix_listener(sock.clone(), tx, QueryHub::new());
 
         let mut bound = false;
         for _ in 0..50 {
@@ -323,7 +499,7 @@ mod tests {
         std::fs::write(&sock, b"garbage").unwrap(); // leftover from a dead run
 
         let (tx, rx) = std::sync::mpsc::channel();
-        spawn_unix_listener(sock.clone(), tx);
+        spawn_unix_listener(sock.clone(), tx, QueryHub::new());
 
         let mut stream = None;
         for _ in 0..50 {

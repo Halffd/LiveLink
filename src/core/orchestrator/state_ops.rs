@@ -9,17 +9,24 @@ use super::Orchestrator;
 impl Orchestrator {
     /// Where a screen's media clock currently is, in milliseconds.
     ///
-    /// `None` because nothing in the server tracks it live: `playback_time`
-    /// is recorded from the player's *exit* report, and the player window's
-    /// control protocol has no position query. Callers that need to shift
-    /// captured audio onto the player's clock (transcription) must read the
-    /// position from the player window itself, not from here.
-    ///
-    /// Returning `None` rather than `0` matters: `0` would silently mean
-    /// "stream starts at the beginning" and hide a real offset behind a
-    /// plausible number.
-    pub async fn media_position_ms(&self, _screen: u32) -> Option<u64> {
-        None
+    /// Both backends answer: a player window via its `get-position` query,
+    /// a subprocess player via the service it holds. `None` when neither can
+    /// answer — a closed window has no clock, and `None` (not `0`) is the
+    /// honest answer: `0` would silently mean "stream starts at the
+    /// beginning" and hide a real offset behind a plausible number.
+    pub async fn media_position_ms(&self, screen: u32) -> Option<u64> {
+        if self.window_playback() {
+            let port = crate::player_ui::control::DEFAULT_BASE_PORT
+                .saturating_add(u16::try_from(screen).unwrap_or(0));
+            let reply = crate::player_ui::control::query(port, "get-position").await?;
+            let position = reply.get("position").and_then(|v| v.as_f64())?;
+            return Some((position.max(0.0) * 1000.0) as u64);
+        }
+
+        let player = self.player.lock().await;
+        player
+            .get_playback_time(screen, 0)
+            .map(|seconds| (seconds.max(0.0) * 1000.0) as u64)
     }
     pub async fn get_state(&self, screen: u32) -> Option<StreamState> {
         self.state.lock().await.get(&screen).map(|s| s.state)
