@@ -336,6 +336,27 @@ let response = self
         let srt = engine::to_srt(&segments);
         save_if_changed(&cache, &srt);
         info!(screen, path = %cache.display(), "native transcript written");
+
+        // If the player already carries a subtitle track for this stream
+        // (downloaded subs, embedded subs, a previous run's file), alass can
+        // align it against this Whisper output, which is the timing ground
+        // truth. This is the "second viewing is instant" path: the corrected
+        // file lands in the cache and the player reads it.
+        if let Some(existing) = self.existing_subtitle_for(url) {
+            match crate::services::subtitle_sync::alass_sync(&cache, &existing) {
+                Ok(result) => {
+                    info!(
+                        screen,
+                        path = %existing.display(),
+                        offset_ms = result.offset_ms,
+                        "alass aligned the existing subtitle track against whisper"
+                    );
+                }
+                Err(e) => {
+                    debug!(screen, error = %e, "alass unavailable or unconvinced");
+                }
+            }
+        }
         // attach() is async because the server path is; this path is a plain
         // thread, so use the blocking port send it wraps.
         // A closed window is the expected case (nothing to tell), so the send's
@@ -378,6 +399,60 @@ let response = self
     /// The control port a screen's player window listens on.
     fn control_port(&self, screen: u32) -> u16 {
         control::DEFAULT_BASE_PORT.saturating_add(u16::try_from(screen).unwrap_or(0))
+    }
+
+    /// The subtitle file already on disk for this stream, if any: a
+    /// `--write-subs` download, an embedded track extracted earlier, or a
+    /// previous run's transcript. Only files whose name does not collide
+    /// with the cache path we are about to write are considered, so we never
+    /// try to align a file with itself.
+    fn existing_subtitle_for(&self, url: &str) -> Option<std::path::PathBuf> {
+        let mut candidates = Vec::new();
+
+        // A subtitle next to the media itself (local files, and downloads
+        // fetched into the same directory as the media).
+        if std::path::Path::new(url).is_file() {
+            for ext in ["srt", "ass", "ssa", "vtt", "sub"] {
+                let sibling = std::path::Path::new(url).with_extension(ext);
+                if sibling.is_file() {
+                    candidates.push(sibling);
+                }
+            }
+        }
+
+        // A subtitle in the same cache directory, named after the media's
+        // hash but not the file we generate (which is `<hash>.srt`).
+        let mut hasher = DefaultHasher::new();
+        url.hash(&mut hasher);
+        let stem = format!("{:016x}", hasher.finish());
+        let cache_dir = if self.config.audio_dir.trim().is_empty() {
+            self.transcripts_dir.clone()
+        } else {
+            std::path::PathBuf::from(&self.config.audio_dir)
+        };
+        if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                if !name.starts_with(&stem) || name == format!("{stem}.srt") {
+                    continue;
+                }
+                if path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    ["srt", "ass", "ssa", "vtt", "sub"].contains(&e)
+                }) {
+                    candidates.push(path);
+                }
+            }
+        }
+
+        // Prefer the newest: it is the one the player would have shown.
+        candidates
+            .into_iter()
+            .filter_map(|p| std::fs::metadata(&p).ok().map(|m| (p, m)))
+            .max_by_key(|(_, m)| m.modified().unwrap_or(std::time::UNIX_EPOCH))
+            .map(|(p, _)| p)
     }
 
     /// The sub-add command line for a transcript file.

@@ -19,6 +19,8 @@
 //! means a fix for one language is a fix for all of them. No new algorithm
 //! to maintain.
 
+pub mod xcorr;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
