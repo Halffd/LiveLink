@@ -16,7 +16,10 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq)]
 pub enum RubySegment {
     Plain(String),
-    Ruby { base: String, reading: String },
+    Ruby {
+        base: String,
+        reading: String,
+    },
     /// A token with its metadata, for hover/click interaction.
     ///
     /// The same visual shape as [`RubySegment::Ruby`] when a reading exists,
@@ -69,9 +72,9 @@ impl Token {
         }
         // No POS (a hand-built token, as in unit tests): fall back to
         // "carries at least one non-punctuation character".
-        self.surface.chars().any(|c| {
-            !c.is_whitespace() && !c.is_ascii_punctuation() && !is_cjk_punctuation(c)
-        })
+        self.surface
+            .chars()
+            .any(|c| !c.is_whitespace() && !c.is_ascii_punctuation() && !is_cjk_punctuation(c))
     }
 
     /// The key a dictionary lookup should use: base form first (it is what a
@@ -311,7 +314,10 @@ fn parse_mecab_output_detailed(output: &str) -> Vec<Token> {
         .filter_map(|line| {
             let (surface, features) = line.split_once('\t')?;
             let mut fields = features.split(',');
-            let pos = fields.next().filter(|p| !p.is_empty() && *p != "*").map(str::to_string);
+            let pos = fields
+                .next()
+                .filter(|p| !p.is_empty() && *p != "*")
+                .map(str::to_string);
             // Indices are ipadic's: 0 POS, 6 base form, 7 reading.
             let by_index = |i: usize| {
                 features
@@ -333,9 +339,7 @@ fn parse_mecab_output_detailed(output: &str) -> Vec<Token> {
 
 /// Tokenize through a system mecab subprocess, keeping full metadata.
 fn mecab_tokens_detailed(bin: &Path, text: &str) -> Option<Vec<Token>> {
-    Some(parse_mecab_output_detailed(
-        &mecab_tokens_raw(bin, text)?,
-    ))
+    Some(parse_mecab_output_detailed(&mecab_tokens_raw(bin, text)?))
 }
 
 /// Run system mecab and return its raw stdout.
@@ -774,7 +778,11 @@ mod dictionary_tests {
     fn segment_text_covers_every_variant() {
         assert_eq!(RubySegment::Plain("abc".into()).text(), "abc");
         assert_eq!(
-            RubySegment::Ruby { base: "漢字".into(), reading: "かんじ".into() }.text(),
+            RubySegment::Ruby {
+                base: "漢字".into(),
+                reading: "かんじ".into()
+            }
+            .text(),
             "漢字"
         );
         let token = Token {
@@ -1006,4 +1014,3 @@ mod tests {
         );
     }
 }
-

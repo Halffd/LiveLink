@@ -90,7 +90,11 @@ fn paint_ruby_line(
                 RubySegment::Ruby { base, reading } => {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                         if !reading.is_empty() {
-                            ui.label(egui::RichText::new(reading.as_str()).size(reading_size).weak());
+                            ui.label(
+                                egui::RichText::new(reading.as_str())
+                                    .size(reading_size)
+                                    .weak(),
+                            );
                         }
                         ui.label(egui::RichText::new(base.as_str()).size(base_size).strong());
                     });
@@ -126,7 +130,10 @@ fn paint_ruby_line(
     });
     let id = ui.id().with("ruby_line");
     let line = ui.interact(inner.response.rect, id, egui::Sense::click());
-    WordClick { line, word: clicked_word }
+    WordClick {
+        line,
+        word: clicked_word,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,7 +335,13 @@ impl PlayerApp {
             // SAFETY: the loader is owned by the eframe runner and outlives the app.
             let proc_addr: &'static dyn Fn(&std::ffi::CStr) -> *const std::ffi::c_void =
                 unsafe { std::mem::transmute(proc_addr) };
-            match MpvVideo::new(gl, proc_addr, screen_cfg.width, screen_cfg.height, &window.hwdec) {
+            match MpvVideo::new(
+                gl,
+                proc_addr,
+                screen_cfg.width,
+                screen_cfg.height,
+                &window.hwdec,
+            ) {
                 Ok(mut m) => {
                     let volume = window.volume.unwrap_or(settings.volume);
                     m.set_volume(volume);
@@ -362,8 +375,7 @@ impl PlayerApp {
         // Loaded before `dictionary_dir` is moved into the tokenizer config:
         // the popup and the tokenizer share one directory, so they are read
         // from the same place.
-        let reading_dictionary =
-            crate::player_ui::reading::Dictionary::load_dir(&dictionary_dir);
+        let reading_dictionary = crate::player_ui::reading::Dictionary::load_dir(&dictionary_dir);
         crate::player_ui::reading::init(crate::player_ui::reading::ReadingConfig {
             dictionary_dir: Some(dictionary_dir),
             mecab_path: settings.reading_mecab_path.clone(),
@@ -980,11 +992,13 @@ impl PlayerApp {
                         .to_string(),
                     value["transcript"]["language"].as_str().map(str::to_string),
                     value["transcript"]["vad"].as_bool().unwrap_or(true),
-                    value["transcript"]["diarization"].as_bool().unwrap_or(false),
+                    value["transcript"]["diarization"]
+                        .as_bool()
+                        .unwrap_or(false),
                 ))
             });
-        let (engine, language, vad, diarization) = transcript_cfg
-            .unwrap_or_else(|| ("whisperx".to_string(), None, true, false));
+        let (engine, language, vad, diarization) =
+            transcript_cfg.unwrap_or_else(|| ("whisperx".to_string(), None, true, false));
         self.ws_task_status = Some("submitting…".to_string());
         self.ws_send(super::whisper_subs::WsRequest::Transcribe {
             source,
@@ -1076,11 +1090,9 @@ impl PlayerApp {
     }
 
     fn paint_ws_library(&mut self, ui: &mut egui::Ui) {
-        if self.ws_library.is_none() {
-            if self.ws_request_section(0) {
-                ui.weak("loading library…");
-                return;
-            }
+        if self.ws_library.is_none() && self.ws_request_section(0) {
+            ui.weak("loading library…");
+            return;
         }
         ui.horizontal(|ui| {
             if ui
@@ -1117,12 +1129,15 @@ impl PlayerApp {
                         if let Some(first) =
                             item["urls"]["media"].as_array().and_then(|a| a.first())
                         {
-                            let url = super::whisper_subs::resolve(&base, first["url"].as_str().unwrap_or_default());
+                            let url = super::whisper_subs::resolve(
+                                &base,
+                                first["url"].as_str().unwrap_or_default(),
+                            );
                             let sub = super::whisper_subs::resolve(&base, srt);
                             // Local playlist files expand so the window's own
-                        // next/prev walks the entries; URIs and files pass
-                        // through unchanged.
-                        self.playlist = super::sources::expand_source(&url);
+                            // next/prev walks the entries; URIs and files pass
+                            // through unchanged.
+                            self.playlist = super::sources::expand_source(&url);
                             self.index = 0;
                             self.subtitles = vec![sub];
                             self.load_current();
@@ -1198,11 +1213,9 @@ impl PlayerApp {
                 });
             return;
         }
-        if self.ws_channels.is_none() {
-            if self.ws_request_section(1) {
-                ui.weak("loading channels…");
-                return;
-            }
+        if self.ws_channels.is_none() && self.ws_request_section(1) {
+            ui.weak("loading channels…");
+            return;
         }
         let items = self.ws_channels.clone().unwrap_or_default();
         egui::ScrollArea::vertical()
@@ -1228,11 +1241,9 @@ impl PlayerApp {
     }
 
     fn paint_ws_live(&mut self, ui: &mut egui::Ui) {
-        if self.ws_live.is_none() {
-            if self.ws_request_section(2) {
-                ui.weak("loading live tasks…");
-                return;
-            }
+        if self.ws_live.is_none() && self.ws_request_section(2) {
+            ui.weak("loading live tasks…");
+            return;
         }
         let items = self.ws_live.clone().unwrap_or_default();
         egui::ScrollArea::vertical()
@@ -1252,11 +1263,9 @@ impl PlayerApp {
     }
 
     fn paint_ws_subs(&mut self, ui: &mut egui::Ui) {
-        if self.ws_subs.is_none() {
-            if self.ws_request_section(3) {
-                ui.weak("loading subtitles…");
-                return;
-            }
+        if self.ws_subs.is_none() && self.ws_request_section(3) {
+            ui.weak("loading subtitles…");
+            return;
         }
         let items = self.ws_subs.clone().unwrap_or_default();
         egui::ScrollArea::vertical()
@@ -1414,7 +1423,9 @@ impl PlayerApp {
         }
         let request = match section {
             0 => super::whisper_subs::WsRequest::Library,
-            1 => super::whisper_subs::WsRequest::Channels { channel: self.ws_channel.clone() },
+            1 => super::whisper_subs::WsRequest::Channels {
+                channel: self.ws_channel.clone(),
+            },
             2 => super::whisper_subs::WsRequest::Live,
             _ => super::whisper_subs::WsRequest::Subs,
         };
@@ -1435,7 +1446,10 @@ impl PlayerApp {
                 Ok(items) => self.ws_library = Some(items),
                 Err(e) => self.ws_error = Some(e),
             },
-            WsReply::Channels { channel: Some(name), result } => match result {
+            WsReply::Channels {
+                channel: Some(name),
+                result,
+            } => match result {
                 // Channel-scoped reply only fills the videos cache while
                 // that channel is still selected.
                 Ok(items) if self.ws_channel.as_deref() == Some(name.as_str()) => {
@@ -1444,7 +1458,10 @@ impl PlayerApp {
                 Ok(_) => {}
                 Err(e) => self.ws_error = Some(e),
             },
-            WsReply::Channels { channel: None, result } => match result {
+            WsReply::Channels {
+                channel: None,
+                result,
+            } => match result {
                 Ok(items) => self.ws_channels = Some(items),
                 Err(e) => self.ws_error = Some(e),
             },
@@ -1456,7 +1473,11 @@ impl PlayerApp {
                 Ok(items) => self.ws_subs = Some(items),
                 Err(e) => self.ws_error = Some(e),
             },
-            WsReply::Subtitle { path: _, local, error } => {
+            WsReply::Subtitle {
+                path: _,
+                local,
+                error,
+            } => {
                 if let Some(e) = error {
                     self.ws_error = Some(e);
                 } else if let Some(local) = local {
@@ -2065,9 +2086,10 @@ impl PlayerApp {
 
         if let Some(title) = title {
             let url = self.current_source.clone();
-            let (duration, date) = self.mpv.as_mut().map_or((0.0, String::new()), |m| {
-                (m.duration(), m.media_date())
-            });
+            let (duration, date) = self
+                .mpv
+                .as_mut()
+                .map_or((0.0, String::new()), |m| (m.duration(), m.media_date()));
             egui::Area::new(egui::Id::new("title_overlay"))
                 .anchor(egui::Align2::CENTER_TOP, [0.0, 8.0])
                 .order(egui::Order::Foreground)
@@ -2336,8 +2358,7 @@ impl PlayerApp {
         }
     }
 
-
-/// The reading panel: a teleprompter strip at the bottom with the current
+    /// The reading panel: a teleprompter strip at the bottom with the current
     /// line large and ruby-annotated (furigana/pinyin), recent lines above,
     /// and click-to-seek. Falls back to the live mpv sub-text when no parsed
     /// external track exists.
@@ -2439,7 +2460,11 @@ impl PlayerApp {
         // are what the audio clip is cut from.
         let line = self
             .current_line_index()
-            .and_then(|idx| self.subs_parsed.get(&self.tracked_primary_sid).and_then(|l| l.get(idx)))
+            .and_then(|idx| {
+                self.subs_parsed
+                    .get(&self.tracked_primary_sid)
+                    .and_then(|l| l.get(idx))
+            })
             .cloned();
         let Some(line) = line else {
             return;
@@ -2465,10 +2490,10 @@ impl PlayerApp {
 
     /// Draw the dictionary popup for the word under (or last clicked on) the
     /// cursor, if it has an entry.
-///
-/// Memento-style: hover shows the definition, so reading a line never needs
-/// a click. Falls back to "no entry" text rather than nothing, so the user
-/// can tell a missing dictionary from a broken feature.
+    ///
+    /// Memento-style: hover shows the definition, so reading a line never needs
+    /// a click. Falls back to "no entry" text rather than nothing, so the user
+    /// can tell a missing dictionary from a broken feature.
     fn paint_word_popup(&self, ctx: &egui::Context) {
         // Locked: show only the clicked word, never the cursor position.
         // Unlocked: hover wins, so reading a line needs no click.
@@ -2479,32 +2504,32 @@ impl PlayerApp {
                 .as_ref()
                 .or(self.line_interaction.hovered.as_ref())
         };
-    let Some(token) = token else {
-        return;
-    };
-    let Some(def) = self.reading_dictionary.lookup(token) else {
-        return;
-    };
+        let Some(token) = token else {
+            return;
+        };
+        let Some(def) = self.reading_dictionary.lookup(token) else {
+            return;
+        };
 
-    egui::Window::new("word")
-        .collapsible(false)
-        .resizable(false)
-        .title_bar(false)
-        .frame(egui::Frame::popup(&ctx.style()))
-        .default_pos(ctx.pointer_hover_pos().unwrap_or_default())
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(def.term.as_str()).strong());
-                let shown_reading = def.reading.as_deref().or(token.reading.as_deref());
-                if let Some(reading) = shown_reading {
-                    ui.label(egui::RichText::new(reading).weak());
+        egui::Window::new("word")
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .frame(egui::Frame::popup(&ctx.style()))
+            .default_pos(ctx.pointer_hover_pos().unwrap_or_default())
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(def.term.as_str()).strong());
+                    let shown_reading = def.reading.as_deref().or(token.reading.as_deref());
+                    if let Some(reading) = shown_reading {
+                        ui.label(egui::RichText::new(reading).weak());
+                    }
+                });
+                for meaning in &def.meanings {
+                    ui.label(meaning.as_str());
                 }
             });
-            for meaning in &def.meanings {
-                ui.label(meaning.as_str());
-            }
-        });
-}
+    }
     fn paint_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         let sub_tracks = self
@@ -2886,10 +2911,8 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::A),
                 i.key_pressed(egui::Key::R),
                 i.key_pressed(egui::Key::F1),
-                i.key_pressed(egui::Key::K)
-                    && !typing,
-                i.key_pressed(egui::Key::P)
-                    && !typing,
+                i.key_pressed(egui::Key::K) && !typing,
+                i.key_pressed(egui::Key::P) && !typing,
             )
         });
         let space = space && !typing;
