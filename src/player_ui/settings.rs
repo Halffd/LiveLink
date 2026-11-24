@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn missing_file_yields_default() {
-        let dir = std::env::temp_dir().join("player-ui-test-missing");
+        let dir = std::env::temp_dir().join(format!("player-ui-test-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let s = PlayerUiSettings::load(&dir);
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn roundtrips_through_toml() {
-        let dir = std::env::temp_dir().join("player-ui-test-roundtrip");
+        let dir = std::env::temp_dir().join(format!("player-ui-test-roundtrip-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let s = PlayerUiSettings {
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn loads_legacy_json() {
-        let dir = std::env::temp_dir().join("player-ui-test-legacy");
+        let dir = std::env::temp_dir().join(format!("player-ui-test-legacy-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn corrupt_file_yields_default() {
-        let dir = std::env::temp_dir().join("player-ui-test-corrupt");
+        let dir = std::env::temp_dir().join(format!("player-ui-test-corrupt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(PlayerUiSettings::path(&dir), "{ not toml").unwrap();

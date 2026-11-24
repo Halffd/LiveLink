@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn saves_only_when_content_differs() {
-        let dir = std::env::temp_dir().join("livelink-transcript-test");
+        let dir = std::env::temp_dir().join(format!("livelink-transcript-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("a.srt");

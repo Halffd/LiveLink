@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn playlist_from_dir_filters_and_sorts_media() {
-        let dir = std::env::temp_dir().join("player-ui-dir-test");
+        let dir = std::env::temp_dir().join(format!("player-ui-dir-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.mkv"), "").unwrap();

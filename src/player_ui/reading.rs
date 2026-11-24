@@ -910,7 +910,7 @@ mod tests {
     /// An imported CSV must override the built-in reading for its words.
     #[test]
     fn imported_dictionary_overrides_readings() {
-        let dir = std::env::temp_dir().join("livelink-dict-import-test");
+        let dir = std::env::temp_dir().join(format!("livelink-dict-import-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // mecab user-dictionary CSV: surface,left,right,cost,POS...,base,reading,pron
@@ -964,7 +964,7 @@ mod tests {
     /// is covered even where mecab is not installed.
     #[test]
     fn mecab_fallback_pipeline_with_stub() {
-        let stub = std::env::temp_dir().join("livelink-mecab-stub.sh");
+        let stub = std::env::temp_dir().join(format!("livelink-mecab-stub-{}.sh", std::process::id()));
         std::fs::write(
             &stub,
             "#!/bin/sh\n\
