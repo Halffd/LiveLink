@@ -17,6 +17,68 @@ use std::sync::OnceLock;
 pub enum RubySegment {
     Plain(String),
     Ruby { base: String, reading: String },
+    /// A token with its metadata, for hover/click interaction.
+    ///
+    /// The same visual shape as [`RubySegment::Ruby`] when a reading exists,
+    /// but the token rides along, so a click can look up the word without
+    /// re-tokenizing the line.
+    Word(Token),
+}
+
+impl RubySegment {
+    /// The visible text of any segment variant.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Plain(t) => t,
+            Self::Ruby { base, .. } => base,
+            Self::Word(t) => &t.surface,
+        }
+    }
+}
+
+/// A token as the tokenizer produced it, with everything a dictionary
+/// lookup needs: the surface form, its reading, and the base (lemma) form.
+///
+/// The string-annotation path (`annotate` → `parse_ruby`) loses all of this
+/// except surface + reading, so hover and click have nothing to look up.
+/// This is the same data before the flatten, so interactions can ask
+/// IPADIC directly without re-tokenizing on every mouse move.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Token {
+    /// What appeared in the text.
+    pub surface: String,
+    /// Katakana-to-hiragana reading, when the dictionary had one.
+    pub reading: Option<String>,
+    /// Base form (lemma) — 食べる for 食べた. What a dictionary is keyed by.
+    pub base: Option<String>,
+    /// Part of speech, when the backend reported one.
+    pub pos: Option<String>,
+}
+
+impl Token {
+    /// True when this token is worth clicking: a real word, not punctuation or
+    /// a run of spaces. Excludes ASCII *and* CJK punctuation, since Japanese
+    /// text tokenizes its punctuation as its own tokens.
+    pub fn is_lookupable(&self) -> bool {
+        // POS first: a particle like を is hiragana, so the surface heuristic
+        // below calls it a word. ipadic POS separates function words
+        // (particles, auxiliaries, symbols) that carry no dictionary entry.
+        if let Some(pos) = &self.pos {
+            const FUNCTION_POS: [&str; 4] = ["助詞", "助動詞", "記号", "補助記号"];
+            return !FUNCTION_POS.iter().any(|class| pos.starts_with(class));
+        }
+        // No POS (a hand-built token, as in unit tests): fall back to
+        // "carries at least one non-punctuation character".
+        self.surface.chars().any(|c| {
+            !c.is_whitespace() && !c.is_ascii_punctuation() && !is_cjk_punctuation(c)
+        })
+    }
+
+    /// The key a dictionary lookup should use: base form first (it is what a
+    /// dictionary is organized by), surface form as the fallback.
+    pub fn lookup_key(&self) -> &str {
+        self.base.as_deref().unwrap_or(&self.surface)
+    }
 }
 
 /// Annotate text with readings in the `漢字（かんじ）` paren style:
@@ -49,6 +111,20 @@ fn is_katakana(ch: char) -> bool {
 pub fn contains_japanese(text: &str) -> bool {
     text.chars()
         .any(|c| is_kanji(c) || is_hiragana(c) || is_katakana(c))
+}
+
+/// True for CJK punctuation: the Japanese comma/full stop, corner brackets,
+/// and the general-punctuation block they share. These tokenize separately
+/// and have no dictionary entry, so they are not click targets.
+fn is_cjk_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3000}'..='\u{303F}' | // CJK symbols and punctuation: 、。「」
+        '\u{FF01}'..='\u{FF0F}'
+            | '\u{FF1A}'..='\u{FF20}'
+            | '\u{FF3B}'..='\u{FF40}'
+            | '\u{FF5B}'..='\u{FF65}' // fullwidth forms: ！？（）
+    )
 }
 
 fn katakana_to_hiragana(text: &str) -> String {
@@ -225,26 +301,45 @@ fn mecab_available(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Parse `mecab` default output into (surface, reading) pairs. Each line is
-/// `surface\tPOS,sub,...,base,reading,pron`; `EOS` terminates the input.
-fn parse_mecab_output(output: &str) -> Vec<(String, Option<String>)> {
+/// Parse `mecab` output into full [`Token`]s. Same line shape as
+/// [`parse_mecab_output`], but keeps base form (index 6) and POS (index 0)
+/// so lookups have a key.
+fn parse_mecab_output_detailed(output: &str) -> Vec<Token> {
     output
         .lines()
         .filter(|line| !line.is_empty() && *line != "EOS")
         .filter_map(|line| {
             let (surface, features) = line.split_once('\t')?;
-            let reading = features
-                .split(',')
-                .nth(7)
-                .filter(|r| !r.is_empty() && *r != "*")
-                .map(|r| r.to_string());
-            Some((surface.to_string(), reading))
+            let mut fields = features.split(',');
+            let pos = fields.next().filter(|p| !p.is_empty() && *p != "*").map(str::to_string);
+            // Indices are ipadic's: 0 POS, 6 base form, 7 reading.
+            let by_index = |i: usize| {
+                features
+                    .split(',')
+                    .nth(i)
+                    .filter(|v| !v.is_empty() && *v != "*")
+                    .map(|v| v.to_string())
+            };
+            let reading = by_index(7).map(|r| katakana_to_hiragana(&r));
+            Some(Token {
+                surface: surface.to_string(),
+                reading,
+                base: by_index(6),
+                pos,
+            })
         })
         .collect()
 }
 
-/// Tokenize through a system mecab subprocess.
-fn mecab_tokens(bin: &Path, text: &str) -> Option<Vec<(String, Option<String>)>> {
+/// Tokenize through a system mecab subprocess, keeping full metadata.
+fn mecab_tokens_detailed(bin: &Path, text: &str) -> Option<Vec<Token>> {
+    Some(parse_mecab_output_detailed(
+        &mecab_tokens_raw(bin, text)?,
+    ))
+}
+
+/// Run system mecab and return its raw stdout.
+fn mecab_tokens_raw(bin: &Path, text: &str) -> Option<String> {
     let mut child = std::process::Command::new(bin)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -253,37 +348,50 @@ fn mecab_tokens(bin: &Path, text: &str) -> Option<Vec<(String, Option<String>)>>
         .ok()?;
     {
         let mut stdin = child.stdin.take()?;
-        // mecab treats every line as an independent input.
         stdin.write_all(text.replace('\n', " ").as_bytes()).ok()?;
     }
     let output = child.wait_with_output().ok()?;
     if !output.status.success() {
         return None;
     }
-    Some(parse_mecab_output(&String::from_utf8_lossy(&output.stdout)))
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Tokenize with readings, dispatching on the active backend.
-fn tokenize(text: &str) -> Vec<(String, Option<String>)> {
+/// Tokenize with full metadata (surface, reading, base, POS).
+///
+/// This is what hover-lookup and click-to-SRS need. The tuple-producing
+/// [`tokenize`] is kept as an adapter because the string-annotation path
+/// only wants surface + reading.
+pub fn tokenize_detailed(text: &str) -> Vec<Token> {
     match backend() {
         Some(Backend::Lindera(segmenter)) => {
             let mut worker = segmenter.new_worker();
             match worker.segment(text) {
                 Ok(mut tokens) => tokens
                     .iter_mut()
-                    .map(|token| {
+                    .filter_map(|token| {
                         let surface = match &token.surface {
                             Cow::Borrowed(s) => (*s).to_string(),
                             Cow::Owned(s) => s.clone(),
                         };
-                        // ipadic word details: POS..., base form, reading
-                        // (katakana), phonetic.
+                        if surface.trim().is_empty() {
+                            return None;
+                        }
+                        // ipadic details: 0 POS, 6 base form, 7 reading,
+                        // 8 phonetic. Positions are fixed by the format.
                         let details = token.details();
-                        let reading = details
-                            .get(7)
-                            .filter(|r| !r.is_empty() && **r != "*")
-                            .map(|r| r.to_string());
-                        (surface, reading)
+                        let field = |i: usize| {
+                            details
+                                .get(i)
+                                .filter(|v| !v.is_empty() && **v != "*")
+                                .map(|v| v.to_string())
+                        };
+                        Some(Token {
+                            surface,
+                            reading: field(7).map(|r| katakana_to_hiragana(&r)),
+                            base: field(6),
+                            pos: field(0),
+                        })
                     })
                     .collect(),
                 Err(e) => {
@@ -292,14 +400,86 @@ fn tokenize(text: &str) -> Vec<(String, Option<String>)> {
                 }
             }
         }
-        Some(Backend::Mecab(bin)) => match mecab_tokens(bin, text) {
-            Some(tokens) => tokens,
-            None => {
-                tracing::warn!(path = %bin.display(), "mecab tokenization failed");
-                Vec::new()
-            }
-        },
+        Some(Backend::Mecab(bin)) => mecab_tokens_detailed(bin, text).unwrap_or_default(),
         None => Vec::new(),
+    }
+}
+
+/// Tokenize with readings, dispatching on the active backend.
+///
+/// A projection of [`tokenize_detailed`], not a second engine: one
+/// tokenizer, two views of it. `tokenize_detailed` normalizes readings to
+/// hiragana and drops blank surfaces, both of which the callers below want
+/// (`process_text_with_furigana` converts to hiragana immediately, and a
+/// blank surface would emit an empty ruby pair).
+fn tokenize(text: &str) -> Vec<(String, Option<String>)> {
+    tokenize_detailed(text)
+        .into_iter()
+        .map(|t| (t.surface, t.reading))
+        .collect()
+}
+
+#[cfg(test)]
+mod tokenize_tests {
+    use super::*;
+
+    #[test]
+    fn detailed_and_tuple_views_agree() {
+        let text = "日本語を勉強しています";
+        let detailed = tokenize_detailed(text);
+        let tuples = tokenize(text);
+        assert_eq!(detailed.len(), tuples.len(), "same token count");
+        for (token, (surface, reading)) in detailed.iter().zip(&tuples) {
+            assert_eq!(&token.surface, surface);
+            assert_eq!(token.reading.as_ref(), reading.as_ref());
+        }
+    }
+
+    #[test]
+    fn detailed_keeps_base_and_pos_when_available() {
+        let tokens = tokenize_detailed("食べる");
+        assert!(!tokens.is_empty(), "ipadic should tokenize this");
+        // 食べる is a verb, so ipadic reports a POS and a base form.
+        let first = &tokens[0];
+        assert!(first.pos.is_some(), "POS missing: {first:?}");
+        assert!(first.base.is_some(), "base missing: {first:?}");
+    }
+
+    #[test]
+    fn lookup_key_prefers_base_form() {
+        let token = Token {
+            surface: "食べた".into(),
+            reading: Some("たべた".into()),
+            base: Some("食べる".into()),
+            pos: Some("動詞".into()),
+        };
+        assert_eq!(token.lookup_key(), "食べる");
+        // No base form: the surface is the key.
+        let no_base = Token {
+            surface: "テスト".into(),
+            reading: None,
+            base: None,
+            pos: None,
+        };
+        assert_eq!(no_base.lookup_key(), "テスト");
+    }
+
+    #[test]
+    fn punctuation_is_not_lookupable() {
+        let punct = Token {
+            surface: "、".into(),
+            reading: None,
+            base: None,
+            pos: None,
+        };
+        assert!(!punct.is_lookupable());
+        let word = Token {
+            surface: "日本語".into(),
+            reading: Some("にほんご".into()),
+            base: None,
+            pos: None,
+        };
+        assert!(word.is_lookupable());
     }
 }
 
@@ -417,6 +597,196 @@ pub fn parse_ruby(text: &str) -> Vec<RubySegment> {
     segments
 }
 
+/// Build interactive segments straight from the tokenizer:
+pub fn parse_tokens_detailed(text: &str) -> Vec<RubySegment> {
+    tokenize_detailed(text)
+        .into_iter()
+        .map(|token| {
+            if token.is_lookupable() {
+                RubySegment::Word(token)
+            } else {
+                RubySegment::Plain(token.surface)
+            }
+        })
+        .collect()
+}
+
+/// A dictionary entry for one lookup key.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Definition {
+    /// The word as the dictionary lists it.
+    pub term: String,
+    /// Reading of the term, when known.
+    pub reading: Option<String>,
+    /// One or more glosses.
+    pub meanings: Vec<String>,
+}
+
+/// A local dictionary: `key\treading\tmeaning|meaning` per line.
+///
+/// Keyed by base form when present, surface form otherwise — the same key
+/// [`Token::lookup_key`] produces. Tries the base form first, then the
+/// surface, which is what makes 食べた resolve to 食べる's entry.
+#[derive(Debug, Clone, Default)]
+pub struct Dictionary {
+    entries: std::collections::HashMap<String, Definition>,
+}
+
+impl Dictionary {
+    /// Load from a TSV file. Missing file yields an empty dictionary, which
+    /// makes every lookup a miss rather than an error — a missing dictionary
+    /// should remove the popup, not break the panel.
+    pub fn load(path: &std::path::Path) -> Self {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Self::default();
+        };
+        Self::from_tsv(&text)
+    }
+
+    /// Load `dictionary.tsv` from a directory.
+    pub fn load_dir(dir: &std::path::Path) -> Self {
+        Self::load(&dir.join("dictionary.tsv"))
+    }
+
+    /// Parse the TSV body.
+    pub fn from_tsv(text: &str) -> Self {
+        let mut entries = std::collections::HashMap::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut fields = line.split('\t');
+            let Some(key) = fields.next() else { continue };
+            let reading = fields.next().filter(|r| !r.is_empty());
+            let meanings: Vec<String> = fields
+                .next()
+                .unwrap_or("")
+                .split('|')
+                .map(|m| m.trim().to_string())
+                .filter(|m| !m.is_empty())
+                .collect();
+            if key.is_empty() {
+                continue;
+            }
+            entries.insert(
+                key.to_string(),
+                Definition {
+                    term: key.to_string(),
+                    reading: reading.map(str::to_string),
+                    meanings,
+                },
+            );
+        }
+        Self { entries }
+    }
+
+    /// Look up a token: base form first, then the surface form. Returns a
+    /// borrow, so hover costs no allocation per frame.
+    pub fn lookup(&self, token: &Token) -> Option<&Definition> {
+        if let Some(base) = &token.base {
+            if let Some(def) = self.entries.get(base) {
+                return Some(def);
+            }
+        }
+        self.entries.get(&token.surface)
+    }
+
+    /// Number of entries loaded, for diagnostics.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod dictionary_tests {
+    use super::*;
+
+    #[test]
+    fn parses_tsv_entries() {
+        let dict = Dictionary::from_tsv(
+            "# a comment\n食べる\tたべる\tto eat\n日本語\tにほんご\tJapanese language|Nihongo\n",
+        );
+        assert_eq!(dict.len(), 2);
+        let entry = dict.entries.get("食べる").expect("食べる present");
+        assert_eq!(entry.reading.as_deref(), Some("たべる"));
+        assert_eq!(entry.meanings, vec!["to eat".to_string()]);
+        // Comments and blank lines are skipped.
+        assert!(!dict.entries.contains_key("# a comment"));
+    }
+
+    #[test]
+    fn unknown_lookup_is_a_miss_not_an_error() {
+        let dict = Dictionary::from_tsv("x\ty\tz\n");
+        let token = Token {
+            surface: "存在しない".into(),
+            reading: None,
+            base: None,
+            pos: None,
+        };
+        assert!(dict.lookup(&token).is_none());
+    }
+
+    /// The reason the dictionary exists: a conjugated surface form still
+    /// resolves to the lemma the dictionary is keyed by.
+    #[test]
+    fn lookup_falls_back_to_base_form() {
+        let dict = Dictionary::from_tsv("食べる\tたべる\tto eat\n");
+        let conjugated = Token {
+            surface: "食べた".into(),
+            reading: Some("たべた".into()),
+            base: Some("食べる".into()),
+            pos: Some("動詞".into()),
+        };
+        let entry = dict.lookup(&conjugated).expect("resolves via base form");
+        assert_eq!(entry.term, "食べる");
+    }
+
+    #[test]
+    fn a_missing_file_is_an_empty_dictionary() {
+        let dict = Dictionary::load(std::path::Path::new("/nonexistent/dictionary.tsv"));
+        assert!(dict.is_empty());
+    }
+
+    #[test]
+    fn segments_carry_tokens_for_real_words_only() {
+        let segments = parse_tokens_detailed("日本語を勉強しています");
+        // Words become Word segments, particles become Plain.
+        let words: Vec<_> = segments
+            .iter()
+            .filter_map(|s| match s {
+                RubySegment::Word(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert!(!words.is_empty(), "should have at least one word");
+        assert!(
+            segments.iter().any(|s| matches!(s, RubySegment::Plain(_))),
+            "particles should be Plain"
+        );
+    }
+
+    #[test]
+    fn segment_text_covers_every_variant() {
+        assert_eq!(RubySegment::Plain("abc".into()).text(), "abc");
+        assert_eq!(
+            RubySegment::Ruby { base: "漢字".into(), reading: "かんじ".into() }.text(),
+            "漢字"
+        );
+        let token = Token {
+            surface: "日本語".into(),
+            reading: Some("にほんご".into()),
+            base: None,
+            pos: None,
+        };
+        assert_eq!(RubySegment::Word(token).text(), "日本語");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,23 +875,28 @@ mod tests {
                       を\t助詞,格助詞,一般,*,*,*,を,ヲ,ヲ\n\
                       勉強\t名詞,サ変接続,*,*,*,*,勉強,ベンキョウ,ベンキョウ\n\
                       EOS\n";
-        let tokens = parse_mecab_output(output);
+        let tokens = parse_mecab_output_detailed(output);
         assert_eq!(tokens.len(), 3);
-        assert_eq!(
-            tokens[0],
-            ("日本語".to_string(), Some("ニホンゴ".to_string()))
-        );
-        assert_eq!(tokens[1], ("を".to_string(), Some("ヲ".to_string())));
-        assert_eq!(
-            tokens[2],
-            ("勉強".to_string(), Some("ベンキョウ".to_string()))
-        );
+        // Readings are normalized to hiragana by the detailed parser.
+        assert_eq!(tokens[0].surface, "日本語");
+        assert_eq!(tokens[0].reading.as_deref(), Some("にほんご"));
+        assert_eq!(tokens[0].base.as_deref(), Some("日本語"));
+        assert_eq!(tokens[1].surface, "を");
+        assert_eq!(tokens[1].reading.as_deref(), Some("を"));
+        assert_eq!(tokens[2].surface, "勉強");
+        assert_eq!(tokens[2].reading.as_deref(), Some("べんきょう"));
     }
 
     #[test]
     fn mecab_unknown_reading_is_none() {
-        let tokens = parse_mecab_output("＾\t記号,一般,*,*,*,*,＾,*,*\nEOS\n");
-        assert_eq!(tokens, vec![("＾".to_string(), None)]);
+        let tokens = parse_mecab_output_detailed("＾\t記号,一般,*,*,*,*,＾,*,*\nEOS\n");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].surface, "＾");
+        // Reading field is `*`, which must be dropped, not carried as the
+        // literal string "*".
+        assert_eq!(tokens[0].reading, None);
+        // Base field is the caret itself here, so it survives.
+        assert_eq!(tokens[0].base.as_deref(), Some("＾"));
     }
 
     /// An imported CSV must override the built-in reading for its words.
@@ -567,11 +942,12 @@ mod tests {
             eprintln!("mecab not installed; skipping fallback test");
             return;
         }
-        let tokens = mecab_tokens(Path::new("mecab"), "日本語を勉強しています")
+        let tokens = mecab_tokens_detailed(Path::new("mecab"), "日本語を勉強しています")
             .expect("mecab should tokenize");
         assert!(!tokens.is_empty());
-        assert!(tokens.iter().any(|(surface, reading)| {
-            surface.chars().any(is_kanji) && reading.as_deref().is_some_and(|r| !r.is_empty())
+        assert!(tokens.iter().any(|token| {
+            token.surface.chars().any(is_kanji)
+                && token.reading.as_deref().is_some_and(|r| !r.is_empty())
         }));
     }
 
@@ -601,21 +977,22 @@ mod tests {
             mecab_available(&stub.to_string_lossy()),
             "stub should answer --version"
         );
-        let tokens = mecab_tokens(&stub, "日本語").expect("stub tokenizes");
-        assert_eq!(
-            tokens,
-            vec![("日本語".to_string(), Some("ニッポンゴ".to_string()))]
-        );
+        let tokens = mecab_tokens_detailed(&stub, "日本語").expect("stub tokenizes");
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].surface, "日本語");
+        // Readings arrive as katakana and are normalized to hiragana.
+        assert_eq!(tokens[0].reading.as_deref(), Some("にっぽんご"));
+        assert_eq!(tokens[0].base.as_deref(), Some("日本語"));
 
         // And the reading is usable through the mecab backend directly.
         let segments = parse_ruby(&{
             let mut out = String::new();
-            for (surface, reading) in &tokens {
-                match reading {
-                    Some(r) if surface.chars().any(is_kanji) => {
-                        out.push_str(&format!("{}（{}）", surface, katakana_to_hiragana(r)));
+            for token in &tokens {
+                match &token.reading {
+                    Some(r) if token.surface.chars().any(is_kanji) => {
+                        out.push_str(&format!("{}（{}）", token.surface, r));
                     }
-                    _ => out.push_str(surface),
+                    _ => out.push_str(&token.surface),
                 }
             }
             out
@@ -629,3 +1006,4 @@ mod tests {
         );
     }
 }
+

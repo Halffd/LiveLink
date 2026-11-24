@@ -34,36 +34,99 @@ const PAUSE_DELTA: f64 = 0.04;
 /// Memento's seek epsilon when jumping to a subtitle line.
 const SEEK_ERROR: f64 = 0.028;
 
+/// Hover state for one ruby line.
+///
+/// The renderer clears `hovered` before drawing, so after the pass it holds
+/// the word under the cursor *now* — or `None` once the cursor leaves every
+/// word, which is what un-underlines it.
+#[derive(Debug, Default, Clone)]
+pub struct LineInteraction {
+    /// The word currently under the cursor, if any.
+    pub hovered: Option<crate::player_ui::reading::Token>,
+}
+
+/// What a click on a ruby line hit: the line itself (seek), a word
+/// (dictionary / SRS), or neither.
+#[derive(Debug, Clone)]
+pub struct WordClick {
+    /// The line's whole-line response, for seek.
+    pub line: egui::Response,
+    /// The word clicked, when the click landed on one.
+    pub word: Option<crate::player_ui::reading::Token>,
+}
+
+impl WordClick {
+    /// True when the click should seek (hit the line, not a word).
+    pub fn seeks(&self) -> bool {
+        self.word.is_none() && self.line.clicked()
+    }
+}
+
 /// One ruby-annotated line: each annotated segment is a centered stack
-/// (reading above, base below) laid out horizontally with wrapping. The
-/// whole line is clickable.
+/// (reading above, base below) laid out horizontally with wrapping.
+///
+/// Words are their own interactive targets: hovering underlines them and
+/// shows the dictionary popup, clicking selects one for the SRS pipeline.
+/// The line as a whole stays clickable (seek) so plain text still seeks.
 fn paint_ruby_line(
     ui: &mut egui::Ui,
     segments: &[crate::player_ui::reading::RubySegment],
     base_size: f32,
     reading_size: f32,
-) -> egui::Response {
+    interaction: &mut LineInteraction,
+) -> WordClick {
     use crate::player_ui::reading::RubySegment;
 
+    // Clear before drawing so a word the cursor has left stops being
+    // highlighted on this frame rather than the next one.
+    interaction.hovered = None;
+    let mut clicked_word = None;
     let inner = ui.horizontal_wrapped(|ui| {
         for segment in segments {
             match segment {
                 RubySegment::Plain(text) => {
-                    ui.label(egui::RichText::new(text).size(base_size));
+                    ui.label(egui::RichText::new(text.as_str()).size(base_size));
                 }
                 RubySegment::Ruby { base, reading } => {
                     ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                         if !reading.is_empty() {
-                            ui.label(egui::RichText::new(reading).size(reading_size).weak());
+                            ui.label(egui::RichText::new(reading.as_str()).size(reading_size).weak());
                         }
-                        ui.label(egui::RichText::new(base).size(base_size).strong());
+                        ui.label(egui::RichText::new(base.as_str()).size(base_size).strong());
                     });
+                }
+                RubySegment::Word(token) => {
+                    // Only the word actually under the cursor is underlined.
+                    // `hovered` carries state across the line, so compare on
+                    // the surface, not on mere presence.
+                    let is_hovered = interaction
+                        .hovered
+                        .as_ref()
+                        .is_some_and(|h| h.surface == token.surface);
+                    let mut label = egui::RichText::new(token.surface.as_str()).size(base_size);
+                    if is_hovered {
+                        // egui's RichText::underline takes no argument: it
+                        // flips the underline flag on.
+                        label = label.underline();
+                    }
+                    let response = ui.add(
+                        egui::Label::new(label)
+                            .sense(egui::Sense::click())
+                            .selectable(false),
+                    );
+                    if response.hovered() {
+                        interaction.hovered = Some(token.clone());
+                    }
+                    if response.clicked() {
+                        clicked_word = Some(token.clone());
+                    }
                 }
             }
         }
     });
     let id = ui.id().with("ruby_line");
-    ui.interact(inner.response.rect, id, egui::Sense::click())
+    let line = ui.interact(inner.response.rect, id, egui::Sense::click());
+    WordClick { line, word: clicked_word }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +232,18 @@ pub struct PlayerApp {
     torrent_busy: bool,
     /// Whether the reading panel is visible.
     reading_open: bool,
+    /// Hover/selection state for the reading panel's ruby lines.
+    line_interaction: LineInteraction,
+    /// The word last clicked in the reading panel: dictionary popup and
+    /// SRS target.
+    selected_word: Option<crate::player_ui::reading::Token>,
+    /// Dictionary for the hover popup, loaded from the reading config dir.
+    /// Empty means no popup, never a crash.
+    reading_dictionary: crate::player_ui::reading::Dictionary,
+    /// When true the popup stays open on the last clicked word instead of
+    /// following the cursor — lets you read a definition without holding the
+    /// mouse still.
+    popup_locked: bool,
     /// True once the LiveLink server loaded this window's media: end-of-media
     /// then means "tell the server to advance the channel", not local skips.
     server_driven: bool,
@@ -284,6 +359,11 @@ impl PlayerApp {
         } else {
             std::path::PathBuf::from(settings.reading_dictionary_dir.trim())
         };
+        // Loaded before `dictionary_dir` is moved into the tokenizer config:
+        // the popup and the tokenizer share one directory, so they are read
+        // from the same place.
+        let reading_dictionary =
+            crate::player_ui::reading::Dictionary::load_dir(&dictionary_dir);
         crate::player_ui::reading::init(crate::player_ui::reading::ReadingConfig {
             dictionary_dir: Some(dictionary_dir),
             mecab_path: settings.reading_mecab_path.clone(),
@@ -336,6 +416,10 @@ impl PlayerApp {
             torrent_rx: None,
             torrent_busy: false,
             reading_open: false,
+            line_interaction: LineInteraction::default(),
+            selected_word: None,
+            reading_dictionary,
+            popup_locked: false,
             server_driven: false,
             ws_open: false,
             ws_section: 0,
@@ -2252,7 +2336,8 @@ impl PlayerApp {
         }
     }
 
-    /// The reading panel: a teleprompter strip at the bottom with the current
+
+/// The reading panel: a teleprompter strip at the bottom with the current
     /// line large and ruby-annotated (furigana/pinyin), recent lines above,
     /// and click-to-seek. Falls back to the live mpv sub-text when no parsed
     /// external track exists.
@@ -2292,14 +2377,16 @@ impl PlayerApp {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             for line in &list[history_start..history_end] {
-                                let annotated = crate::player_ui::reading::annotate(&line.text);
-                                let response = paint_ruby_line(
+                                let click = paint_ruby_line(
                                     ui,
-                                    &crate::player_ui::reading::parse_ruby(&annotated),
+                                    &crate::player_ui::reading::parse_tokens_detailed(&line.text),
                                     small,
                                     small_reading,
+                                    &mut self.line_interaction,
                                 );
-                                if response.clicked() {
+                                if let Some(word) = click.word {
+                                    self.selected_word = Some(word);
+                                } else if click.seeks() {
                                     let pos = (line.start + SEEK_ERROR).max(0.0);
                                     if let Some(mpv) = &mut self.mpv {
                                         mpv.seek_absolute(pos);
@@ -2318,18 +2405,106 @@ impl PlayerApp {
                 if current_text.trim().is_empty() {
                     ui.weak("(no subtitle line showing)");
                 } else {
-                    let annotated = crate::player_ui::reading::annotate(&current_text);
-                    paint_ruby_line(
+                    let click = paint_ruby_line(
                         ui,
-                        &crate::player_ui::reading::parse_ruby(&annotated),
+                        &crate::player_ui::reading::parse_tokens_detailed(&current_text),
                         big,
                         big_reading,
+                        &mut self.line_interaction,
                     );
+                    if let Some(word) = click.word {
+                        self.selected_word = Some(word);
+                    }
                 }
             });
         let _ = t;
     }
 
+    /// Send the cue line containing the selected word into the SRS pipeline.
+    ///
+    /// The existing miner builds a card from a whole cue with audio
+    /// (`encode_audio_clip` needs the cue's start/end), so mining a word
+    /// means mining its line with the word named in the note text. True
+    /// per-word cards need the word's own char offsets, which the tokenizer
+    /// does not report — that is a follow-up, not something to fake here.
+    fn mine_selected_word(&mut self) {
+        let Some(token) = self
+            .selected_word
+            .clone()
+            .or_else(|| self.line_interaction.hovered.clone())
+        else {
+            return;
+        };
+        // The line the word came from, when the panel has one: its start/end
+        // are what the audio clip is cut from.
+        let line = self
+            .current_line_index()
+            .and_then(|idx| self.subs_parsed.get(&self.tracked_primary_sid).and_then(|l| l.get(idx)))
+            .cloned();
+        let Some(line) = line else {
+            return;
+        };
+        let context = crate::player_ui::subtitle::SubtitleInfo {
+            text: format!("{} [{}]", line.text, token.surface),
+            start: line.start,
+            end: line.end,
+        };
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        crate::player_ui::srs::spawn_mine(
+            self.settings.clone(),
+            context,
+            self.current_source.clone(),
+            self.mpv_path.clone(),
+            std::path::PathBuf::new(),
+            tx,
+        );
+        self.srs_rx = Some(rx);
+        self.srs_busy = true;
+        self.srs_status = Some(("mining…".to_string(), Instant::now()));
+    }
+
+    /// Draw the dictionary popup for the word under (or last clicked on) the
+    /// cursor, if it has an entry.
+///
+/// Memento-style: hover shows the definition, so reading a line never needs
+/// a click. Falls back to "no entry" text rather than nothing, so the user
+/// can tell a missing dictionary from a broken feature.
+    fn paint_word_popup(&self, ctx: &egui::Context) {
+        // Locked: show only the clicked word, never the cursor position.
+        // Unlocked: hover wins, so reading a line needs no click.
+        let token = if self.popup_locked {
+            self.selected_word.as_ref()
+        } else {
+            self.selected_word
+                .as_ref()
+                .or(self.line_interaction.hovered.as_ref())
+        };
+    let Some(token) = token else {
+        return;
+    };
+    let Some(def) = self.reading_dictionary.lookup(token) else {
+        return;
+    };
+
+    egui::Window::new("word")
+        .collapsible(false)
+        .resizable(false)
+        .title_bar(false)
+        .frame(egui::Frame::popup(&ctx.style()))
+        .default_pos(ctx.pointer_hover_pos().unwrap_or_default())
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(def.term.as_str()).strong());
+                let shown_reading = def.reading.as_deref().or(token.reading.as_deref());
+                if let Some(reading) = shown_reading {
+                    ui.label(egui::RichText::new(reading).weak());
+                }
+            });
+            for meaning in &def.meanings {
+                ui.label(meaning.as_str());
+            }
+        });
+}
     fn paint_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.settings_open;
         let sub_tracks = self
@@ -2684,6 +2859,8 @@ impl eframe::App for PlayerApp {
             srs_mine,
             reading_toggle,
             f1,
+            mine_word,
+            popup_toggle,
         ) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Space),
@@ -2709,6 +2886,10 @@ impl eframe::App for PlayerApp {
                 i.key_pressed(egui::Key::A),
                 i.key_pressed(egui::Key::R),
                 i.key_pressed(egui::Key::F1),
+                i.key_pressed(egui::Key::K)
+                    && !typing,
+                i.key_pressed(egui::Key::P)
+                    && !typing,
             )
         });
         let space = space && !typing;
@@ -2730,6 +2911,16 @@ impl eframe::App for PlayerApp {
         let ch_panel = ch_panel && !typing;
         let srs_mine = srs_mine && !typing;
         let reading_toggle = reading_toggle && !typing;
+        let mine_word = mine_word && !typing;
+        let popup_toggle = popup_toggle && !typing;
+        // "Mine the hovered word": memento's core loop, guarded by the panel
+        // being open so it never fires mid-playback with nothing selected.
+        if mine_word && self.reading_open {
+            self.mine_selected_word();
+        }
+        if popup_toggle && self.reading_open {
+            self.popup_locked = !self.popup_locked;
+        }
         if space {
             if let Some(mpv) = &mut self.mpv {
                 mpv.set_paused(!mpv.paused);
@@ -2855,6 +3046,7 @@ impl eframe::App for PlayerApp {
         }
         if self.reading_open {
             self.paint_reading(ctx);
+            self.paint_word_popup(ctx);
         }
         self.paint_video(ctx);
         self.paint_overlays(ctx);
