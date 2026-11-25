@@ -57,6 +57,6 @@ async fn run(args: Args) -> Result<(), String> {
     )
     .await?;
 
-  serve_api(orchestrator, transcribe_tx, args.port).await?;
+  serve_api(orchestrator, transcribe_tx, args.port, &args.config_dir).await?;
   Ok(())
 }

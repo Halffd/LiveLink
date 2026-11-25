@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use serde::Serialize;
 
 /// One span of an annotated line: plain text or base text with its reading.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +47,7 @@ impl RubySegment {
 /// except surface + reading, so hover and click have nothing to look up.
 /// This is the same data before the flatten, so interactions can ask
 /// IPADIC directly without re-tokenizing on every mouse move.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Token {
     /// What appeared in the text.
     pub surface: String,
@@ -178,6 +179,54 @@ pub fn init(config: ReadingConfig) {
     if BACKEND.set(backend).is_err() {
         tracing::debug!("reading backend already initialized");
     }
+}
+
+/// Initialize the tokenizer from the player settings found at `config_dir`.
+///
+/// Imported dictionaries live in `<config_dir>/dictionaries` unless
+/// `reading_dictionary_dir` overrides them, with mecab as the fallback. Every
+/// process that serves the reading layer — the desktop window, the API server
+/// in `livelink`, and the headless `livelink-server` daemon — must resolve
+/// this the same way, or one client gets the user's imported dictionary and
+/// another silently falls back to bare ipadic.
+pub fn init_from_config_dir(config_dir: &Path) {
+    let settings = crate::player_ui::settings::PlayerUiSettings::load(config_dir);
+    init(ReadingConfig {
+        dictionary_dir: Some(settings_dictionary_dir(config_dir, &settings)),
+        mecab_path: settings.reading_mecab_path.clone(),
+    });
+}
+
+/// The directory holding imported dictionaries, as the player settings say.
+///
+/// Exposed separately because two consumers need it: the tokenizer (this
+/// module) and the popup's `Dictionary::load_dir`, which must read the same
+/// directory the tokenizer was built from. Takes the settings the caller
+/// already loaded rather than re-reading the file per call, since this runs
+/// on the window-construction path.
+pub fn settings_dictionary_dir(
+    config_dir: &Path,
+    settings: &crate::player_ui::settings::PlayerUiSettings,
+) -> PathBuf {
+    if settings.reading_dictionary_dir.trim().is_empty() {
+        config_dir.join("dictionaries")
+    } else {
+        PathBuf::from(settings.reading_dictionary_dir.trim())
+    }
+}
+
+/// Whether tokenization can actually return tokens.
+///
+/// [`tokenize_detailed`] returns an empty vec both for "no tokens" and for
+/// "no backend", and an API caller must be able to tell the two apart:
+/// empty-with-japanese means the dictionary found nothing, empty-forever
+/// means furigana is not configured. An explicit probe keeps that a mode
+/// the client can surface instead of silently rendering nothing.
+///
+/// Calling this also performs the lazy default init, so it reports true on
+/// a process where `init` was never called and IPADIC loads fine.
+pub fn tokenizer_ready() -> bool {
+    backend().is_some()
 }
 
 fn backend() -> Option<&'static Backend> {
@@ -798,6 +847,24 @@ mod dictionary_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_dictionary_dir_falls_back_to_the_explicit_override() {
+        let dir = std::env::temp_dir().join("livelink-reading-settings-dir-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut settings = crate::player_ui::settings::PlayerUiSettings::default();
+        settings.reading_dictionary_dir = String::new();
+        let fallback = settings_dictionary_dir(&dir, &settings);
+        assert_eq!(fallback, dir.join("dictionaries"), "empty override ignored");
+
+        let custom = std::env::temp_dir().join("livelink-custom-dicts");
+        settings.reading_dictionary_dir = custom.to_string_lossy().into_owned();
+        assert_eq!(
+            settings_dictionary_dir(&dir, &settings),
+            custom,
+            "explicit override not honored"
+        );
+    }
 
     #[test]
     fn parses_plain_text() {

@@ -53,6 +53,51 @@ pub struct TranscribeRequest {
     url: String,
 }
 
+/// Tokenize a subtitle line with readings and dictionary metadata.
+///
+/// Shared by the desktop reading panel and the mobile companion: both need
+/// the same tokens (surface, reading, base, POS), so the tokenizer runs
+/// server-side rather than being reimplemented per client.
+#[derive(Deserialize)]
+pub struct TokenizeRequest {
+    text: String,
+}
+
+#[derive(Serialize)]
+pub struct TokenizeResponse {
+    tokens: Vec<crate::player_ui::reading::Token>,
+    /// Whether the line contains Japanese at all; lets a client skip work.
+    japanese: bool,
+}
+
+/// POST /tokenize — one tokenized line.
+///
+/// Segmentation runs on the blocking pool: it is CPU-bound, and the
+/// tokenizer backend is process-global, so a slow call would stall the
+/// reactor. Returns 503 when no backend could be built — furigana is not
+/// configured — rather than an empty token list that looks like "the
+/// dictionary found nothing".
+async fn tokenize(
+    Json(req): Json<TokenizeRequest>,
+) -> Result<Json<TokenizeResponse>, (StatusCode, String)> {
+    if !crate::player_ui::reading::tokenizer_ready() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "tokenizer unavailable: no ipadic and no mecab fallback".to_string(),
+        ));
+    }
+    let text = req.text.clone();
+    let tokens = tokio::task::spawn_blocking(move || {
+        crate::player_ui::reading::tokenize_detailed(&text)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(TokenizeResponse {
+        tokens,
+        japanese: crate::player_ui::reading::contains_japanese(&req.text),
+    }))
+}
+
 #[derive(Deserialize)]
 pub struct StartRequest {
     screen: u32,
@@ -596,6 +641,7 @@ pub fn create_router(
     .route("/channel/move", post(channel_move))
     .route("/channels/:screen", get(get_channels))
     .route("/transcribe", post(transcribe))
+    .route("/tokenize", post(tokenize))
     .route("/queue/add", post(queue_add))
     .route("/queue/clear", post(queue_clear))
     .route("/queue/clear-watched", post(clear_watched))

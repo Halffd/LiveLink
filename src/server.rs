@@ -147,7 +147,14 @@ pub async fn serve_api(
   orchestrator: Arc<Orchestrator>,
   transcribe_tx: tokio::sync::mpsc::UnboundedSender<(u32, String)>,
   port: u16,
+  config_dir: &str,
 ) -> Result<(), String> {
+  // The /tokenize route this serves reads the same player settings the
+  // desktop window does. Without this the daemon falls back to bare ipadic
+  // and the user's imported dictionary is silently dropped, so the same line
+  // tokenizes differently depending on which process answers.
+  crate::player_ui::reading::init_from_config_dir(std::path::Path::new(config_dir));
+
   let app = create_router(orchestrator, Some(transcribe_tx));
 
   let addr = format!("0.0.0.0:{}", port);

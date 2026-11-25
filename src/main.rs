@@ -375,6 +375,13 @@ log_level: log_level.unwrap_or_else(|| "info".to_string()),
         return;
     }
 
+    // Same tokenizer, same user dictionary, one process: the /tokenize
+    // route and the desktop reading panel must resolve the reading
+    // directory identically, so the server initializes the backend with
+    // the player settings' override rather than the module default
+    // (which silently drops the user's imported dictionary).
+    livelink::player_ui::reading::init_from_config_dir(std::path::Path::new(&config_dir));
+
     let orchestrator_for_api = orchestrator.clone();
     let app = livelink::api::routes::create_router(orchestrator_for_api, Some(transcribe_tx));
 

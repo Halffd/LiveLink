@@ -171,3 +171,87 @@ async fn status_reports_the_configured_screens_and_cap() {
   assert_eq!(payload["max_streams"].as_u64(), Some(1));
   assert_eq!(payload["total_active"].as_u64(), Some(0));
 }
+
+/// POST one path with a JSON body and return (status, body as text).
+async fn post_json(path: &str, body: serde_json::Value) -> (axum::http::StatusCode, String) {
+  let response = router()
+    .await
+    .oneshot(
+      axum::http::Request::builder()
+        .uri(path)
+        .method("POST")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap(),
+    )
+    .await
+    .expect("router answered");
+  let status = response.status();
+  let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+    .await
+    .expect("body read");
+  (status, String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// The mobile companion depends on `/tokenize`, and the mode that silently
+/// fails is "returns 200 with an empty token list" — a client renders an
+/// empty overlay and never learns the tokenizer never loaded. These checks
+/// pin the response to the one that carries real tokens and readings.
+#[tokio::test]
+async fn tokenize_returns_tokens_with_readings() {
+  // Must not be shadowed by the earlier `/index.html` route either, so a
+  // typo in the path is a failing status, not a served page.
+  let (status, body) = post_json(
+    "/tokenize",
+    serde_json::json!({ "text": "日本語を勉強する" }),
+  )
+  .await;
+  assert_eq!(status, 200, "tokenize did not answer 200: {body}");
+
+  let payload: serde_json::Value = serde_json::from_str(&body).expect("tokenize json");
+  assert_eq!(payload["japanese"], true, "japanese flag wrong: {body}");
+
+  let tokens = payload["tokens"].as_array().expect("tokens array");
+  assert!(!tokens.is_empty(), "tokenize returned no tokens: {body}");
+
+  let surfaces = tokens
+    .iter()
+    .map(|t| t["surface"].as_str().unwrap_or_default())
+    .collect::<String>();
+  assert!(
+    surfaces.contains("日本語"),
+    "tokens do not cover the input: {surfaces}"
+  );
+
+  // Readings are the whole point of the route: without one, furigana has
+  // nothing to render.
+  let with_reading = tokens
+    .iter()
+    .filter(|t| t["reading"].as_str().is_some_and(|r| !r.is_empty()))
+    .count();
+  assert!(
+    with_reading >= 1,
+    "no token carried a reading, furigana would render blank: {body}"
+  );
+}
+
+/// Non-Japanese must pass through as a flag, not an error: a client asks
+/// for every line and skips annotation itself when the flag is false.
+#[tokio::test]
+async fn tokenize_passes_through_non_japanese() {
+  let (status, body) = post_json("/tokenize", serde_json::json!({ "text": "hello world" })).await;
+  assert_eq!(status, 200, "plain text must not be an error: {body}");
+  let payload: serde_json::Value = serde_json::from_str(&body).expect("tokenize json");
+  assert_eq!(payload["japanese"], false, "non-japanese flagged japanese");
+  let tokens = payload["tokens"].as_array().expect("tokens array");
+  // Tokens may exist — ipadic segments ASCII words as 名詞, and
+  // `tokenize_detailed` does not gate on language; `process_text_with_furigana`
+  // is what gates, before it tokenizes at all. What must be true is that
+  // nothing carries a reading: a client that ignores the flag would otherwise
+  // render a blank furigana overlay over "hello".
+  let with_reading = tokens
+    .iter()
+    .filter(|t| t["reading"].as_str().is_some_and(|r| !r.is_empty()))
+    .count();
+  assert_eq!(with_reading, 0, "non-japanese carried readings: {body}");
+}

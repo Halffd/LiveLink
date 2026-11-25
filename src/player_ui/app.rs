@@ -366,20 +366,12 @@ impl PlayerApp {
         }
 
         // Reading layer: imported dictionaries live beside the config unless
-        // an explicit directory is configured; mecab is the fallback.
-        let dictionary_dir = if settings.reading_dictionary_dir.trim().is_empty() {
-            window.config_dir.join("dictionaries")
-        } else {
-            std::path::PathBuf::from(settings.reading_dictionary_dir.trim())
-        };
-        // Loaded before `dictionary_dir` is moved into the tokenizer config:
-        // the popup and the tokenizer share one directory, so they are read
-        // from the same place.
-        let reading_dictionary = crate::player_ui::reading::Dictionary::load_dir(&dictionary_dir);
-        crate::player_ui::reading::init(crate::player_ui::reading::ReadingConfig {
-            dictionary_dir: Some(dictionary_dir),
-            mecab_path: settings.reading_mecab_path.clone(),
-        });
+        // an explicit directory is configured; mecab is the fallback. Shared
+        // with the API server so the popup and `/tokenize` read the same dir.
+        let reading_dictionary = crate::player_ui::reading::Dictionary::load_dir(
+            &crate::player_ui::reading::settings_dictionary_dir(&window.config_dir, &settings),
+        );
+        crate::player_ui::reading::init_from_config_dir(&window.config_dir);
 
         let (post_tx, post_rx) = std::sync::mpsc::channel();
 
